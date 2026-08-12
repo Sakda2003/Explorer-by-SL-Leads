@@ -70,6 +70,21 @@ and tick **Settings → General → "Start Docker Desktop when you sign in"**.
 > Files` when the shell was not elevated. If `docker info` is not found afterwards, that is
 > usually why — reinstall from an elevated prompt.
 
+### What comes from GitHub, and what does not
+
+`git clone` in step 2 brings every file the app needs. Two things are deliberately excluded and
+have to be put on this PC by hand — both are one-time:
+
+| | How it gets there | Why it is not in git |
+|---|---|---|
+| Application code | `git clone`, then `git pull` to update | — |
+| **`.env`** | You type it, step 4 | Holds the allowlist; secrets do not belong in a repo |
+| **The database** | You copy it once, step 9 | 147 MB of customer PII, and git history is permanent |
+
+**Until you do step 9, the dashboard will be empty.** That is expected, not a broken deploy —
+your existing leads live on your laptop and nothing moves them automatically. Get an empty
+dashboard loading over the tailnet first, then migrate.
+
 ## 2. Get the code  *(you, at the machine)*
 
 ```powershell
@@ -90,8 +105,19 @@ In an **Administrator** PowerShell:
 tailscale up
 ```
 
-It prints a URL — open it and sign in. That creates your tailnet and adds this PC to it. Then
-in the Tailscale admin console (<https://login.tailscale.com/admin>):
+It prints a URL — open it and sign in. **Sign in as yourself, with the same account you use on
+your own laptop.** That is correct and intended: Tailscale counts *users* and *devices*
+separately (3 users / 100 devices on the free plan), so this PC becomes another **device you
+own**, not a second user. Your three seats are you plus two colleagues.
+
+> **One consequence to be aware of.** Because this PC is signed in as you, and you are in
+> `LEADLENS_WRITER_EMAILS`, anyone who sits at it and opens the dashboard has *your* write
+> access — including deleting leads. The Option A startup mode in step 5 closes this: the app
+> runs as SYSTEM at boot, so **nobody needs to be signed in to Windows at all** and you can
+> leave the machine at the lock screen. Option B cannot, since Docker Desktop requires a live
+> session. If this is a shared reception-type PC, that difference matters.
+
+Then in the Tailscale admin console (<https://login.tailscale.com/admin>):
 
 1. **DNS → MagicDNS:** enable it.
 2. **DNS → HTTPS Certificates:** enable it. `tailscale serve` cannot issue its certificate
@@ -260,8 +286,13 @@ Things worth telling them up front, because each one otherwise generates a suppo
 - **It is only up while the office PC is on and signed in** (step 6). If the dashboard is
   unreachable, that PC is the first thing to check, not their own machine.
 
-**Install Tailscale on your own laptop too.** That is how you use and administer the app without
-walking over to the office PC.
+**Install Tailscale on your own laptop too**, signed in as the same account. That is how you use
+and administer the app without walking over to the office PC.
+
+**Your laptop is not part of serving the app.** Once the office PC is running, you can close your
+laptop, shut it down, or take it home with no effect on anyone else's access — the office PC is
+the server and your laptop is just another viewer. The only thing you need it for afterwards is
+shipping code changes: `git push` from the laptop, `git pull` on the office PC.
 
 ## 8. Verify  *(do all five)*
 
