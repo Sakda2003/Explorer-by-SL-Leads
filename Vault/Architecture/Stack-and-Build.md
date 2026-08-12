@@ -33,10 +33,24 @@ micro-typography and hardcoded sparkline squiggles are considered part of the ap
 look, not slop. Scoped per-page fixes are fine. (The 2026-08-12 redesign was explicitly
 requested and preserved all of these.)
 
-**No git repo.** There is no version control on this project — mechanical multi-file
-changes cannot be trivially reverted. Be more careful than usual with sweeping edits.
-Pre-redesign copies of `styles.css`, `App.tsx` and `index.html` are in `.backups/`
-(suffix `.pre-redesign-2026-08-12`).
+**Git repo since 2026-08-12** (initial commit `e936b85`, branch `main`) — before that there
+was no version control at all, so anything older than that commit has no history to
+revert to. Pre-redesign copies of `styles.css`, `App.tsx` and `index.html` are still in
+`.backups/` (suffix `.pre-redesign-2026-08-12`); they predate the repo, which is why
+they are kept rather than deleted, though they are gitignored.
+
+**Customer data is excluded from version control and must stay that way.** `.gitignore`
+holds back `data/` (the 147 MB SQLite DB) and `Dataset/` (Meta exports plus
+`lead_level_dataset.csv`, ~3,000 rows carrying a `customer_name` column) — that is
+customer PII, and git history is effectively permanent even in a private repo. Also
+excluded: `.env`, `backup.env`, `.claude/settings.local.json`, `Redesign Reference/`
+(24 MB of third-party design images), `.backups/`. See [[Access-Control]] for the
+encrypted-backup path, which is how the database is actually preserved off-machine.
+
+**`.gitattributes` pins `eol=lf`, and that is load-bearing.** Git on Windows would
+otherwise check out `deploy/*.sh` with CRLF, and those scripts are piped straight into
+bash on a Linux host (`ssh ... 'sudo bash -s' < deploy/server-setup.sh`), where CRLF
+fails with `$'\r': command not found`.
 
 **`package.json` pins every dependency to `"latest"`,** so any `pnpm add` re-resolves
 the whole lockfile — the 2026-08-12 font install also moved recharts 3.9.2 → 3.10.1 and
