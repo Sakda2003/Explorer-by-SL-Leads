@@ -14,7 +14,7 @@ carries the full CRM payload — this is customer PII, not just ad metrics.
 
 | | Cloudflare Access | Tailscale Serve |
 |---|---|---|
-| Runbook | `deploy/RUNBOOK.md` | `deploy/RUNBOOK-TAILSCALE.md` |
+| Runbook | `deploy/RUNBOOK.md` | `deploy/RUNBOOK-TAILSCALE.md` (Linux) / `-WINDOWS.md` |
 | Cost | domain ~$12/yr + VPS | $0 (Oracle Always Free) |
 | Users | 50 free | **3 free** |
 | Identity | RS256 JWT, verified | `Tailscale-User-Login` header |
@@ -116,10 +116,32 @@ Requirement was **free, always-on, 2–3 users**. That eliminated nearly everyth
   spindown (destroys the DB), HF Spaces free has no persistent disk, PythonAnywhere free is
   WSGI-only so FastAPI won't run at all.
 
-**Current plan: a self-hosted always-on machine at the office** (mini PC / spare desktop /
-Pi 4+ on an SSD, Ubuntu 24.04) + Tailscale. Needs no card and no cloud account, and the
-existing scripts work unchanged — `server-setup.sh` is plain Ubuntu/apt, and Tailscale's
-outbound-only connection means no port forwarding, no static IP, and CGNAT doesn't matter.
+**Chosen 2026-08-12: an always-on Windows PC at the office** (`deploy/RUNBOOK-TAILSCALE-WINDOWS.md`)
++ Tailscale. No new hardware, no OS reinstall, no card. Docker Desktop runs the identical Linux
+container, so nothing about the app changes — only the host and the start-up path do. Deployment
+is `git clone` + `git pull` from the GitHub remote rather than `deploy.sh`'s tar-over-ssh, which
+is simpler than the Linux route.
+
+`deploy/deploy-windows.ps1` is the counterpart to `deploy.sh`: PowerShell 5.1-compatible (no
+ternary/`??`/`&&`), and it exists mainly to carry over the `LEADLENS_TAILSCALE_AUTH` refusal —
+without that guard an unset flag silently means "no gate at all" and the dashboard looks
+identical. It also brings up `app` only (base compose defines `cloudflared`, which would
+restart-loop tokenless) and then reads the app's own log back to confirm
+`Tailscale identity enforced` rather than trusting the `.env` check alone. Its guard regex was
+tested against 8 `.env` variants and matches `_flag()`'s truthiness (`1|true|yes|on`).
+
+**The Windows-specific limitation, which drove most of that runbook: Docker Desktop only runs
+inside a signed-in Windows session.** Tailscale is a service and survives reboots on its own;
+Docker Desktop does not. So `Win+L` to lock (keeps the session and the container alive) but
+never sign out, and after any reboot — Windows Update especially — nothing runs until someone
+signs in. The runbook offers accepting that, or `netplwiz` auto-sign-in with the physical-access
+trade-off spelled out. Sleep is the other classic killer, hence the `powercfg /change
+standby-timeout-ac 0` step.
+
+**Ubuntu remains supported and documented** (`deploy/RUNBOOK-TAILSCALE.md`) for a mini PC /
+spare desktop / Pi 4+ on an SSD, if hardware turns up later. The existing scripts work
+unchanged there — `server-setup.sh` is plain Ubuntu/apt, and Tailscale's outbound-only
+connection means no port forwarding, no static IP, and CGNAT doesn't matter.
 Side benefit: resolves the data-residency concern the Cloudflare runbook raises, since the PII
 stays on hardware in-country. New failure modes are physical — power cuts (enable BIOS "Restore
 on AC Power Loss"; `restart: unless-stopped` covers the container), lid-close suspend on a

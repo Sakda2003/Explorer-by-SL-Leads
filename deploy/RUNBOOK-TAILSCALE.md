@@ -8,6 +8,11 @@ Nothing here is cloud-specific. Any machine running **Ubuntu 24.04** works — a
 shelf in the office, a spare desktop, a Raspberry Pi, or a VPS — because Tailscale dials
 outbound and needs no public IP, no port forwarding, and no domain. Step 1 covers the choice.
 
+> **Already have an always-on Windows PC?** Use
+> [RUNBOOK-TAILSCALE-WINDOWS.md](RUNBOOK-TAILSCALE-WINDOWS.md) instead — no Ubuntu install, no
+> SSH, and nothing to buy or reformat. Same security model and the same `.env`; Docker runs the
+> identical Linux container either way.
+
 This is the alternative to [RUNBOOK.md](RUNBOOK.md), which uses Cloudflare Access and needs a
 domain (~$12/yr). Pick one; do not run both.
 
