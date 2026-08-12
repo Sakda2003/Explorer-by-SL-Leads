@@ -35,7 +35,9 @@ requested and preserved all of these.)
 
 **Git repo since 2026-08-12** (initial commit `e936b85`, branch `main`) — before that there
 was no version control at all, so anything older than that commit has no history to
-revert to. Pre-redesign copies of `styles.css`, `App.tsx` and `index.html` are still in
+revert to. Remote: <https://github.com/Sakda101/Explorer-by-SL-Leads> — **private**, and it
+must stay that way: the code and this vault describe Explorer by SL's ad spend, lead
+pipeline and modelling decisions in detail, even though the data itself is excluded. Pre-redesign copies of `styles.css`, `App.tsx` and `index.html` are still in
 `.backups/` (suffix `.pre-redesign-2026-08-12`); they predate the repo, which is why
 they are kept rather than deleted, though they are gitignored.
 
