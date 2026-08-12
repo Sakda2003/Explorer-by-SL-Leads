@@ -1,0 +1,30 @@
+# The build context is uploaded to the Docker daemon in full before anything runs, so the two
+# heavyweight directories below (~244 MB combined) are excluded first. node_modules is
+# reinstalled inside the builder from the lockfile; data/ is a runtime volume and must never be
+# baked into an image -- the database holds customer records.
+frontend/node_modules
+frontend/dist
+data
+
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+
+.git
+.gitignore
+.claude
+.codex-tmp
+
+# Secrets. .env.example is the only one that ships.
+.env
+.env.*
+!.env.example
+
+# Source material and design notes, not needed to run the app.
+Assets
+Dataset
+design-system
+tests
+*.md

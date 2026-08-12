@@ -1,0 +1,25 @@
+# Normalise everything to LF in the repository and on checkout.
+#
+# This is not cosmetic. Git on Windows defaults to converting text files to CRLF on checkout,
+# and `deploy/*.sh` are piped straight into bash on a Linux host:
+#
+#     ssh ADMIN@MACHINE 'sudo bash -s' < deploy/server-setup.sh
+#
+# A CRLF checkout makes that fail with errors like `$'\r': command not found`, or worse,
+# silently mangles a quoted string. Pinning eol=lf keeps the scripts runnable no matter which
+# machine cloned the repo.
+* text=auto eol=lf
+
+# Binary assets: never touch these, and never try to diff them as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.xlsx binary
+*.db binary
+
+# Jupyter notebooks are JSON with embedded base64 output images. Treating them as binary keeps
+# a one-line change from producing a 100 KB diff.
+*.ipynb -diff

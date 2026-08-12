@@ -1,0 +1,142 @@
+# Access Control & Deploy
+
+Built 2026-07-30, Phase 1 of the "only me and the CEO can reach this" deployment plan.
+
+**Why it exists:** LeadLens had zero authentication while exposing 8 write/delete
+endpoints. The database holds ~2,700 lead records with `customer_name`, and `raw_json`
+carries the full CRM payload — this is customer PII, not just ad metrics.
+
+## Two topologies (second one added 2026-08-12)
+
+`backend/auth.py` supports **two** ways of establishing identity, selected by env vars via
+`config.mode` — `"cloudflare"`, `"tailscale"`, or `""` (inert). Both funnel into one
+`_authorize()` helper, so the reader/writer split behaves identically either way.
+
+| | Cloudflare Access | Tailscale Serve |
+|---|---|---|
+| Runbook | `deploy/RUNBOOK.md` | `deploy/RUNBOOK-TAILSCALE.md` |
+| Cost | domain ~$12/yr + VPS | $0 (Oracle Always Free) |
+| Users | 50 free | **3 free** |
+| Identity | RS256 JWT, verified | `Tailscale-User-Login` header |
+| Env | `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` | `LEADLENS_TAILSCALE_AUTH=1` |
+
+**Cloudflare wins if both are configured** — a verified signature strictly beats a proxy
+header, so there's no reason to fall back to trusting a hop. Tests assert this
+(`ModePrecedenceTests`), because the failure mode would be silently *downgrading* a
+Cloudflare deployment to header trust by sending one header.
+
+**The Tailscale mode's security is inherited from the topology, not from the header.** It is
+only sound while `docker-compose.tailscale.yml`'s `127.0.0.1:8000` binding holds and no host
+port is published — a `ports:` mapping converts the header from "identity" into "whatever the
+caller claims". That's why: the flag is explicit opt-in (never inferred from the header being
+present), startup logs the assumption out loud every boot, and a missing header fails **closed**
+(401) so an accidentally-exposed port doesn't serve anonymous scanners. What this mode actually
+buys is *role separation among already-authenticated tailnet users* — stopping a third reader
+from deleting a lead — not resistance to a network attacker.
+
+`tailscale funnel` must never be used: funnel traffic is public and carries no identity, so
+everyone would 401. Fail-closed is correct here; don't work around it.
+
+## Cloudflare specifics
+
+`backend/auth.py` verifies Cloudflare Access JWTs as **defence in depth**, not the
+primary gate (Cloudflare Access at the edge is that).
+
+**Env-gated so it's inert by default.** With the Cloudflare env vars unset, `verify()`
+passes everything through and logs a warning — local dev and all tests keep working
+untouched. `LEADLENS_ALLOWED_EMAILS` = who may read; `LEADLENS_WRITER_EMAILS` = who may
+mutate. Listing only the primary user gives the CEO the dashboard without delete/retrain
+ability.
+
+**Deliberately does not use `PyJWKClient`** — it makes a blocking call inside async
+code and has an internally inconsistent cache. JWKS is fetched with `httpx` (async) and
+keys matched by `kid` by hand. Do not "simplify" this back to `PyJWKClient`.
+
+Algorithms pinned to `["RS256"]` (prevents alg-confusion forgery). Fails **closed** if
+Cloudflare's certs endpoint is unreachable. `/api/health` is exempt for container
+checks.
+
+**Phase 2 (Docker):** two-stage build (`node:24-slim` → `python:3.12-slim`). The image
+sets **`LEADLENS_DATA_DIR=/data`, not `LEADLENS_DB_PATH`** — one variable moves
+database + uploads + previews onto the volume together; setting only the DB path
+strands uploads/previews on the container filesystem. `app` publishes **no host
+port** in compose (`expose`, never `ports`) — that's the whole security property; a
+`ports:` mapping would silently expose the PII database to the host network.
+
+**Phase 3 (server hardening):** firewall allows SSH only, never 80/443 — the tunnel
+dials outbound. SSH password-auth disable is guarded to avoid an unrecoverable lockout.
+`deploy.sh` uses `tar | ssh`, not rsync (Git Bash ships ssh/tar but not rsync). Never
+transfers `.env`. Not yet deployed — provisioning needs the user's own
+payment/credentials.
+
+### Deploy-script gotchas fixed 2026-08-12 (all found by targeting Oracle Cloud)
+
+Both scripts now take `TOPOLOGY=cloudflare|tailscale` (default `cloudflare`).
+
+- **`server-setup.sh` assumed root login and root's `authorized_keys`.** Oracle Cloud and AWS
+  disable root SSH, so it must be run as `ssh ubuntu@IP 'sudo bash -s'`. Worse: Oracle *does*
+  ship `/root/.ssh/authorized_keys`, but every entry is a `command=` forced command that only
+  prints "please login as the user ubuntu". The old code copied that to the `leadlens` user,
+  producing an account that authenticates and then refuses to do anything — which looks
+  exactly like a broken deploy script. Key discovery now prefers `$SUDO_USER`'s keys and
+  filters `command=` lines; verified against a simulated Oracle layout. The SSH-hardening
+  guard keyed off the same wrong path, so password auth was silently left enabled too.
+- **`deploy.sh` ran `docker compose up -d --build` with no service filter,** which starts
+  `cloudflared` too. In the Tailscale topology there's no token, so it restart-loops forever
+  and buries the app's logs. Now uses per-topology compose files + service list, and every
+  later `docker compose` call (health wait, `ps`, `logs`) carries the same `-f` flags.
+- **`deploy.sh` now refuses to deploy** a Tailscale topology whose `.env` lacks
+  `LEADLENS_TAILSCALE_AUTH`, since an inert gate is invisible from the outside — the dashboard
+  looks identical whether or not everyone can delete leads.
+- Oracle's `netfilter-persistent` rules coexist with ufw rather than being replaced. They only
+  ever deny more, and nothing inbound is needed, so the script flags them and leaves them
+  alone — rewriting a vendor's firewall over SSH is how people lock themselves out.
+
+### Hosting choice (decided 2026-08-12)
+
+Requirement was **free, always-on, 2–3 users**. That eliminated nearly everything:
+
+- **Vercel** — serverless, read-only FS, no persistent disk; the app *is* a 147 MB SQLite file
+  written on every edit. Would need a Postgres rewrite first, and function timeouts kill
+  `train_models()` (~18s per run). Also autoscaling N instances corrupts
+  a single SQLite file — `Dockerfile` pins `--workers 1` for the same reason.
+- **Hugging Face Spaces** — stateless ML demos; persistent storage is paid, and auth is HF
+  accounts, not company identity. Would put 2,707 PII lead records on a public-by-default ML
+  host with no DPA.
+- **Render/Railway/Fly free** — Render spins down at 15 min idle *and* has an ephemeral disk,
+  so the database is destroyed on restart. Others are trial-credit only.
+- **Google Cloud free e2-micro** — 1 GB RAM will OOM the retrain (compose limit is 2 GB), and
+  US-only regions.
+- **Oracle Cloud Always Free ARM** (`VM.Standard.A1.Flex`, 4 OCPU / 24 GB) — was the pick until
+  **Sakda's card was rejected at Oracle signup (2026-08-12)**. Still documented as route B in
+  the runbook in case a card works later, with its two real caveats: ARM "out of host capacity"
+  is common, and Oracle reclaims instances idle under ~20% for 7 days.
+- **Also card-blocked:** GCP / AWS / Azure free tiers all require one. Card-*free* PaaS was
+  checked and all of it fails on state — Render free has an ephemeral disk **and** 15-min
+  spindown (destroys the DB), HF Spaces free has no persistent disk, PythonAnywhere free is
+  WSGI-only so FastAPI won't run at all.
+
+**Current plan: a self-hosted always-on machine at the office** (mini PC / spare desktop /
+Pi 4+ on an SSD, Ubuntu 24.04) + Tailscale. Needs no card and no cloud account, and the
+existing scripts work unchanged — `server-setup.sh` is plain Ubuntu/apt, and Tailscale's
+outbound-only connection means no port forwarding, no static IP, and CGNAT doesn't matter.
+Side benefit: resolves the data-residency concern the Cloudflare runbook raises, since the PII
+stays on hardware in-country. New failure modes are physical — power cuts (enable BIOS "Restore
+on AC Power Loss"; `restart: unless-stopped` covers the container), lid-close suspend on a
+laptop, and office-ISP outages. If no spare hardware turns up, Hetzner/DO/Vultr all take
+**PayPal**, which often works when a local card fails 3-D Secure.
+
+**Backups go to Google Drive, not B2/R2** — both of those want a card too. Drive is 15 GB free
+on the account Sakda already has, and `deploy/backup.sh` only ever passes `$RCLONE_REMOTE` to
+rclone (verified), so this is a config change with no code edit. On a headless box, answer `n`
+to rclone's browser prompt and use the `rclone authorize` command it prints from another
+machine. Off-site backup matters *more* here than on a VPS: a machine on a shelf can be stolen
+or flooded and there's no provider snapshot behind it.
+
+**Phase 4 (backup/restore):** AES-256-GCM encryption in Python (`cryptography`),
+key from scrypt with a per-backup random salt. Uses **SQLite's online backup API,
+never a file copy** (a raw file copy in WAL mode can capture a torn database).
+`backup.sh` verifies immediately after writing (decrypt + integrity check + row
+counts) and aborts if that fails. The encryption passphrase must be stored off-server.
+
+Related: [[Stack-and-Build]].

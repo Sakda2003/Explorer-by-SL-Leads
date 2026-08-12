@@ -1,0 +1,67 @@
+# LeadLens: the app plus the Cloudflare tunnel that fronts it.
+#
+# The security property that matters here is that `app` publishes NO host port. It is reachable
+# only from the private compose network, which means the only route in from the internet is
+# through cloudflared, and therefore through the Access policy. Adding a `ports:` mapping to
+# `app` would quietly undo that and expose an unauthenticated database of customer records to
+# anything that can reach the host.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    # No `ports:` -- deliberate. See the note above. To reach it locally for debugging, use
+    # `docker compose exec app curl localhost:8000/api/health` rather than publishing a port.
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    volumes:
+      # Named volume, not a bind mount: the database, uploads and previews live here and must
+      # outlive every `docker compose up --build`.
+      - leadlens-data:/data
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+    # Docker's default json-file driver never rotates. On a small VPS running for months,
+    # that quietly fills the disk and takes the app down with it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          # Generous headroom -- current training data is small enough that this should never
+          # bind. It exists so a runaway process cannot OOM the host and kill sshd, locking
+          # you out of the box. If retrains ever start dying with exit code 137, raise this.
+          memory: 2g
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # `run` with a token dials out to Cloudflare; no inbound port is opened on the host at all.
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    env_file:
+      - .env
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  leadlens-data:
+
+networks:
+  internal:
+    driver: bridge

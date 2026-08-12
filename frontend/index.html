@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta name="theme-color" content="#0C0D0F"/><title>Explorer by SL</title><link rel="icon" type="image/png" sizes="960x960" href="/explorer-logo.png?v=2"/><link rel="apple-touch-icon" href="/explorer-logo.png?v=2"/><script>
+// Stamp the theme before first paint so the app never flashes the wrong one.
+// Stored choice wins; otherwise follow the OS. Kept inline and tiny on purpose --
+// it must run before the stylesheet applies, so it cannot live in a module.
+(function () {
+  try {
+    var stored = localStorage.getItem('leadlens-theme');
+    var theme = (stored === 'light' || stored === 'dark') ? stored
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme', theme);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'light' ? '#F4F5F7' : '#0C0D0F');
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+</script></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>

@@ -1,0 +1,48 @@
+.venv/
+frontend/node_modules/
+frontend/dist/
+.codex-tmp/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.env.*
+!.env.example
+# Holds the backup encryption passphrase. Committing it would put the key in the same place as
+# the ciphertext, which defeats encrypting the backups at all.
+backup.env
+
+# ---- Customer data: never commit -------------------------------------------------------
+# Everything below holds real lead records. `raw_json` and the `customer_name` column carry
+# customer PII, so none of it belongs in a git history -- including a private one, because
+# history is effectively permanent and a repo's visibility can be flipped with one click.
+#
+# The database. Also over GitHub's 100 MB per-file limit at ~147 MB, so a push would be
+# rejected anyway -- but the reason it is excluded is the PII, not the size.
+data/
+
+# Meta exports and the derived model workbooks. `lead_level_dataset.csv` alone is ~3,000 rows
+# with a customer_name column; the "Customer Traffic" workbooks are the lead-grain source.
+Dataset/
+*.db
+*.db-wal
+*.db-shm
+*.db.bak-*
+leadlens-transfer.db
+
+# Encrypted backups. Safe at rest, but there is no reason to put ciphertext of the customer
+# database in the same place as the code that reads it.
+*.db.gz.enc
+
+# ---- Local working files ---------------------------------------------------------------
+# Per-machine Claude Code permissions, full of absolute paths from this laptop. The shared
+# project config is .claude/settings.json; this one is deliberately personal.
+.claude/settings.local.json
+
+# Pre-redesign snapshots, superseded by git history from this commit onward.
+.backups/
+
+# 24 MB of third-party design inspiration (webp/jpg/gif). Not ours to redistribute, and it
+# would be most of the repo's weight. Kept locally, out of the history.
+Redesign Reference/
+

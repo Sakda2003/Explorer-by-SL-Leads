@@ -1,0 +1,13 @@
+# Override for local Tailscale-only access (no VPS, no Cloudflare tunnel).
+#
+# Binds `app` to 127.0.0.1 only -- never to 0.0.0.0 -- so it is NOT reachable from your LAN or
+# the public internet. `tailscale serve` (run separately) forwards tailnet traffic to this
+# loopback port over Tailscale's own encrypted network, so the only people who can reach it are
+# devices signed into this tailnet.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d app
+
+services:
+  app:
+    ports:
+      - "127.0.0.1:8000:8000"

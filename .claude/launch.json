@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "leadlens",
+      "runtimeExecutable": ".venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "watchfiles", ".venv\\Scripts\\python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8000", "backend"],
+      "port": 8000
+    },
+    {
+      "name": "leadlens-verify",
+      "runtimeExecutable": ".venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "watchfiles", ".venv\\Scripts\\python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8010", "backend"],
+      "port": 8010
+    },
+    {
+      "name": "leadlens-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
+      "port": 5173
+    }
+  ]
+}

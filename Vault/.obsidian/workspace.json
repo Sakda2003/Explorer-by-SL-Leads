@@ -1,0 +1,217 @@
+{
+  "main": {
+    "id": "3b06df4f516792d6",
+    "type": "split",
+    "children": [
+      {
+        "id": "c5400ca9fc140d69",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "4e14e97028740c5a",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "0ce174ec5be776f3",
+    "type": "split",
+    "children": [
+      {
+        "id": "8aef0edd50e8e9c7",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "f3ca32c6a6f3213b",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "5d5b7a2fbf23a1bb",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "37ae3b339b3eae17",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "right": {
+    "id": "77b228e46ec6ac3f",
+    "type": "split",
+    "children": [
+      {
+        "id": "afc90b9cf8404640",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "23b25c170570c7f5",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "e1ab9e96770217bc",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "37a63c22ba6e7f72",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "77e43077844113a0",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "5ea1b4874e6149b5",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "4e14e97028740c5a",
+  "lastOpenFiles": [
+    "Features/Forecast-Page-OLS-Panel.md.tmp.19072.42738ed9379e",
+    "Modeling/OLS-Declared-Ten-Variables.md.tmp.19072.e2534275708d",
+    "Modeling/OLS-Declared-Ten-Variables.md.tmp.19072.feb6b6772324",
+    "Features/Dataset-Page.md.tmp.19072.f99d312a9fd0",
+    "Features/Dataset-Page.md.tmp.19072.3beab54972d4",
+    "Features/Dataset-Page.md.tmp.19072.df482790aea6",
+    "Features/Dataset-Page.md.tmp.30176.d42fcea19321",
+    "Features/Dataset-Page.md.tmp.30176.f4fc7d2b0bc3",
+    "Home.md",
+    "Features/Dataset-Page.md.tmp.30176.9baac0ef93fd",
+    "Features/Dataset-Page.md.tmp.30176.b2a222c5e84a",
+    "Modeling/OLS-Declared-Ten-Variables.md.tmp.26168.b4573fd0900d",
+    "Gotchas/Uvicorn-Reload-Hangs.md",
+    "Features/Dataset-Page.md",
+    "Gotchas/Combined-Ad-Set-Import.md",
+    "Data-Pipeline/Ad-Set-Ad-Lookup-Combine.md",
+    "Modeling/OLS-In-Forecast-Selection.md",
+    "Features/Spend-Leads-Scatter.md",
+    "Untitled.canvas",
+    "Features/Access-Control.md",
+    "Features/CPL-Trend-Chart.md",
+    "Features/Budget-Scenario.md",
+    "Features/Budget-Optimization-Tab.md",
+    "Features/Ad-Decision-Engine.md",
+    "Data-Pipeline/Model-Dataset-Upload-Type.md",
+    "Data-Pipeline/Model-Dataset-Template.md",
+    "Data-Pipeline/Change-Log-Importer.md",
+    "Data-Pipeline/Change-Event-UI-Recorder.md",
+    "Architecture/Stack-and-Build.md"
+  ]
+}
