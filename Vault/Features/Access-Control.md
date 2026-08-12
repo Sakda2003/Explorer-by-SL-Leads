@@ -130,13 +130,39 @@ restart-loop tokenless) and then reads the app's own log back to confirm
 `Tailscale identity enforced` rather than trusting the `.env` check alone. Its guard regex was
 tested against 8 `.env` variants and matches `_flag()`'s truthiness (`1|true|yes|on`).
 
-**The Windows-specific limitation, which drove most of that runbook: Docker Desktop only runs
-inside a signed-in Windows session.** Tailscale is a service and survives reboots on its own;
-Docker Desktop does not. So `Win+L` to lock (keeps the session and the container alive) but
-never sign out, and after any reboot — Windows Update especially — nothing runs until someone
-signs in. The runbook offers accepting that, or `netplwiz` auto-sign-in with the physical-access
-trade-off spelled out. Sleep is the other classic killer, hence the `powercfg /change
-standby-timeout-ac 0` step.
+**Docker Desktop only runs inside a signed-in Windows session**, which conflicts with the actual
+requirement (24/7, unattended). Tailscale is a service and survives reboots on its own; Docker
+Desktop does not, so a 3am Windows Update reboot leaves the app down at the login screen until
+someone walks over. Hence a **second startup mode, now the recommended one:**
+
+**Option A — native Windows startup task, no Docker** (`deploy/install-windows-service.ps1` +
+`deploy/run-windows.ps1`). Registers a task named `LeadLens` running **at startup as SYSTEM**, so
+it needs no sign-in and no stored password; restarts on failure; `ExecutionTimeLimit 0` because
+the default 3 days would silently kill it. Runs the same `uvicorn ... --host 127.0.0.1 --workers 1`
+used in dev, so this is low-risk. Installer also creates the venv, pip-installs, and builds
+`frontend/dist` (gitignored, so a fresh clone lacks it — without it the API works but the
+dashboard 404s). Needs Python + Node on that PC instead of Docker Desktop; lighter, no WSL2.
+
+**The trap that made `run-windows.ps1` necessary: `env_file: .env` is a Compose feature.** Nothing
+outside Compose reads `.env`, and `auth.py` is plain `os.getenv` — so running uvicorn directly
+would start with `LEADLENS_TAILSCALE_AUTH` unset, i.e. **no gate at all**, looking completely
+normal. The wrapper loads `.env` itself (splitting on the **first** `=` only, since a CF tunnel
+token is base64 and ends in `=` padding) and refuses to start if neither gate is configured.
+Mirrors `config.mode`: Cloudflare needs *both* vars. Tested against 8 `.env` variants.
+
+**Option B — Docker Desktop** is still documented, for container isolation, but requires `Win+L`
+rather than sign-out and either accepting manual restarts or `netplwiz` auto-sign-in (physical-
+access trade-off spelled out in the runbook). Sleep is the other classic killer on Windows, hence
+the `powercfg /change standby-timeout-ac 0` step.
+
+**Backups differ by mode.** `backup.sh` drives `backup.py` through a throwaway container, which
+does not exist in Option A — so `deploy/backup-windows.ps1` calls `backup.py`/`restore.py`
+directly through the venv. Same encryption, same format, same immediate verify-after-write.
+**Tested end-to-end against the real 140 MB database: 36 MB encrypted output, integrity check
+passed with row counts (3,020 lead_events, 14,012 forecasts), `KEEP_LOCAL` pruning correct.** Its
+Task Scheduler entry can run as SYSTEM ("whether user is logged on or not"); Option B's cannot,
+because Docker needs the session. `logs/` and `backups/` are gitignored — the log carries the
+email addresses auth accepts and rejects.
 
 **Ubuntu remains supported and documented** (`deploy/RUNBOOK-TAILSCALE.md`) for a mini PC /
 spare desktop / Pi 4+ on an SSD, if hardware turns up later. The existing scripts work

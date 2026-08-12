@@ -45,16 +45,25 @@ Also worth setting now:
 - **Windows Update active hours** (Settings → Windows Update → Advanced) so a forced restart
   lands outside working hours. Updates will still restart the PC — step 6 covers that.
 
-**Install three things.** From an Administrator PowerShell:
+**Install what you need.** From an **Administrator** PowerShell:
 
 ```powershell
 winget install --id Git.Git -e
-winget install --id Docker.DockerDesktop -e
 winget install --id tailscale.tailscale -e
+winget install --id Python.Python.3.12 -e
+winget install --id OpenJS.NodeJS.LTS -e
 ```
 
-Then **launch Docker Desktop once** and wait for it to report *Engine running*. In its
-**Settings → General**, tick **"Start Docker Desktop when you sign in"**.
+Close and reopen PowerShell afterwards so `git`, `python` and `npm` land on `PATH`.
+
+That list is for the **recommended startup mode** in step 5 (a Windows startup task — no Docker
+at all). Node is needed only to build the dashboard bundle once; if you would rather not install
+it, you can build `frontend\dist` on your laptop and copy the folder over, and step 5 will tell
+you so.
+
+If you instead choose the Docker option in step 5, swap Python and Node for
+`winget install --id Docker.DockerDesktop -e`, launch it once until it says *Engine running*,
+and tick **Settings → General → "Start Docker Desktop when you sign in"**.
 
 > Docker Desktop's installer may want a reboot, and on some machines it silently does a
 > **per-user** install into `%LOCALAPPDATA%\Programs\DockerDesktop` instead of `C:\Program
@@ -142,47 +151,79 @@ Three things worth understanding:
   ability to delete a lead or kick off a retrain by accident. Leave it blank to give everyone
   full access.
 
-## 5. Start it  *(scripted)*
+## 5. Start it — pick a startup mode  *(scripted)*
+
+### Option A — Windows startup task  *(recommended: true 24/7, no Docker)*
+
+In an **Administrator** PowerShell, from the repo folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\install-windows-service.ps1
+```
+
+Creates the virtualenv, installs the Python dependencies, builds `frontend\dist`, registers a
+task named **LeadLens** that runs **at startup as SYSTEM**, starts it, and waits for
+`http://127.0.0.1:8000/api/health` to answer.
+
+**Why this is the recommendation:** the task has no dependency on anyone being signed in. A
+Windows Update reboot at 3am, or a power cut at the weekend, and the app comes back by itself
+with the office empty. Tailscale is already a service, so the whole stack self-heals. It is also
+lighter — no Docker Desktop, no WSL2 — and it is the same `uvicorn` command used in development.
+
+Re-run the same script after a `git pull` to reinstall dependencies, rebuild the bundle and
+re-register the task.
+
+> **One thing this script protects you from.** `env_file: .env` is a *Docker Compose* feature —
+> Compose reads that file and injects the variables. Nothing outside Compose does, and
+> `backend/auth.py` is plain `os.getenv`. So running `uvicorn` directly would start the app with
+> `LEADLENS_TAILSCALE_AUTH` unset, i.e. **with no access gate at all**, looking completely
+> normal. `deploy\run-windows.ps1` loads `.env` itself and refuses to start if no gate is
+> configured. Do not bypass it by calling `uvicorn` straight from a task.
+
+Managing it afterwards:
+
+```powershell
+Get-ScheduledTask -TaskName LeadLens | Get-ScheduledTaskInfo   # last run, last result
+Restart-ScheduledTask -TaskName LeadLens
+Stop-ScheduledTask -TaskName LeadLens
+Get-Content logs\leadlens.log -Tail 40                          # app output
+```
+
+### Option B — Docker Desktop
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File deploy\deploy-windows.ps1
 ```
 
-This refuses to start if `.env` is missing or `LEADLENS_TAILSCALE_AUTH` is not enabled, brings
-up the `app` service only (the base compose file also defines `cloudflared`, which has no token
-here and would restart-loop), waits for the health check, then reads the app's own log back to
-confirm it printed **`Tailscale identity enforced`** rather than `No access gate is configured`.
+Refuses to start if `.env` is missing or `LEADLENS_TAILSCALE_AUTH` is not enabled, brings up the
+`app` service only (the base compose file also defines `cloudflared`, which has no token here and
+would restart-loop), waits for the health check, then reads the app's own log back to confirm it
+printed **`Tailscale identity enforced`** rather than `No access gate is configured`.
 
-The first build takes several minutes — it compiles the frontend and installs Python wheels.
-Later runs reuse cached layers.
+Choose this if you would rather keep the container isolation, or the PC already runs Docker for
+something else. **But read step 6 first** — it does not give you unattended 24/7.
 
-## 6. Keep it running — read this part  *(the one real limitation)*
+## 6. Surviving reboots
 
-**Docker Desktop only runs inside a signed-in Windows session.** Tailscale is a service and
-survives reboots on its own; Docker Desktop does not. This has two consequences:
+**With Option A there is nothing to do.** The task is registered at startup as SYSTEM, Tailscale
+is a service, and both come back with nobody signed in. Verify it for real once, now rather than
+during a Windows Update: restart the PC, do **not** sign in, and open the dashboard from your own
+laptop. If it loads, this is genuinely unattended.
 
-- **Do not sign out.** Sign in once, let Docker start, then **lock the screen with `Win+L`**.
-  Locking keeps the session — and the container — alive. Signing out stops Docker.
-- **After a reboot, nothing runs until someone signs in.** Windows Update, a power cut, or a
-  well-meaning colleague restarting the PC will take the app offline until then.
+**With Option B, Docker Desktop only runs inside a signed-in Windows session.** Tailscale
+survives a reboot; Docker Desktop does not. So:
 
-Pick one of these:
+- **Do not sign out.** Sign in once, let Docker start, then lock the screen with `Win+L` —
+  locking keeps the session and the container alive. Signing out stops Docker.
+- **After a reboot nothing runs until someone signs in.** Either accept that (the app returns
+  the moment anyone signs in to that PC), or enable automatic sign-in with `netplwiz` — untick
+  "Users must enter a user name and password to use this computer".
 
-**Option 1 — accept it.** Fine if you or a colleague are in the office most days. The app comes
-back the moment anyone signs in to that PC. Simplest, nothing to configure.
-
-**Option 2 — enable automatic sign-in**, so a reboot restores everything unattended. Run
-`netplwiz`, untick "Users must enter a user name and password to use this computer", and enter
-the account's password once.
-
-> **Understand the trade-off before doing this.** Auto sign-in means anyone who can physically
-> reach that PC lands in a live Windows session. Only do it if the machine is somewhere you
-> would already consider physically secure, and prefer a dedicated low-privilege local account
-> over someone's day-to-day login. It does **not** weaken the app's own gate — Tailscale plus
-> `LEADLENS_ALLOWED_EMAILS` still apply to anyone opening the dashboard.
-
-Either way, once signed in Docker Desktop restarts the container by itself: `restart:
-unless-stopped` is already set in `docker-compose.yml`.
+> If you enable auto sign-in, understand the trade: anyone who can physically reach that PC
+> lands in a live Windows session. Prefer a dedicated low-privilege local account over someone's
+> day-to-day login. It does **not** weaken the app's own gate — Tailscale plus
+> `LEADLENS_ALLOWED_EMAILS` still apply to anyone opening the dashboard. Option A avoids this
+> trade-off entirely, which is the main reason it is recommended.
 
 ## 7. Invite your colleagues  *(you)*
 
@@ -252,7 +293,22 @@ copy is not:
 ```
 
 Copy `leadlens-transfer.db` to the office PC (USB stick, network share, or Drive) into, say,
-`C:\leadlens\transfer\`. Then **on the office PC**, in `C:\leadlens\Explorer-by-SL-Leads`:
+`C:\leadlens\transfer\`.
+
+**If you chose Option A (startup task)** — the database is a plain file at `data\leadlens.db`
+inside the repo folder, so this is just a copy:
+
+```powershell
+cd C:\leadlens\Explorer-by-SL-Leads
+Stop-ScheduledTask -TaskName LeadLens
+New-Item -ItemType Directory -Force data | Out-Null
+Remove-Item data\leadlens.db-wal, data\leadlens.db-shm -ErrorAction SilentlyContinue
+Copy-Item C:\leadlens\transfer\leadlens-transfer.db data\leadlens.db -Force
+Start-ScheduledTask -TaskName LeadLens
+```
+
+**If you chose Option B (Docker)** — the database lives in a named volume, so it goes through a
+throwaway container:
 
 ```powershell
 $c = '-f','docker-compose.yml','-f','docker-compose.tailscale.yml'
@@ -261,17 +317,19 @@ docker compose @c run --rm --no-deps -v C:\leadlens\transfer:/xfer app sh -c "rm
 docker compose @c start app
 ```
 
-Removing the `-wal` and `-shm` sidecars matters: leaving a stale write-ahead log next to a
-replaced database can make SQLite read the wrong state or refuse to open it.
+Removing the `-wal` and `-shm` sidecars matters in both cases: leaving a stale write-ahead log
+next to a replaced database can make SQLite read the wrong state or refuse to open it.
 
 Then delete `leadlens-transfer.db` from the USB stick and from both machines — it is an
 unencrypted copy of every customer record.
 
 ## 10. Backups → Google Drive  *(do not skip)*
 
-`deploy/backup.sh` runs fine on Windows through **Git Bash** — it already sets
-`MSYS_NO_PATHCONV=1` and uses only tools Git for Windows ships. Follow **step 8 of
-[RUNBOOK.md](RUNBOOK.md)** for the passphrase and the restore drill; here is the Windows wiring.
+Follow **step 8 of [RUNBOOK.md](RUNBOOK.md)** for generating the passphrase and for the restore
+drill. The encryption, the format and `restore.py` are identical here; only how the snapshot is
+invoked differs. Generate and **store the passphrase in your password manager before going
+further** — it is not recoverable, and a backup whose key lived only on the machine that died is
+worthless.
 
 **Install and configure rclone** (Administrator PowerShell):
 
@@ -300,23 +358,43 @@ KEEP_LOCAL=7
 KEEP_REMOTE_DAYS=30
 ```
 
-**Run it once by hand**, from Git Bash in the repo folder:
+Add `BACKUP_DIR=C:\leadlens\backups` to that file too if you want the local copies outside the
+repo folder; it defaults to `<repo>\backups`.
+
+**Run it once by hand.** For **Option A** (startup task), from PowerShell in the repo folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\backup-windows.ps1
+```
+
+For **Option B** (Docker), the shell version drives the same `backup.py` through a throwaway
+container — run it from **Git Bash**:
 
 ```bash
 APP_DIR=. BACKUP_DIR=/c/leadlens/backups ./deploy/backup.sh
 ```
 
-It snapshots, immediately decrypts and integrity-checks what it just wrote, prints the row
-counts it found, and aborts if any of that fails.
+Either way it snapshots with SQLite's online backup API (never a file copy — in WAL mode the
+newest committed rows can still be in `leadlens.db-wal`), then immediately decrypts and
+integrity-checks what it just wrote and prints the row counts it found, aborting if any of that
+fails. Expect roughly **36 MB** per backup from a 140 MB database, so 7 local copies is about
+250 MB.
 
 **Schedule it** with Task Scheduler → Create Task:
 
-- **General:** "Run only when user is logged on" — required, because it needs Docker, which
-  needs the session.
+- **General:** for Option A, **"Run whether user is logged on or not"** with the **SYSTEM**
+  account — it needs no session, same as the app. For Option B it must be "Run only when user
+  is logged on", because Docker needs the session.
 - **Triggers:** Daily, 03:15.
 - **Actions:** Start a program
-  - Program: `C:\Program Files\Git\bin\bash.exe`
-  - Arguments: `-lc "cd /c/leadlens/Explorer-by-SL-Leads && APP_DIR=. BACKUP_DIR=/c/leadlens/backups ./deploy/backup.sh >> /c/leadlens/backup.log 2>&1"`
+  - **Option A** — Program: `powershell.exe`
+    Arguments: `-NoProfile -ExecutionPolicy Bypass -File "C:\leadlens\Explorer-by-SL-Leads\deploy\backup-windows.ps1"`
+  - **Option B** — Program: `C:\Program Files\Git\bin\bash.exe`
+    Arguments: `-lc "cd /c/leadlens/Explorer-by-SL-Leads && APP_DIR=. BACKUP_DIR=/c/leadlens/backups ./deploy/backup.sh >> /c/leadlens/backup.log 2>&1"`
+
+Check it ran: Task Scheduler shows *Last Run Result* `0x0`, and a new file appears in the backup
+folder. Nothing tells you when backups silently **stop**, so skim that folder occasionally, or
+add a healthchecks.io dead-man ping (free tier) to the end of the script.
 
 > Backups are AES-256-GCM encrypted **before** they leave the machine, so Google never holds
 > readable customer data — the passphrase is what protects them, which is why it must live in
@@ -331,7 +409,11 @@ counts it found, and aborts if any of that fails.
 ```powershell
 cd C:\leadlens\Explorer-by-SL-Leads
 
-# Ship a change
+# Ship a change -- Option A (startup task)
+git pull
+powershell -ExecutionPolicy Bypass -File deploy\install-windows-service.ps1   # as Administrator
+
+# Ship a change -- Option B (Docker)
 git pull
 powershell -ExecutionPolicy Bypass -File deploy\deploy-windows.ps1
 
@@ -356,7 +438,10 @@ matters; the `.env` edit is the second one. Do both.
 
 | Symptom | Cause |
 |---|---|
-| Everything offline after a reboot | Nobody has signed in to Windows, so Docker Desktop never started — step 6 |
+| **Option A:** offline after a reboot | Check `Get-ScheduledTask -TaskName LeadLens \| Get-ScheduledTaskInfo` and `logs\leadlens.log`. This should not happen — the task needs no sign-in |
+| **Option A:** task runs but nothing serves | Read `logs\leadlens.log`. Most likely `.env` has no gate, so `run-windows.ps1` refused to start on purpose |
+| **Option A:** dashboard 404s, API works | `frontend\dist` was never built. Re-run `install-windows-service.ps1`, or copy `dist` from your laptop |
+| **Option B:** everything offline after a reboot | Nobody has signed in to Windows, so Docker Desktop never started — step 6 |
 | Offline overnight, fine in the morning | The PC is sleeping. Re-run the `powercfg` commands in step 1 and confirm someone did not change the power plan |
 | Offline after Windows Update | Update forced a restart; same as the reboot row. Set active hours |
 | `deploy-windows.ps1` says docker is not responding | Docker Desktop not started, or still initialising. Wait for *Engine running* |

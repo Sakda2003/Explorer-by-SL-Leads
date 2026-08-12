@@ -31,8 +31,14 @@ Dataset/
 leadlens-transfer.db
 
 # Encrypted backups. Safe at rest, but there is no reason to put ciphertext of the customer
-# database in the same place as the code that reads it.
+# database in the same place as the code that reads it. `backups/` is where
+# deploy/backup-windows.ps1 writes by default, i.e. inside the repo folder.
 *.db.gz.enc
+backups/
+
+# Application log from the Windows startup task (deploy/install-windows-service.ps1). Contains
+# request-level output, which includes the email addresses auth.py accepts and rejects.
+logs/
 
 # ---- Local working files ---------------------------------------------------------------
 # Per-machine Claude Code permissions, full of absolute paths from this laptop. The shared
