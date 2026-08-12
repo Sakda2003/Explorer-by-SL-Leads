@@ -186,10 +186,41 @@ unless-stopped` is already set in `docker-compose.yml`.
 
 ## 7. Invite your colleagues  *(you)*
 
-Tailscale admin console → **Users → Invite users**. They install the Tailscale client
-(Windows/Mac/iOS/Android), sign in, and the URL from step 3 works for them from anywhere.
+Tailscale admin console → **Users → Invite users**, one invite per person.
 
 **The free plan is 3 users total, including you.**
+
+### What each person does on their own device
+
+Nothing technical, and **nothing about this project** — no Docker, no Git, no code, no copy of
+the database. Their machine is only a browser talking to yours. Send them this:
+
+> 1. Accept the Tailscale invite in your email.
+> 2. Install Tailscale: <https://tailscale.com/download> (Windows, Mac, iPhone, Android).
+> 3. Sign in **with the same account the invite was sent to**. This is the part that matters —
+>    if you sign in with a different account, the dashboard will load a permission error.
+> 4. Check the Tailscale icon shows *Connected*.
+> 5. Open **`https://leadlens.<your-tailnet>.ts.net`** and bookmark it.
+
+Fill in the real URL from `tailscale serve status` before sending — they cannot discover it.
+
+Things worth telling them up front, because each one otherwise generates a support question:
+
+- **Tailscale has to be connected to open the dashboard.** Outside the tailnet the address does
+  not resolve at all — it will look like the site does not exist rather than like a login error.
+- **It is not a normal VPN.** It does not route their web browsing or slow their connection;
+  it only makes tailnet machines reachable. They can leave it on permanently.
+- **The certificate is real**, so no browser warnings. If they see one, something is wrong —
+  tell you rather than clicking through.
+- **Phones work**, same URL, same sign-in.
+- **They may see read-only behaviour**, by design, if they are not in `LEADLENS_WRITER_EMAILS`:
+  the dashboard is fully visible but editing or deleting a lead returns *"This account has
+  read-only access."* Tell them that is intentional, not a bug.
+- **It is only up while the office PC is on and signed in** (step 6). If the dashboard is
+  unreachable, that PC is the first thing to check, not their own machine.
+
+**Install Tailscale on your own laptop too.** That is how you use and administer the app without
+walking over to the office PC.
 
 ## 8. Verify  *(do all five)*
 
