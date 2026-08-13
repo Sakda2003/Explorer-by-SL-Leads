@@ -1061,11 +1061,17 @@ def _model_dataset_change_events(raw: pd.DataFrame, column, day: pd.Series) -> p
 def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
     keys = {_header_key(column) for column in columns}
     customer_score = sum(1 for column in SOURCE_REQUIRED_COLUMNS if _header_key(column) in keys)
-    ad_score = sum(1 for column in ["Campaign ID", "Ad set ID", "Day"] if _header_key(column) in keys)
+    ad_score = sum(1 for column in ["Ad set ID", "Day"] if _header_key(column) in keys)
+    # Either campaign column will do. Meta's ad-set-level exports routinely carry only
+    # `Campaign name`, and _repair_ad_performance_attribution reconstructs the ID from it
+    # against known campaigns -- so requiring the ID here rejected files the importer could
+    # already handle, before the repair ever got a chance to run. Rows whose campaign still
+    # cannot be resolved are rejected later, so nothing unattributed reaches the database.
+    has_campaign = _header_key("Campaign ID") in keys or _header_key("Campaign name") in keys
     has_spend = _header_key("Amount spent (USD)") in keys
     if customer_score == len(SOURCE_REQUIRED_COLUMNS):
         return CUSTOMER_TRAFFIC_TYPE
-    if ad_score == 3 and has_spend:
+    if ad_score == 2 and has_campaign and has_spend:
         return AD_PERFORMANCE_TYPE
     raise ValueError("File type could not be detected. Upload a customer traffic export or Meta ad performance CSV with Amount spent (USD).")
 
@@ -1631,7 +1637,16 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
     frame.columns = [str(column).strip() for column in frame.columns]
     if len(set(frame.columns)) != len(frame.columns):
         raise ValueError("The file contains duplicate columns after header normalization.")
-    missing = [column for column in AD_PERFORMANCE_REQUIRED if column not in frame.columns]
+    # `Campaign ID` is satisfied by `Campaign name`: the column is created empty below and
+    # _repair_ad_performance_attribution fills it in from the campaign name against campaigns
+    # already in the database. Rows it cannot resolve are still rejected further down, so this
+    # loosens what we accept, not what we store.
+    missing = [
+        column
+        for column in AD_PERFORMANCE_REQUIRED
+        if column not in frame.columns
+        and not (column == "Campaign ID" and "Campaign name" in frame.columns)
+    ]
     if missing:
         raise ValueError("Missing required ad performance columns: " + ", ".join(missing))
 

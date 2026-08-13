@@ -1114,6 +1114,83 @@ class AdGrainRollupTests(IsolatedDbTestCase):
         self.assertFalse(core._is_ad_grain(frame))
 
 
+class CampaignNameOnlyExportTests(IsolatedDbTestCase):
+    """Ad-set-level Meta exports that carry `Campaign name` but no `Campaign ID`.
+
+    This is the shape of the Ad-Set-Performance-and-Traffic workbooks. Both the detector and
+    read_ad_performance_tabular used to hard-require `Campaign ID`, which rejected the file
+    before _repair_ad_performance_attribution -- whose whole job is reconstructing that ID from
+    the campaign name -- ever ran. The repair was only reachable for files that had the column
+    present but blank, so this shape was unimportable.
+    """
+
+    AD_SET = "120235942906970078"
+    CAMPAIGN = "Leads | VISA | JP | FOR"
+
+    def setUp(self):
+        super().setUp()
+        # _historical_campaign_ad_set_options reads lead_events -- not daily_ad_performance --
+        # so this is what makes a campaign name resolvable to an ID.
+        with core.connect() as db:
+            db.execute(
+                """INSERT INTO lead_events (event_hash, platform, status, created_at, updated_at,
+                                            customer_name, utm_campaign, utm_campaign_id,
+                                            utm_ad_set_id, raw_json)
+                   VALUES ('h1', 'messenger', 'New', '2026-07-01 10:00:00', '2026-07-01 10:00:00',
+                           'Someone', ?, 'c99', ?, '{}')""",
+                (self.CAMPAIGN, self.AD_SET),
+            )
+
+    @staticmethod
+    def _rows(day="2026-08-01", campaign="Leads | VISA | JP | FOR", spend=3.25):
+        # Deliberately mirrors the real export: no Campaign ID, no Ad ID, no Leads column.
+        return [{
+            "Campaign name": campaign, "Ad set ID": "120235942906970078", "Day": day,
+            "Delivery status": "active", "Delivery level": "adset",
+            "Amount spent (USD)": spend, "Messaging conversations started": 4,
+            "Cost per messaging conversation started": 0.8125, "Reach": 1249,
+            "Frequency": 1.283427, "Impressions": 1603,
+            "Ad Set Budget": 3.5, "Ad Set Budget Type": "Daily",
+        }]
+
+    def test_detected_as_ad_performance_without_campaign_id(self):
+        self.assertEqual(
+            core.detect_upload_type_from_columns(self._rows()[0].keys()),
+            core.AD_PERFORMANCE_TYPE,
+        )
+
+    def test_campaign_id_is_recovered_from_a_known_campaign(self):
+        frame = core.read_ad_performance_tabular(ad_export_csv(self._rows()), ".csv")
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame.iloc[0]["Campaign ID"], "c99")
+        self.assertEqual(frame.attrs["cleaning_report"]["recovered_campaign_ids"], 1)
+        self.assertEqual(frame.attrs["cleaning_report"]["unresolved_attribution_rows"], 0)
+
+    def test_single_ad_set_row_keeps_reach_and_frequency(self):
+        """No Ad ID column means nothing to collapse, so real Reach must survive."""
+        frame = core.read_ad_performance_tabular(ad_export_csv(self._rows()), ".csv")
+        self.assertAlmostEqual(frame.iloc[0]["Reach"], 1249.0)
+        self.assertAlmostEqual(frame.iloc[0]["Frequency"], 1.283427, places=5)
+
+    def test_unknown_campaign_is_rejected_not_guessed(self):
+        """Loosening the detector must not let unattributable rows into the database.
+
+        An unrecognised campaign has no ID to recover, so every row fails the
+        `Campaign ID != ''` check and the read raises rather than importing rows with no
+        attribution. Failing loudly is the point: silently dropping them would look like a
+        successful import of a file whose spend went nowhere.
+        """
+        with self.assertRaises(ValueError):
+            core.read_ad_performance_tabular(
+                ad_export_csv(self._rows(campaign="Leads | VISA | NEVER SEEN | XX")), ".csv"
+            )
+
+    def test_a_file_with_no_campaign_column_at_all_still_fails_detection(self):
+        columns = [key for key in self._rows()[0] if key != "Campaign name"]
+        with self.assertRaises(ValueError):
+            core.detect_upload_type_from_columns(columns)
+
+
 class SupersededRowTests(IsolatedDbTestCase):
     """A true-ID export must retire the guesses an earlier export left behind."""
 

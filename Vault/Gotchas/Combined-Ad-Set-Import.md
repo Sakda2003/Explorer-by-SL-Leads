@@ -45,3 +45,43 @@ the normal ad-performance upload path (same one Meta CSV/XLSX exports use) — n
 handling needed now that the aliases and rollup fix are in place. If a future Meta export
 introduces yet another header spelling, add it to the alias block above
 `AD_KNOWN_HEADERS` in `core.py` rather than a new importer.
+
+## Third fix, 2026-08-13: `Campaign name` without `Campaign ID`
+
+`Ad-Set-Performance-and-Traffic-*.xlsx` (the current weekly export shape) is a **two-sheet**
+workbook: sheet 1 `Ad Set Performance` at ad-set×day grain, sheet 2 `Traffic` at lead grain.
+`_read_raw_frame` reads sheet 0 unless a `Corrected Traffic` sheet exists, so **uploading it
+imports the spend sheet only** — which is usually what you want, since `lead_events` is fed by
+the model_dataset/traffic path.
+
+It carries `Campaign name` but **no `Campaign ID`**, and that was unimportable:
+`detect_upload_type_from_columns` required all of `Campaign ID`/`Ad set ID`/`Day`, and
+`AD_PERFORMANCE_REQUIRED` listed `Campaign ID` too. So the file was rejected at detection —
+*before* `_repair_ad_performance_attribution`, whose entire job is reconstructing that ID from
+the campaign name, ever ran. That repair was only ever reachable for files where the column
+existed but held blanks.
+
+Both gates now accept `Campaign name` as a substitute. This loosens what is **accepted**, not
+what is **stored**: rows whose campaign cannot be resolved still fail the
+`Campaign ID != ''` check, and if that empties the frame the read raises rather than importing
+unattributed spend. `CampaignNameOnlyExportTests` covers both directions, including that a file
+with no campaign column at all still fails detection.
+
+Note `_repair_ad_performance_attribution` resolves names against **`lead_events`**
+(`_historical_campaign_ad_set_options`), not `daily_ad_performance` — so a brand-new campaign
+with no leads yet cannot be recovered this way.
+
+**`leads` in `daily_ad_performance` is unpopulated and always has been** — all 879 pre-existing
+rows had it NULL. Lead counts come from `lead_events` / `daily_ad_set_aggregates`, so this
+export having no `Leads` column costs nothing. Don't "fix" it by backfilling that column.
+
+**Imported 2026-08-13** (`Ad-Set-Performance-and-Traffic-2026-08-09.xlsx`, days 2026-08-01→08):
+128 inserted / 0 updated / 0 rejected / 0 unresolved, all 128 campaign IDs recovered, 16 budget
+periods written, 0 budget conflicts. `daily_ad_performance` 879 → **1007 rows**, coverage now
+2026-06-06 → **2026-08-08**, total spend $4,114.31 → **$4,723.50** (+$609.19). Reach/Frequency
+non-null on every new row (no `Ad ID` column, so the rollup had nothing to collapse).
+`lead_events` unchanged at 3,469. Import auto-triggered training run 310 (60 forecasts).
+
+**Still outstanding:** the `Traffic` sheet holds 6,341 lead rows back to **2026-01-26**, while
+`lead_events` starts 2026-06-06. Importing it would extend history by ~5 months and change what
+the models train on — a deliberate decision, not a routine upload. Left undone.
