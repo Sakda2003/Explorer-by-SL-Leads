@@ -39,6 +39,7 @@ codebase.
 - [[Dataset-Page]] — data inventory, variable dictionary, correlation matrix, and raw-row browser; portfolio-wide audit surface before trusting the forecast
 - [[Model-Performance-Removal]] — Dataset is now the sole portfolio-wide diagnostics surface
 - [[UI-Component-Inventory]] — current app pages and the pre-redesign component catalogue
+- [[Upload-Commit-Bar]] — the Upload page's import action, moved out from under the fold into a sticky bar
 - [[Dual-Theme-Redesign]] — the 2026-08-12 redesign: gold + cyan, a light theme that finally works, and the 531 literals that were blocking it
 
 ## Known Gotchas / Reference

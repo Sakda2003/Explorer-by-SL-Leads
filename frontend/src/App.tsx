@@ -3763,8 +3763,23 @@ function UploadPage() {
  <td key={column} className={variant !== 'default' ? `upload-cell-${variant}` : undefined} data-status={variant === 'status' ? String(value) : undefined} style={UPLOAD_COLUMN_WIDTHS[column] ? { width: UPLOAD_COLUMN_WIDTHS[column] } : undefined}>{String(value)}</td>
  );
  })}</tr>)}</tbody></table></div>
- <div className="confirm-bar"><div><Info /><p><b>Ready to import {fmt(preview.clean_rows)} {isModelDataset ? 'leads with their ad set context' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'}</b><span>{isModelDataset ? 'Leads and ad-set-day context land from this one file. Leads are matched by content, so re-uploading an overlapping week adds nothing twice.' : isChangeLog ? 'An ad set with confirmed events stops using detected ones entirely; ad sets you have not recorded keep the detector. Re-uploading a corrected file updates events in place.' : isAdPerformance ? 'Only rows with Amount spent (USD) are stored. Optional metrics can be blank and filled later by analytics.' : 'The raw export stays preserved. Existing lead IDs are skipped and forecasts retrain after import.'}</span></p></div><button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button></div>
+ {/* The import button used to live here, at the very bottom of the last section. With the
+     stats, a scrollable 16-row budget list and the preview table above it, the only action
+     on the page sat below the fold on a laptop -- and the budget list's own scrollbar
+     swallows the wheel, so the page looked like it had nothing more to show. The note stays
+     here where its context is; the action moved to the sticky bar below. */}
+ <div className="confirm-bar"><div><Info /><p><b>Ready to import {fmt(preview.clean_rows)} {isModelDataset ? 'leads with their ad set context' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'}</b><span>{isModelDataset ? 'Leads and ad-set-day context land from this one file. Leads are matched by content, so re-uploading an overlapping week adds nothing twice.' : isChangeLog ? 'An ad set with confirmed events stops using detected ones entirely; ad sets you have not recorded keep the detector. Re-uploading a corrected file updates events in place.' : isAdPerformance ? 'Only rows with Amount spent (USD) are stored. Optional metrics can be blank and filled later by analytics.' : 'The raw export stays preserved. Existing lead IDs are skipped and forecasts retrain after import.'}</span></p></div></div>
  </section>
+ <div className="upload-commit-bar">
+ <div className="upload-commit-facts">
+ <b>{fmt(preview.clean_rows)} {isModelDataset ? 'leads' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'} ready</b>
+ <span>{preview.date_min} → {preview.date_max}{isAdPerformance && preview.total_spend != null ? ` · ${cplMoney(preview.total_spend)}` : ''}{preview.rejected_rows ? ` · ${fmt(preview.rejected_rows)} rejected` : ''}</span>
+ </div>
+ <div className="upload-commit-actions">
+ <button className="button secondary" disabled={busy} onClick={resetPreview}>Discard</button>
+ <button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
+ </div>
+ </div>
  </>
  )}
  {error && <div className="error-banner">{error}</div>}

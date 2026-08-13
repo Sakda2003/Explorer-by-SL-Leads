@@ -4547,3 +4547,48 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .upload-v2-footer {
   color: var(--muted);
 }
+
+/* ============================================================
+   UPLOAD COMMIT BAR — the import action, always reachable
+   ============================================================
+   The primary action used to be the last element on the page, below the stats, a scrollable
+   budget list and the preview table. On a laptop it sat under the fold, and because
+   .budget-detected-list captures the wheel there was nothing to suggest more page existed --
+   so a cleaned file looked like a dead end. Sticky keeps the commit visible while the preview
+   above it is still scrollable and reviewable.
+
+   sticky, not fixed: it inherits the 1080px content column, so it stays clear of the sidebar
+   and needs no width maths of its own. Nothing between here and the body scrollport creates a
+   scroll container (.app-shell is overflow-x: clip, which does not), so bottom: 0 resolves
+   against the viewport. */
+.upload-commit-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  /* Breathing room below, so the bar never sits flush against the window edge. */
+  margin-bottom: 22px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 -2px 28px rgb(var(--shadow-ink) / .28), var(--shadow-card);
+}
+.upload-commit-facts { display: grid; gap: 3px; min-width: 0; }
+.upload-commit-facts b { color: var(--text); font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
+.upload-commit-facts span { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.upload-commit-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+.upload-commit-actions .button { min-height: 44px; padding: 0 20px; font-size: 13px; }
+
+/* Narrow windows: stack, and let the primary action span the full width so it stays the
+   obvious next step rather than being squeezed next to Discard. */
+@media (max-width: 640px) {
+  .upload-commit-bar { flex-direction: column; align-items: stretch; gap: 12px; }
+  .upload-commit-actions { justify-content: stretch; }
+  .upload-commit-actions .button { flex: 1; }
+}
