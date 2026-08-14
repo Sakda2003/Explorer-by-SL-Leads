@@ -9,7 +9,7 @@ import threading
 from statistics import median
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -18,10 +18,10 @@ from pydantic import BaseModel
 from . import auth
 
 from .core import (
-                   ROOT, change_event_coverage, connect, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_rows, get_forecast_realizations,
+                   ROOT, change_event_coverage, connect, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_forecast_realizations,
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
-                   list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
+                   list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
 
 app = FastAPI(title="LeadLens Forecasting", version="1.0.0")
 
@@ -32,9 +32,9 @@ auth.log_startup_state()
 # the dashboard shell either. See backend/auth.py -- inert until Cloudflare Access is configured.
 @app.middleware("http")
 async def require_access(request: Request, call_next):
-    ok, status, message = await auth.verify(request)
+    ok, status, message, headers = await auth.verify(request)
     if not ok:
-        return JSONResponse({"detail": message}, status_code=status)
+        return JSONResponse({"detail": message}, status_code=status, headers=headers or None)
     return await call_next(request)
 
 
@@ -155,29 +155,60 @@ def retrain():
     return train_models()
 
 
-# Recording a change event or a start date moves three model inputs (declared variables
-# 4/6/7), so every stored forecast goes stale the instant one is saved. Retraining
-# inline would hang the popover -- train_models() runs a rolling-origin backtest over every
-# ad set -- so it runs as a background task behind this guard.
+# Every mutation routed through this guard moves a model input -- a change event or start date
+# moves declared variables 4/6/7, a lead edit moves the aggregates, an ad-performance edit moves
+# spend/frequency -- so every stored forecast goes stale the instant one is saved. Retraining
+# inline would hang the caller: train_models() runs a rolling-origin backtest over every ad set
+# and measures ~29s here, so it always runs on a background thread behind this guard.
 #
 # The guard is single-flight with a one-slot queue rather than a plain "skip if busy": a run
 # already in flight may have read the aggregates before this save landed, so its results
 # would not reflect the edit. One follow-up pass is queued instead, and further saves during
 # that window collapse into the same pass rather than stacking N full retrains.
+#
+# In front of that sits a debounce (see RETRAIN_DEBOUNCE_SECONDS) so a burst of edits schedules
+# one run after the user stops, rather than one run per edit.
 _retrain_lock = threading.Lock()
 _retrain_running = False
 _retrain_queued = False
 _retrain_error: str | None = None
+# Set when a queued pass must run rebuild_aggregates() before train_models(). Lead edits move
+# what daily_ad_set_aggregates holds (the model reads that table, not lead_events directly), so
+# retraining without rebuilding first would train on pre-edit counts. Ad-performance edits do
+# not -- rebuild_aggregates() reads only lead_events -- so they leave this false and skip the
+# extra ~2s. Tracked as a flag rather than a second guard so a burst of mixed edits still
+# collapses into one pass that rebuilds if *any* of them needed it.
+_retrain_needs_aggregates = False
+# Debounce before a requested retrain actually starts. The Dataset board fires one request per
+# committed cell, so firing a full train_models() per edit meant that during any editing session
+# a ~30s retrain was permanently in flight -- and because numpy/pandas hold the GIL for long
+# stretches, it taxed every subsequent edit in the same process by ~200-400ms. Waiting for the
+# user to stop editing costs nothing (the retrain is already asynchronous and the UI shows a
+# chip until it lands) and collapses a burst of edits into one run instead of N.
+RETRAIN_DEBOUNCE_SECONDS = 4.0
+_retrain_timer: threading.Timer | None = None
+_retrain_pending = False
 
 
 def _run_retrain() -> None:
-    global _retrain_running, _retrain_queued, _retrain_error
+    global _retrain_running, _retrain_queued, _retrain_error, _retrain_needs_aggregates
     while True:
+        with _retrain_lock:
+            rebuild_first = _retrain_needs_aggregates
+            _retrain_needs_aggregates = False
         try:
+            if rebuild_first:
+                rebuild_aggregates()
             train_models()
         except Exception as exc:  # a failed retrain must not wedge the guard permanently
             with _retrain_lock:
                 _retrain_error = str(exc)
+                # Put the rebuild back: it either didn't run or didn't finish, and dropping it
+                # would leave the aggregates stale until some *later* lead edit happens to ask
+                # for one -- a silent wrong-numbers state, not a visible failure.
+                if rebuild_first:
+                    _retrain_needs_aggregates = True
+                    _retrain_queued = True
         with _retrain_lock:
             if not _retrain_queued:
                 _retrain_running = False
@@ -185,27 +216,51 @@ def _run_retrain() -> None:
             _retrain_queued = False
 
 
-def _request_retrain(tasks: BackgroundTasks) -> None:
-    """Schedule a retrain, collapsing concurrent requests into a single follow-up run.
-
-    `_retrain_running` is set here, inside the request, so it is already true by the time the
-    client sees the response -- the UI can start polling immediately without racing the
-    background task's own start.
-    """
-    global _retrain_running, _retrain_queued, _retrain_error
+def _start_retrain() -> None:
+    """Debounce timer callback: promote the pending request into a real run."""
+    global _retrain_running, _retrain_queued, _retrain_pending, _retrain_timer
     with _retrain_lock:
+        _retrain_pending = False
+        _retrain_timer = None
         if _retrain_running:
+            # A previous run is still going and may have read the data before these edits
+            # landed. Queue exactly one follow-up rather than starting a second run.
             _retrain_queued = True
             return
         _retrain_running = True
+    threading.Thread(target=_run_retrain, daemon=True).start()
+
+
+def _request_retrain(rebuild_aggregates_first: bool = False) -> None:
+    """Schedule a retrain once the caller stops editing, collapsing a burst into one run.
+
+    Returns immediately -- the request never waits on model work. Each call restarts the
+    debounce window, so N rapid edits produce one retrain `RETRAIN_DEBOUNCE_SECONDS` after the
+    last of them, not N retrains competing with the edits that triggered them.
+
+    `rebuild_aggregates_first` is sticky: it stays set until a run actually consumes it, so an
+    edit landing mid-retrain still gets its aggregates rebuilt by the queued follow-up pass.
+    """
+    global _retrain_timer, _retrain_pending, _retrain_needs_aggregates, _retrain_error
+    with _retrain_lock:
+        if rebuild_aggregates_first:
+            _retrain_needs_aggregates = True
         _retrain_error = None
-    tasks.add_task(_run_retrain)
+        _retrain_pending = True
+        if _retrain_timer is not None:
+            _retrain_timer.cancel()
+        _retrain_timer = threading.Timer(RETRAIN_DEBOUNCE_SECONDS, _start_retrain)
+        _retrain_timer.daemon = True
+        _retrain_timer.start()
 
 
 @app.get("/api/models/retrain-status")
 def retrain_status():
+    # "Pending" (waiting out the debounce) counts as running for the UI's purposes: the model
+    # is out of date either way, and reporting false in that window would make the retrain chip
+    # blink off and back on between the user's edit and the run actually starting.
     with _retrain_lock:
-        running, error = _retrain_running, _retrain_error
+        running, error = (_retrain_running or _retrain_pending), _retrain_error
     with connect() as db:
         row = db.execute(
             "SELECT id, status, completed_at FROM model_training_runs ORDER BY id DESC LIMIT 1"
@@ -348,6 +403,33 @@ def dataset_rows(
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.get("/api/dataset/row-ids")
+def dataset_row_ids(
+    table: str,
+    campaign_id: str | None = None,
+    ad_set_id: str | None = None,
+    filters: str | None = None,
+    search: str | None = None,
+):
+    """Every row id matching the current filter/search -- backs the Dataset page's "select all
+    N matching rows" action, which needs ids beyond whatever page happens to be loaded."""
+    parsed_filters = None
+    if filters:
+        try:
+            parsed_filters = json.loads(filters)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, f"Invalid filters JSON: {exc}") from exc
+        if not isinstance(parsed_filters, list):
+            raise HTTPException(400, "filters must be a JSON array")
+    try:
+        return get_dataset_row_ids(
+            table, campaign_id=campaign_id, ad_set_id=ad_set_id,
+            filters=parsed_filters, search=search,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.get("/api/dashboard/summary")
 def summary():
     with connect() as db:
@@ -463,7 +545,7 @@ def change_events(scope: str | None = None, ad_set_id: str | None = None):
 
 
 @app.post("/api/change-events")
-def create_change_event(payload: ChangeEvent, tasks: BackgroundTasks):
+def create_change_event(payload: ChangeEvent):
     try:
         saved = save_change_event(
             payload.scope, payload.ad_set_id,
@@ -472,17 +554,17 @@ def create_change_event(payload: ChangeEvent, tasks: BackgroundTasks):
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    _request_retrain(tasks)
+    _request_retrain()
     return saved
 
 
 @app.delete("/api/change-events/{event_id}")
-def remove_change_event(event_id: int, tasks: BackgroundTasks):
+def remove_change_event(event_id: int):
     try:
         deleted = delete_change_event(event_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-    _request_retrain(tasks)
+    _request_retrain()
     return deleted
 
 
@@ -492,24 +574,24 @@ def ad_set_start_dates(ad_set_id: str | None = None):
 
 
 @app.post("/api/ad-set-start-dates")
-def create_ad_set_start_date(payload: AdSetStartDate, tasks: BackgroundTasks):
+def create_ad_set_start_date(payload: AdSetStartDate):
     try:
         saved = save_ad_set_start_date(
             payload.ad_set_id, payload.start_date, payload.confirmed_by or "", payload.notes or "",
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    _request_retrain(tasks)
+    _request_retrain()
     return saved
 
 
 @app.delete("/api/ad-set-start-dates/{ad_set_id}")
-def remove_ad_set_start_date(ad_set_id: str, tasks: BackgroundTasks):
+def remove_ad_set_start_date(ad_set_id: str):
     try:
         deleted = delete_ad_set_start_date(ad_set_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-    _request_retrain(tasks)
+    _request_retrain()
     return deleted
 
 
@@ -569,44 +651,53 @@ def leads(
     }
 
 
+# Lead edits schedule their model refresh in the background, for the same reason the
+# ad-performance endpoints below do: rebuild_aggregates() + train_models() measure ~31s
+# together here, and the Dataset board fires one request per committed cell. Running that
+# inline froze the whole board (`.board-scroll.is-busy` disables pointer events) for half a
+# minute per keystroke-commit. `rebuild_aggregates_first=True` because a lead edit changes
+# what those aggregates hold -- see the guard's comment above.
 @app.patch("/api/leads/{lead_id}")
 def patch_lead(lead_id: int, payload: LeadUpdate):
     try:
-        return update_lead_event(lead_id, payload.dict(exclude_unset=True))
+        result = update_lead_event(lead_id, payload.dict(exclude_unset=True), retrain=False)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    _request_retrain(rebuild_aggregates_first=True)
+    return result
 
 
 @app.delete("/api/leads/{lead_id}")
 def remove_lead(lead_id: int):
     try:
-        return delete_lead_event(lead_id)
+        result = delete_lead_event(lead_id, retrain=False)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+    _request_retrain(rebuild_aggregates_first=True)
+    return result
 
 
 # Row-level edits for the Dataset page's "Ad performance" / "Combined export" board tabs.
 # Both tabs are two views over the same daily_ad_performance rows, so one pair of endpoints
-# serves both. Unlike the lead endpoints above (which retrain inline), these schedule a
-# background retrain: spend and frequency are model inputs, but the board fires one request
-# per committed cell and train_models() takes ~18s.
+# serves both. These schedule a background retrain too, but without the aggregate rebuild:
+# spend and frequency are model inputs, yet rebuild_aggregates() reads only lead_events.
 @app.patch("/api/dataset/ad-performance/{row_id}")
-def patch_ad_performance(row_id: int, payload: AdPerformanceUpdate, tasks: BackgroundTasks):
+def patch_ad_performance(row_id: int, payload: AdPerformanceUpdate):
     try:
         result = update_ad_performance_row(row_id, payload.dict(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    _request_retrain(tasks)
+    _request_retrain()
     return result
 
 
 @app.delete("/api/dataset/ad-performance/{row_id}")
-def remove_ad_performance(row_id: int, tasks: BackgroundTasks):
+def remove_ad_performance(row_id: int):
     try:
         result = delete_ad_performance_row(row_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-    _request_retrain(tasks)
+    _request_retrain()
     return result
 
 

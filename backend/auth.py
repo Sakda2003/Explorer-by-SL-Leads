@@ -15,6 +15,14 @@ already being on the machine or on the tailnet. `tailscale serve` proxies to tha
 port and stamps each request with the tailnet identity of the caller, which is what lets the
 reader/writer split keep working with no Cloudflare and no domain.
 
+**HTTP Basic Auth** (`BASIC_AUTH_USER` / `BASIC_AUTH_PASS`). For hosts with no tunnel and no
+tailnet in front -- a plain public PaaS deploy (Render, etc.) -- there is no proxy to establish
+identity, so this is a single shared credential checked here instead. It is strictly weaker
+than the other two modes: one password for everyone, no reader/writer split, and a network
+attacker who guesses it is in. It exists only to keep an unlisted demo deploy from being wide
+open to anyone with the URL; it is not a substitute for Cloudflare Access or Tailscale on a
+deployment that holds real customer data.
+
 Be clear-eyed about what that second mode is worth. A header is not a signature: its
 trustworthiness is inherited entirely from the topology described above, so it enforces
 *role separation between people who are already authenticated by Tailscale* rather than
@@ -34,13 +42,18 @@ unconfigured deployment is exactly the accident this module is meant to catch.
     LEADLENS_TAILSCALE_AUTH   1 to trust Tailscale Serve's identity header instead
     LEADLENS_ALLOWED_EMAILS   comma-separated; who may read (empty = anyone the gate admits)
     LEADLENS_WRITER_EMAILS    comma-separated; who may write (empty = same as allowed)
+    BASIC_AUTH_USER           shared username for HTTP Basic Auth (lowest-priority mode)
+    BASIC_AUTH_PASS           shared password for HTTP Basic Auth
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 import os
+import secrets
 import time
 
 import httpx
@@ -90,6 +103,8 @@ class AccessConfig:
         self.tailscale = _flag("LEADLENS_TAILSCALE_AUTH")
         self.allowed = _emails("LEADLENS_ALLOWED_EMAILS")
         self.writers = _emails("LEADLENS_WRITER_EMAILS")
+        self.basic_user = (os.getenv("BASIC_AUTH_USER") or "").strip()
+        self.basic_pass = os.getenv("BASIC_AUTH_PASS") or ""
 
     @property
     def enabled(self) -> bool:
@@ -99,16 +114,19 @@ class AccessConfig:
 
     @property
     def mode(self) -> str:
-        """"cloudflare", "tailscale", or "" for inert.
+        """"cloudflare", "tailscale", "basic", or "" for inert.
 
         Cloudflare wins when both are configured: a verified signature is strictly stronger
         evidence than a proxy header, so if the JWT is available there is no reason to fall
-        back to trusting a hop.
+        back to trusting a hop. Basic Auth is last resort, only when neither real topology is
+        configured -- see the module docstring for why it is weaker than both.
         """
         if self.team_domain and self.aud:
             return "cloudflare"
         if self.tailscale:
             return "tailscale"
+        if self.basic_user and self.basic_pass:
+            return "basic"
         return ""
 
     @property
@@ -224,26 +242,58 @@ def _verify_tailscale(request) -> tuple[bool, int, str]:
     return _authorize(email, request)
 
 
-async def verify(request) -> tuple[bool, int, str]:
-    """Return (ok, status, message) for a request. Never raises."""
+# RFC 7617 challenge, sent whenever Basic Auth is the active mode and the request is not yet
+# authorized -- this is what makes a browser pop its native login dialog instead of just
+# showing a bare 401 page.
+_BASIC_CHALLENGE = {"WWW-Authenticate": 'Basic realm="LeadLens", charset="UTF-8"'}
+
+
+def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
+    """Single shared credential -- see the module docstring for why this is a last resort.
+
+    Uses constant-time comparison so response timing cannot leak how much of the guess was
+    right, same reasoning as any password check.
+    """
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Basic "):
+        return False, 401, "Not signed in.", _BASIC_CHALLENGE
+    try:
+        decoded = base64.b64decode(header[6:]).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return False, 401, "Sign-in is not valid.", _BASIC_CHALLENGE
+    username, _, password = decoded.partition(":")
+    user_ok = secrets.compare_digest(username, config.basic_user)
+    pass_ok = secrets.compare_digest(password, config.basic_pass)
+    if not (user_ok and pass_ok):
+        log.warning("Rejected Basic Auth attempt for user %r", username)
+        return False, 401, "Sign-in is not valid.", _BASIC_CHALLENGE
+    request.state.user_email = username
+    return True, 200, "", {}
+
+
+async def verify(request) -> tuple[bool, int, str, dict[str, str]]:
+    """Return (ok, status, message, extra_headers) for a request. Never raises."""
     if request.url.path in _EXEMPT_PATHS:
-        return True, 200, ""
+        return True, 200, "", {}
 
     mode = config.mode
     if mode == "tailscale":
-        return _verify_tailscale(request)
+        ok, status, message = _verify_tailscale(request)
+        return ok, status, message, {}
+    if mode == "basic":
+        return _verify_basic(request)
     if mode != "cloudflare":
-        return True, 200, ""
+        return True, 200, "", {}
 
     token = _token_from(request)
     if not token:
-        return False, 401, "Not signed in."
+        return False, 401, "Not signed in.", {}
 
     try:
         key = await _signing_key(token)
         if key is None:
             log.warning("No Cloudflare signing key matches this token")
-            return False, 401, "Sign-in is not valid."
+            return False, 401, "Sign-in is not valid.", {}
         claims = jwt.decode(
             token,
             key.key,
@@ -255,12 +305,13 @@ async def verify(request) -> tuple[bool, int, str]:
         # Cloudflare's key endpoint is unreachable. Fail closed: this process is only ever
         # reachable through Cloudflare, so "cannot verify" and "must not serve" coincide.
         log.exception("Could not reach Cloudflare Access certs")
-        return False, 503, "Cannot verify sign-in right now."
+        return False, 503, "Cannot verify sign-in right now.", {}
     except jwt.PyJWTError as exc:
         log.warning("Rejected Access token: %s", exc)
-        return False, 401, "Sign-in is not valid."
+        return False, 401, "Sign-in is not valid.", {}
 
-    return _authorize(str(claims.get("email") or "").lower(), request)
+    ok, status, message = _authorize(str(claims.get("email") or "").lower(), request)
+    return ok, status, message, {}
 
 
 def log_startup_state() -> None:
@@ -296,6 +347,15 @@ def log_startup_state() -> None:
                 "Partial Cloudflare Access config present but ignored in Tailscale mode; "
                 "set both CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD to use Cloudflare instead."
             )
+        return
+
+    if mode == "basic":
+        log.warning(
+            "HTTP Basic Auth enforced for user %r. This is a single shared credential with "
+            "no reader/writer split -- fine for an unlisted demo deploy, not a substitute for "
+            "Cloudflare Access or Tailscale on a deployment holding real customer data.",
+            config.basic_user,
+        )
         return
 
     log.info(

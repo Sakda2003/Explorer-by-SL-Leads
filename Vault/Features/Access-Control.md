@@ -6,11 +6,23 @@ Built 2026-07-30, Phase 1 of the "only me and the CEO can reach this" deployment
 endpoints. The database holds ~2,700 lead records with `customer_name`, and `raw_json`
 carries the full CRM payload — this is customer PII, not just ad metrics.
 
-## Two topologies (second one added 2026-08-12)
+## Three topologies (third added 2026-08-14)
 
-`backend/auth.py` supports **two** ways of establishing identity, selected by env vars via
-`config.mode` — `"cloudflare"`, `"tailscale"`, or `""` (inert). Both funnel into one
-`_authorize()` helper, so the reader/writer split behaves identically either way.
+`backend/auth.py` supports **three** ways of establishing identity, selected by env vars via
+`config.mode` — `"cloudflare"`, `"tailscale"`, `"basic"`, or `""` (inert). Cloudflare and
+Tailscale funnel into one `_authorize()` helper with the reader/writer split; Basic Auth is a
+single shared credential with no split, checked in its own `_verify_basic()`.
+
+**Basic Auth (`BASIC_AUTH_USER` / `BASIC_AUTH_PASS`) exists for hosts with no tunnel and no
+tailnet in front** — a plain public PaaS deploy (Render free tier, etc.) where neither of the
+other two topologies is physically possible: there is no proxy in front of the container to
+stamp an identity header or terminate a Cloudflare tunnel. It is deliberately the lowest
+priority in `config.mode` and is meant only for an unlisted demo deploy carrying no real
+customer data — see "Public demo deploy" below. `auth.verify()` now returns a 4-tuple
+(`ok, status, message, headers`) instead of 3 — the extra slot carries the `WWW-Authenticate`
+challenge header so a browser shows its native login prompt instead of a bare 401 page. All
+call sites (`backend/app.py`'s middleware, `tests/test_auth.py`) were updated for the new
+shape; `BasicAuthTests` covers the mode.
 
 | | Cloudflare Access | Tailscale Serve |
 |---|---|---|
@@ -173,6 +185,25 @@ stays on hardware in-country. New failure modes are physical — power cuts (ena
 on AC Power Loss"; `restart: unless-stopped` covers the container), lid-close suspend on a
 laptop, and office-ISP outages. If no spare hardware turns up, Hetzner/DO/Vultr all take
 **PayPal**, which often works when a local card fails 3-D Secure.
+
+## Public demo deploy (2026-08-14)
+
+Separate from the live business deployment above: a second, disposable deploy exists purely
+as a public-facing demo of the app itself, with **no real customer data ever loaded into it**.
+
+- Attempted first on **Hugging Face Spaces** — blocked: Docker Spaces (private or public) now
+  require a Pro subscription even on `cpu-basic`, which used to be free. Not pursued further.
+- Landed on **Render**, deployed straight from a second GitHub remote
+  (`github.com/Sakda2003/Explorer-by-SL-Leads`, kept separate from the primary `origin` remote
+  pointing at `Sakda101/...`) using the existing root `Dockerfile` unmodified — free web
+  service, port 8000, health check `/api/health`.
+- Same storage caveat as the table above: Render free tier has an **ephemeral disk**, so the
+  SQLite DB resets on every restart/redeploy. Accepted deliberately for this deploy since it's
+  explicitly a UI demo, not a data store.
+- **Auth: `BASIC_AUTH_USER`/`BASIC_AUTH_PASS`**, set as Render environment variables (never
+  committed) — see the "Three topologies" section above for why Cloudflare/Tailscale mode
+  can't apply here. Until those env vars are set, the deploy is unauthenticated; the URL must
+  be treated as unlisted, not public, in that window.
 
 **Backups go to Google Drive, not B2/R2** — both of those want a card too. Drive is 15 GB free
 on the account Sakda already has, and `deploy/backup.sh` only ever passes `$RCLONE_REMOTE` to
