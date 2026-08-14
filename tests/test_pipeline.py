@@ -5,6 +5,7 @@ import math
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from backend import core
@@ -386,6 +387,81 @@ class PipelineTests(unittest.TestCase):
         forecast = core._forecast_candidate(core.OLS_MULTIVARIATE_MODEL_NAME, values, dates, 14, context)
         self.assertEqual(len(forecast), 14)
         self.assertTrue(all(math.isfinite(value) and value >= 0 for value in forecast))
+
+    # --- forward selection over the declared variables (diagnostics path only) -------------
+    # These build feature rows directly rather than through _ols_feature_frame: the selector
+    # only ever reads row.get(name), and hand-built rows let each test isolate one property.
+
+    @staticmethod
+    def _forward_rows(count: int, **columns) -> list[dict]:
+        return [{name: float(series[i]) for name, series in columns.items()} for i in range(count)]
+
+    def test_forward_selection_takes_the_predictor_and_leaves_the_noise(self):
+        rng = np.random.default_rng(7)
+        n = 40
+        spend = np.array([10.0 + (i % 9) * 3.0 for i in range(n)])
+        noise = rng.normal(2.0, 0.5, n)
+        values = 1.0 + 0.5 * spend
+        rows = self._forward_rows(n, spend=spend, frequency=noise)
+        selection = core._forward_select_declared_features(values, rows)
+        self.assertEqual(selection["features"], ["spend"])
+        self.assertEqual(selection["order"], [2])
+        self.assertEqual(selection["rejected"][5]["reason"], "no_gain")
+        self.assertLessEqual(selection["rejected"][5]["delta"], 0.0)
+
+    def test_forward_selection_refuses_an_aliased_second_counter(self):
+        # The real case from ad set 120238338920760078: ad_change_recency was always
+        # days_since_ad_set_started - 137, so with an intercept the two are one signal.
+        n = 40
+        age = np.arange(n, dtype=float)
+        values = 3.0 + 0.4 * age
+        rows = self._forward_rows(n, days_since_adset_started=age, ad_change_recency=age - 137.0)
+        selection = core._forward_select_declared_features(values, rows)
+        self.assertEqual(selection["features"], ["days_since_adset_started"])
+        self.assertEqual(selection["rejected"][6]["reason"], "no_gain")
+        self.assertAlmostEqual(selection["rejected"][6]["delta"], 0.0, places=9)
+
+    def test_forward_selection_enters_a_multi_column_variable_as_one_block(self):
+        n = 56
+        dates = pd.date_range("2026-06-01", periods=n, freq="D")
+        weekdays = {f"weekday_{d}": np.array([1.0 if day.weekday() == d else 0.0 for day in dates])
+                    for d in range(7)}
+        values = np.array([9.0 if day.weekday() >= 5 else 2.0 for day in dates])
+        rows = self._forward_rows(n, **weekdays)
+        selection = core._forward_select_declared_features(values, rows)
+        self.assertEqual(selection["order"], [8])
+        # Six of the seven indicators survive: the seventh is the intercept's exact complement
+        # and is dropped by the rank prune, not by selection.
+        self.assertEqual(len([f for f in selection["features"] if f.startswith("weekday_")]), 6)
+
+    def test_forward_selection_respects_the_observation_budget(self):
+        # 11 days is below _fit_ols_summary's floor of 12, so nothing is affordable even
+        # though spend is a perfect predictor here.
+        n = 11
+        spend = np.array([10.0 + i for i in range(n)])
+        rows = self._forward_rows(n, spend=spend)
+        selection = core._forward_select_declared_features(spend * 0.5, rows)
+        self.assertEqual(selection["features"], [])
+        self.assertEqual(selection["rejected"][2]["reason"], "observations")
+
+    def test_coverage_reports_the_margin_of_a_rejected_variable(self):
+        rng = np.random.default_rng(11)
+        n = 40
+        spend = np.array([10.0 + (i % 9) * 3.0 for i in range(n)])
+        rows = self._forward_rows(n, spend=spend, frequency=rng.normal(2.0, 0.5, n))
+        values = 1.0 + 0.5 * spend
+        selection = core._forward_select_declared_features(values, rows)
+        fit = core._fit_ols_summary(values, rows, selection["features"], "Multivariate OLS")
+        coverage = core._declared_variable_coverage(
+            rows, selection["features"], fit, selection=selection,
+        )
+        frequency = next(item for item in coverage if item["number"] == 5)
+        self.assertEqual(frequency["status"], "not_selected")
+        self.assertIn("adjusted R2", frequency["detail"])
+        # Without the selection argument the old wording still applies, so existing callers
+        # (the forecast path, any direct call) are unaffected.
+        legacy = core._declared_variable_coverage(rows, selection["features"], fit)
+        self.assertEqual(next(i for i in legacy if i["number"] == 5)["status"], "available")
 
     def test_spend_signal_has_positive_diminishing_returns(self):
         dates = pd.date_range("2026-06-01", periods=35, freq="D")

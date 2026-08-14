@@ -2464,31 +2464,59 @@ def _trailing_partial_date(frame: pd.DataFrame) -> str | None:
 
 
 def rebuild_aggregates() -> None:
+    """Recompute daily_ad_set_aggregates from scratch off lead_events.
+
+    Deliberately three phases -- read, compute, write -- rather than one `with connect()`
+    wrapping the whole thing. The pandas groupby below takes ~2s, and doing it inside the
+    transaction meant SQLite's single write lock was held for that entire time: an
+    interactive lead edit landing in that window blocked on `busy_timeout` (measured at
+    ~2.1s) instead of returning immediately. Computing first and writing via one
+    `executemany` shrinks the locked section to milliseconds. Correctness is unchanged --
+    this always rebuilt the table wholesale, so it never depended on the read and the write
+    sharing a transaction.
+    """
     with connect() as db:
         rows = db.execute("SELECT * FROM lead_events").fetchall()
+        # Newer traffic exports (since 2026-08-01) no longer carry a per-lead "Amount spent
+        # (USD)" column -- that context used to arrive only via the model-dataset workbook,
+        # which repeated the ad set's day spend onto every lead row. Ad-set-day spend is also
+        # reported directly by the separate ad-performance export, so it's used as a fallback
+        # here whenever no lead in the group carried its own spend value.
+        spend_rows = db.execute(
+            "SELECT day, ad_set_id, SUM(amount_spent_usd) AS spend FROM daily_ad_performance "
+            "GROUP BY day, ad_set_id"
+        ).fetchall()
+    ad_performance_spend = {(r["day"], r["ad_set_id"]): r["spend"] for r in spend_rows}
+
+    records: list[tuple] = []
+    if rows:
+        frame = pd.DataFrame([dict(r) for r in rows])
+        frame["aggregate_date"] = pd.to_datetime(frame["created_at"]).dt.date.astype(str)
+        partial = _trailing_partial_date(frame)
+        if partial is not None:
+            # Dropped from the modelled series only. lead_events keeps every row, so the
+            # leads stay visible in Data History and land in the aggregate once the next
+            # export completes the day.
+            frame = frame[frame["aggregate_date"] != partial]
+        for (date, ad_set), group in frame.groupby(["aggregate_date", "utm_ad_set_id"]):
+            status_counts = group["status"].fillna("Unknown").value_counts().to_dict()
+            campaign = group["utm_campaign_id"].dropna().astype(str).mode()
+            # Spend is contextual only: repeated per-lead values are summarized with max, never sum.
+            spend_context = group["amount_spent_usd"].max()
+            if pd.isna(spend_context):
+                spend_context = ad_performance_spend.get((date, ad_set))
+            records.append((
+                date, ad_set, campaign.iloc[0] if len(campaign) else "", len(group),
+                group["utm_ad_id"].replace("", np.nan).nunique(),
+                int(group["status"].str.casefold().eq("new").sum()),
+                int(group["status"].str.casefold().eq("existing").sum()),
+                json.dumps(status_counts), None if pd.isna(spend_context) else float(spend_context),
+            ))
+
+    with connect() as db:
         db.execute("DELETE FROM daily_ad_set_aggregates")
-        if rows:
-            frame = pd.DataFrame([dict(r) for r in rows])
-            frame["aggregate_date"] = pd.to_datetime(frame["created_at"]).dt.date.astype(str)
-            partial = _trailing_partial_date(frame)
-            if partial is not None:
-                # Dropped from the modelled series only. lead_events keeps every row, so the
-                # leads stay visible in Data History and land in the aggregate once the next
-                # export completes the day.
-                frame = frame[frame["aggregate_date"] != partial]
-            for (date, ad_set), group in frame.groupby(["aggregate_date", "utm_ad_set_id"]):
-                status_counts = group["status"].fillna("Unknown").value_counts().to_dict()
-                campaign = group["utm_campaign_id"].dropna().astype(str).mode()
-                # Spend is contextual only: repeated per-lead values are summarized with max, never sum.
-                spend_context = group["amount_spent_usd"].max()
-                db.execute(
-                    "INSERT INTO daily_ad_set_aggregates VALUES(?,?,?,?,?,?,?,?,?)",
-                    (date, ad_set, campaign.iloc[0] if len(campaign) else "", len(group),
-                     group["utm_ad_id"].replace("", np.nan).nunique(),
-                     int(group["status"].str.casefold().eq("new").sum()),
-                     int(group["status"].str.casefold().eq("existing").sum()),
-                     json.dumps(status_counts), None if pd.isna(spend_context) else float(spend_context)),
-                )
+        if records:
+            db.executemany("INSERT INTO daily_ad_set_aggregates VALUES(?,?,?,?,?,?,?,?,?)", records)
     refresh_forecast_realizations()
 
 
@@ -3631,7 +3659,15 @@ def get_portfolio_forecast_tracking(
 
 
 def refresh_forecast_realizations() -> dict:
-    """Attach actual lead counts to any stored daily forecasts whose dates have arrived."""
+    """Attach actual lead counts to any stored daily forecasts whose dates have arrived.
+
+    Split read / compute / write rather than doing everything in one transaction: this table
+    runs ~90k rows, and holding SQLite's single write lock across the SELECT and the
+    arithmetic blocked interactive lead edits for ~700ms. Only the final writes are inside a
+    transaction now, and only rows whose `actual_leads` actually changed are rewritten -- a
+    routine retrain usually changes a handful, so the locked section is milliseconds instead
+    of a full-table rewrite.
+    """
     realized_at = utc_now()
     with connect() as db:
         actual_range = db.execute(
@@ -3645,15 +3681,11 @@ def refresh_forecast_realizations() -> dict:
                        interval_hit=NULL, realized_at=NULL"""
             )
             return {"realized": 0, "latest_actual_date": None}
-        db.execute(
-            """UPDATE forecast_daily_predictions
-               SET actual_leads=NULL, error=NULL, absolute_error=NULL, squared_error=NULL,
-                   interval_hit=NULL, realized_at=NULL
-               WHERE date(forecast_date) < date(?) OR date(forecast_date) > date(?)""",
-            (earliest_date, latest_date),
-        )
+        # Read-only: `p.actual_leads` is the currently-stored value, kept alongside the freshly
+        # joined count so the write below can skip rows that already agree.
         rows = db.execute(
             """SELECT p.id, p.predicted_leads, p.lower_estimate, p.upper_estimate,
+                      p.actual_leads AS stored_actual,
                       COALESCE(a.lead_count, 0) actual_leads
                FROM forecast_daily_predictions p
                LEFT JOIN daily_ad_set_aggregates a
@@ -3662,20 +3694,58 @@ def refresh_forecast_realizations() -> dict:
                WHERE date(p.forecast_date) BETWEEN date(?) AND date(?)""",
             (earliest_date, latest_date),
         ).fetchall()
-        for row in rows:
-            predicted = float(row["predicted_leads"])
-            actual = float(row["actual_leads"])
-            error = predicted - actual
+        # Whether anything outside the actuals window still carries a realization to clear.
+        # Probed here, as a read, so the clearing UPDATE below can be skipped entirely in the
+        # normal case -- `date()` on every row makes it a full scan that costs ~80ms of write
+        # lock even when it matches zero rows.
+        stale_outside = db.execute(
+            """SELECT EXISTS(SELECT 1 FROM forecast_daily_predictions
+                             WHERE actual_leads IS NOT NULL
+                               AND (date(forecast_date) < date(?)
+                                    OR date(forecast_date) > date(?)))""",
+            (earliest_date, latest_date),
+        ).fetchone()[0]
+
+    updates = []
+    for row in rows:
+        predicted = float(row["predicted_leads"])
+        actual = float(row["actual_leads"])
+        stored = row["stored_actual"]
+        # Every other written column is a pure function of (predicted, bounds, actual), and
+        # the first three are immutable once a forecast is stored -- so an unchanged actual
+        # means an unchanged row. `realized_at` is informational (CSV export only, never read
+        # by any logic or the UI), so leaving it at the run that established the value is
+        # fine, and arguably truer than restamping it on every retrain.
+        if stored is not None and float(stored) == actual:
+            continue
+        error = predicted - actual
+        updates.append((
+            actual, error, abs(error), error * error,
+            int(float(row["lower_estimate"]) <= actual <= float(row["upper_estimate"])),
+            realized_at, row["id"],
+        ))
+
+    if not stale_outside and not updates:
+        # Nothing to write at all -- don't take the write lock just to prove it.
+        return {"realized": len(rows), "earliest_actual_date": earliest_date,
+                "latest_actual_date": latest_date}
+
+    with connect() as db:
+        if stale_outside:
             db.execute(
+                """UPDATE forecast_daily_predictions
+                   SET actual_leads=NULL, error=NULL, absolute_error=NULL, squared_error=NULL,
+                       interval_hit=NULL, realized_at=NULL
+                   WHERE date(forecast_date) < date(?) OR date(forecast_date) > date(?)""",
+                (earliest_date, latest_date),
+            )
+        if updates:
+            db.executemany(
                 """UPDATE forecast_daily_predictions
                    SET actual_leads=?, error=?, absolute_error=?, squared_error=?,
                        interval_hit=?, realized_at=?
                    WHERE id=?""",
-                (
-                    actual, error, abs(error), error * error,
-                    int(float(row["lower_estimate"]) <= actual <= float(row["upper_estimate"])),
-                    realized_at, row["id"],
-                ),
+                updates,
             )
     return {"realized": len(rows), "earliest_actual_date": earliest_date,
             "latest_actual_date": latest_date}
@@ -4545,6 +4615,30 @@ def _fit_ols_summary(values: np.ndarray, feature_rows: list[dict[str, float]], f
     }
 
 
+# The declared drivers (variables 2-8) as selection GROUPS: one entry per declared variable,
+# carrying the encoded feature columns that variable is expressed through. Both the
+# all-declared selector and the forward selector read this, so the two can never disagree
+# about what the candidate pool is. Kept as a literal here rather than derived from
+# DECLARED_VARIABLES (defined further down) because the two lists differ deliberately in one
+# place: variable 8's spec also lists `is_weekend`, which is a redundant recode of the seven
+# day indicators and has never been a fit candidate.
+DECLARED_OLS_GROUPS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
+    (2, "Spent", ("spend",)),
+    (3, "Holiday_Proximity", ("holiday_during_holiday", "holiday_0_14_days",
+                              "holiday_15_30_days", "holiday_31_60_days")),
+    (4, "days_since_adset_started", ("days_since_adset_started",)),
+    (5, "frequency", ("frequency",)),
+    (6, "ad_change_recency", ("ad_change_recency",)),
+    (7, "ad_set_change_recency", ("ad_set_change_recency",)),
+    # All seven days, no reference day held out (see the note on DECLARED_VARIABLES #8 below).
+    # Combined with the intercept this is rank-deficient by construction, which
+    # _fit_ols_summary/_fit_ols_predictions already tolerate via np.linalg.pinv's minimum-norm
+    # solution, and which the rank-prune below turns into a dropped redundant column.
+    (8, "Days of the week", ("weekday_0", "weekday_1", "weekday_2", "weekday_3",
+                             "weekday_4", "weekday_5", "weekday_6")),
+)
+
+
 def _select_multivariate_ols_features(values: np.ndarray, feature_rows: list[dict[str, float]]) -> list[str]:
     """Exactly the declared drivers (variables 2-8), with leads as the modelled outcome.
 
@@ -4558,29 +4652,156 @@ def _select_multivariate_ols_features(values: np.ndarray, feature_rows: list[dic
 
     Features with no variation over the window are dropped - they cannot be estimated,
     which is a different thing from being unhelpful, and _declared_variable_coverage
-    reports them as such rather than letting them disappear silently.
+    reports them as such rather than letting them disappear silently. Varying features
+    that do not add rank after the intercept and earlier declared terms are also dropped;
+    otherwise OLS can only return arbitrary pseudoinverse coefficients for aliased
+    columns such as age and a recency counter that differ by a constant.
     """
-    candidates = [
-        "spend",                                     # 2. Spent
-        "holiday_during_holiday", "holiday_0_14_days",
-        "holiday_15_30_days", "holiday_31_60_days",  # 3. Holiday_Proximity
-        "days_since_adset_started",                  # 4. days_since_adset_started
-        "frequency",                                 # 5. frequency
-        "ad_change_recency",                         # 6. ad_change_recency
-        "ad_set_change_recency",                     # 7. ad_set_change_recency
-        "weekday_0", "weekday_1", "weekday_2", "weekday_3",
-        "weekday_4", "weekday_5", "weekday_6",       # 8. Days of the week -- all seven, no
-                                                      # reference day held out (see note on
-                                                      # DECLARED_VARIABLES #8 below); combined
-                                                      # with the intercept this is rank-deficient
-                                                      # by construction, which _fit_ols_summary/
-                                                      # _fit_ols_predictions already tolerate via
-                                                      # np.linalg.pinv's minimum-norm solution.
-    ]
-    return [
+    candidates = [feature for _, _, features in DECLARED_OLS_GROUPS for feature in features]
+    varying = [
         feature for feature in candidates
         if np.std([row.get(feature, 0.0) for row in feature_rows]) > 1e-9
     ]
+    if not varying:
+        return []
+    return _prune_rank_dependent_features(feature_rows, varying)
+
+
+def _ols_design_fit(
+    y: np.ndarray, feature_rows: list[dict[str, float]], features: list[str],
+) -> tuple[np.ndarray, int] | None:
+    """Least-squares fit of y on [intercept, features]; returns (fitted, df_model) or None.
+
+    The lightweight core of _fit_ols_summary, without the standard errors, t/F tests and
+    residual diagnostics. Forward selection runs O(groups^2) fits per scope and only ever
+    reads adjusted R2 off them, so it must not pay for the full summary each time.
+
+    df_model is the design matrix rank minus the intercept, not len(features): the weekday
+    block is rank-deficient by construction, and adjusted R2 has to be charged for the
+    degrees of freedom actually spent, otherwise a group that adds no rank looks free.
+    """
+    if not features:
+        return None
+    design = np.asarray([[row.get(feature, 0.0) for feature in features] for row in feature_rows], dtype=float)
+    if design.shape[0] != len(y) or design.shape[1] != len(features):
+        return None
+    x = np.c_[np.ones(len(design)), design]
+    rank = int(np.linalg.matrix_rank(x))
+    df_model = max(0, rank - 1)
+    if df_model <= 0 or len(y) - rank <= 0:
+        return None
+    coefficients = np.linalg.pinv(x.T @ x) @ x.T @ y
+    return x @ coefficients, df_model
+
+
+# Adjusted R2 already charges for each degree of freedom spent, so any positive gain is in
+# principle an improvement. This floor exists only to stop a term entering on floating-point
+# noise; a genuine 1e-6 improvement in adjusted R2 is not a finding worth a coefficient row.
+FORWARD_SELECTION_MIN_GAIN = 1e-6
+
+
+def _forward_select_declared_features(
+    values: np.ndarray, feature_rows: list[dict[str, float]],
+) -> dict:
+    """Greedy forward selection over the declared variables, scored by adjusted R2.
+
+    Diagnostics only (2026-08-13). `_select_multivariate_ols_features` -- which admits every
+    declared variable that varies and adds rank -- still drives the stored forecasts, so the
+    ridge penalty in `_ols_forecast` keeps scaling with the same feature count it always has.
+    This function feeds the Multivariate OLS card and the per-ad-set regression report.
+
+    Whole variables enter or stay out together: Holiday_Proximity's four buckets and the seven
+    weekday indicators are one candidate each, not eleven. Selecting individual dummies would
+    fit leaner but leaves the declared-variable displays reporting partial credit ("Wednesday
+    but not Thursday"), which is not a statement the declared causal framework can make.
+
+    Candidates are evaluated against the observation budget `_fit_ols_summary` enforces
+    (max(12, terms + 6) days), so on a thin ad set the search stops at a set that can actually
+    be fitted rather than returning one that will be refused downstream.
+
+    Returns the selected columns plus, for every variable left out, the reason and the
+    adjusted-R2 delta it would have produced against the FINAL model -- silently missing
+    variables read as bugs on this project, so `_declared_variable_coverage` needs the number.
+    """
+    y = np.clip(np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
+    result: dict = {"features": [], "order": [], "rejected": {}, "adjusted_r_squared": None}
+    if len(y) == 0 or not feature_rows or len(feature_rows) != len(y):
+        return result
+
+    remaining = []
+    for number, label, features in DECLARED_OLS_GROUPS:
+        varying = [
+            feature for feature in features
+            if np.std([row.get(feature, 0.0) for row in feature_rows]) > 1e-9
+        ]
+        if varying:
+            remaining.append((number, label, varying))
+    if not remaining:
+        return result
+
+    def evaluate(group_features: list[str], selected: list[str]) -> tuple[float | None, str]:
+        candidate = selected + [feature for feature in group_features if feature not in selected]
+        if len(y) < max(12, len(candidate) + 6):
+            return None, "observations"
+        fit = _ols_design_fit(y, feature_rows, candidate)
+        if fit is None:
+            return None, "rank"
+        fitted, df_model = fit
+        return _ols_adjusted_r2(y, fitted, df_model), "scored"
+
+    selected: list[str] = []
+    # Intercept-only baseline: the mean predictor, whose adjusted R2 is 0 by construction. A
+    # variable has to beat "predict the average day" before it earns a place.
+    best_score = 0.0
+    while remaining:
+        best_index, best_gain, winning_score = None, FORWARD_SELECTION_MIN_GAIN, None
+        for index, (_, _, group_features) in enumerate(remaining):
+            score, _reason = evaluate(group_features, selected)
+            if score is None or not math.isfinite(score):
+                continue
+            gain = score - best_score
+            if gain > best_gain:
+                best_index, best_gain, winning_score = index, gain, score
+        if best_index is None or winning_score is None:
+            break
+        number, _, group_features = remaining.pop(best_index)
+        selected = selected + [feature for feature in group_features if feature not in selected]
+        best_score = winning_score
+        result["order"].append(number)
+
+    # Report every rejection against the final model, not against whichever round it lost in --
+    # a variable's marginal value depends on what else ended up in the fit.
+    for number, _, group_features in remaining:
+        score, reason = evaluate(group_features, selected)
+        if score is None:
+            result["rejected"][number] = {"reason": reason, "delta": None}
+        else:
+            result["rejected"][number] = {"reason": "no_gain", "delta": float(score - best_score)}
+
+    # Aliased columns can survive the greedy pass inside a winning group (the group earned its
+    # place on the columns that did add rank). Prune them the same way the all-declared selector
+    # does, so no coefficient row is a pseudoinverse artifact.
+    result["features"] = _prune_rank_dependent_features(feature_rows, selected)
+    result["adjusted_r_squared"] = float(best_score) if selected else None
+    return result
+
+
+def _prune_rank_dependent_features(
+    feature_rows: list[dict[str, float]], features: list[str],
+) -> list[str]:
+    """Keep only features that add rank once the intercept and earlier features are in place."""
+    kept: list[str] = []
+    design = np.ones((len(feature_rows), 1), dtype=float)
+    current_rank = int(np.linalg.matrix_rank(design))
+    for feature in features:
+        column = np.asarray([row.get(feature, 0.0) for row in feature_rows], dtype=float).reshape(-1, 1)
+        candidate_design = np.c_[design, column]
+        candidate_rank = int(np.linalg.matrix_rank(candidate_design))
+        if candidate_rank > current_rank:
+            kept.append(feature)
+            design = candidate_design
+            current_rank = candidate_rank
+    return kept
 
 
 def _ols_forecast(
@@ -4694,17 +4915,25 @@ def get_ols_model_summaries(
     if values is None or feature_rows is None:
         return empty
     univariate = _fit_ols_summary(values, feature_rows, ["spend"], "OLS")
-    selected = _select_multivariate_ols_features(values, feature_rows)
+    # Forward selection, not every declared variable that happens to vary -- see
+    # _forward_select_declared_features. The forecast path deliberately still uses the
+    # all-declared selector.
+    selection = _forward_select_declared_features(values, feature_rows)
+    selected = selection["features"]
     multivariate = _fit_ols_summary(values, feature_rows, selected, "Multivariate OLS") if selected else None
     # Why a card is missing matters more at narrow scope than at portfolio scope, where it
     # only ever meant "no spend uploaded".
     scope["multivariate_terms_wanted"] = len(selected)
     scope["multivariate_days_needed"] = max(12, len(selected) + 6) if selected else 12
     scope["univariate_days_needed"] = 12
+    scope["multivariate_selection"] = "forward"
+    scope["multivariate_selection_order"] = selection["order"]
     return {
         "univariate": univariate,
         "multivariate": multivariate,
-        "declared_variables": _declared_variable_coverage(feature_rows, selected, multivariate),
+        "declared_variables": _declared_variable_coverage(
+            feature_rows, selected, multivariate, selection=selection,
+        ),
         "scope": scope,
     }
 
@@ -4746,12 +4975,16 @@ DECLARED_VARIABLES: tuple[dict[str, object], ...] = (
 
 def _declared_variable_coverage(
     feature_rows: list[dict[str, float]], selected: list[str], multivariate: dict | None,
+    *, selection: dict | None = None,
 ) -> list[dict]:
     """Per-variable status for Dataset and OLS diagnostics.
 
-    Distinguishes three very different reasons a variable can be missing from the fit:
-    it was never collected, it was collected but never varied, or it varied and the
-    stepwise search simply did not pick it.
+    Distinguishes four very different reasons a variable can be missing from the fit: it was
+    never collected, it was collected but never varied, it varied but is not estimable
+    (aliased with something already in the design), or it is estimable and forward selection
+    weighed it and left it out. Pass `selection` (from `_forward_select_declared_features`) to
+    tell the last two apart and to report the adjusted-R2 delta the variable would have added;
+    without it, both collapse to the old "omitted from the estimable model" wording.
     """
     coefficients = {row["feature"]: row for row in (multivariate or {}).get("coefficients", [])}
     selected_set = set(selected)
@@ -4785,7 +5018,23 @@ def _declared_variable_coverage(
                 ),
             })
         elif varying:
-            entry.update({"status": "available", "detail": "Varies, but not selected by the model"})
+            rejection = (selection or {}).get("rejected", {}).get(spec["number"])
+            reason = (rejection or {}).get("reason")
+            if reason == "no_gain":
+                delta = rejection.get("delta")
+                moves = f"{delta:+.4f}" if delta is not None else "no better"
+                entry.update({
+                    "status": "not_selected",
+                    "detail": f"Varies, but forward selection left it out -- adding it moves "
+                              f"adjusted R2 by {moves}",
+                })
+            elif reason == "observations":
+                entry.update({
+                    "status": "not_selected",
+                    "detail": "Varies, but this window has too few days to afford another term",
+                })
+            else:
+                entry.update({"status": "available", "detail": "Varies, but omitted from the estimable model"})
         elif features:
             entry.update({"status": "flat", "detail": "Collected, but constant over this window"})
         else:
@@ -4934,7 +5183,10 @@ _LEADS_FILTER_FIELDS: dict[str, dict[str, object]] = {
     "utm_ad_set_id": {"column": "utm_ad_set_id", "type": "text"},
     "utm_ad_id": {"column": "utm_ad_id", "type": "text"},
     "fb_ad_title": {"column": "fb_ad_title", "type": "text"},
-    "amount_spent_usd": {"column": "amount_spent_usd", "type": "number"},
+    # Traffic exports since 2026-08-01 no longer carry a per-lead "Amount spent (USD)" column
+    # (that context previously arrived only via the model-dataset workbook), so this falls back
+    # to the ad set's day spend from the ad-performance export -- see the "leads" table's "join".
+    "amount_spent_usd": {"column": "COALESCE(amount_spent_usd, p.spend)", "type": "number"},
     "created_at": {"column": "created_at", "type": "date"},
 }
 
@@ -4971,9 +5223,14 @@ _AD_PERFORMANCE_SEARCH_COLUMNS = ["p.campaign_name", "p.campaign_id", "p.ad_set_
 DATASET_ROW_TABLES: dict[str, dict[str, object]] = {
     "leads": {
         "table": "lead_events",
+        # Falls back to the ad set's day spend (from the ad-performance export) whenever the
+        # lead itself carries no "Amount spent (USD)" -- see _LEADS_FILTER_FIELDS above.
+        "join": ("LEFT JOIN (SELECT ad_set_id, day, SUM(amount_spent_usd) AS spend "
+                 "FROM daily_ad_performance GROUP BY ad_set_id, day) p "
+                 "ON p.ad_set_id = utm_ad_set_id AND p.day = date(created_at)"),
         "columns": ["id", "platform", "status", "lead_quality", "created_at", "updated_at",
                     "customer_name", "utm_campaign", "utm_campaign_id", "utm_ad_set_id",
-                    "utm_ad_id", "fb_ad_title", "amount_spent_usd"],
+                    "utm_ad_id", "fb_ad_title", "COALESCE(amount_spent_usd, p.spend) AS amount_spent_usd"],
         "order_by": "created_at ASC",
         "campaign_column": "utm_campaign_id",
         "ad_set_column": "utm_ad_set_id",
@@ -5202,13 +5459,12 @@ def _attach_declared_variables(rows: list[dict]) -> None:
             row[recency_key] = _change_state_as_of(events_by_scope[scope].get(ad_set, ()), day)
 
 
-def get_dataset_rows(
-    table: str, offset: int = 0, limit: int = 50,
-    campaign_id: str | None = None, ad_set_id: str | None = None,
-    filters: list[dict] | None = None,
-    sort: str | None = None, direction: str = "asc", search: str | None = None,
-) -> dict:
-    """Paginated raw rows for one of the tables the Dataset page can browse.
+def _dataset_where(
+    table: str, spec: dict,
+    campaign_id: str | None, ad_set_id: str | None,
+    filters: list[dict] | None, search: str | None,
+) -> tuple[str, list[object]]:
+    """WHERE clause + bound params shared by `get_dataset_rows` and `get_dataset_row_ids`.
 
     `table` is resolved through the `DATASET_ROW_TABLES` allowlist -- the table name, column
     list, and sort order are always the hardcoded values from that dict, never the caller's
@@ -5216,18 +5472,7 @@ def get_dataset_rows(
     `filters`: each row's `field` is looked up in that table's `filter_fields` allowlist, so
     the SQL column and type are always the hardcoded spec, never the caller's string -- only
     the filter's `value` (always bound via `?`) carries caller-supplied data.
-
-    `sort` follows the same rule: it's a key into that table's `sort_fields` allowlist, and
-    `direction` collapses to the literal "ASC"/"DESC" -- neither ever reaches the SQL as
-    caller text. `search` is a free-text sweep across the table's `search_columns`, bound
-    via `?` like any other value.
     """
-    spec = DATASET_ROW_TABLES.get(table)
-    if spec is None:
-        raise ValueError(f"Unknown dataset table: {table!r}")
-    limit = max(1, min(int(limit), 500))
-    offset = max(0, int(offset))
-
     where: list[str] = []
     params: list[object] = []
     if campaign_id:
@@ -5255,6 +5500,29 @@ def get_dataset_rows(
             where.append("(" + " OR ".join(f"LOWER({col}) LIKE ? ESCAPE '\\'" for col in search_columns) + ")")
             params.extend([like] * len(search_columns))
     clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return clause, params
+
+
+def get_dataset_rows(
+    table: str, offset: int = 0, limit: int = 50,
+    campaign_id: str | None = None, ad_set_id: str | None = None,
+    filters: list[dict] | None = None,
+    sort: str | None = None, direction: str = "asc", search: str | None = None,
+) -> dict:
+    """Paginated raw rows for one of the tables the Dataset page can browse.
+
+    `sort` is a key into the table's `sort_fields` allowlist, and `direction` collapses to the
+    literal "ASC"/"DESC" -- neither ever reaches the SQL as caller text. `search` is a free-text
+    sweep across the table's `search_columns`, bound via `?` like any other value. See
+    `_dataset_where` for how `filters`/`campaign_id`/`ad_set_id` are handled.
+    """
+    spec = DATASET_ROW_TABLES.get(table)
+    if spec is None:
+        raise ValueError(f"Unknown dataset table: {table!r}")
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+
+    clause, params = _dataset_where(table, spec, campaign_id, ad_set_id, filters, search)
     columns_sql = ", ".join(spec["columns"])  # type: ignore[arg-type]
     join_sql = str(spec.get("join") or "")
 
@@ -5272,9 +5540,10 @@ def get_dataset_rows(
         order_sql = str(spec["order_by"])
 
     with connect() as db:
-        # The join is 1:1 on (day, ad_set_id) (daily_ad_set_aggregates' primary key), so it
-        # can't change the row count -- the COUNT query is left querying the base table alone.
-        total = db.execute(f"SELECT COUNT(*) FROM {spec['table']} {clause}", params).fetchone()[0]
+        # The join is 1:1 (on daily_ad_set_aggregates' primary key, or on the leads table's
+        # grouped-by-(ad_set_id, day) spend fallback), so it can't change the row count -- but
+        # it's still included here since a filter/sort column may reference the joined alias.
+        total = db.execute(f"SELECT COUNT(*) FROM {spec['table']} {join_sql} {clause}", params).fetchone()[0]
         rows = db.execute(
             f"SELECT {columns_sql} FROM {spec['table']} {join_sql} {clause} "
             f"ORDER BY {order_sql} LIMIT ? OFFSET ?",
@@ -5284,6 +5553,35 @@ def get_dataset_rows(
     if table in _DECLARED_VAR_TABLES:
         _attach_declared_variables(result_rows)
     return {"rows": result_rows, "total": int(total), "offset": offset, "limit": limit}
+
+
+# Hard ceiling on a "select all matching" bulk action -- protects the Delete/Export CSV bulk
+# actions (each id then makes its own request or its own CSV row) from an unbounded scan if a
+# filter is left too broad. The Dataset page surfaces `capped` so the user knows to narrow first.
+SELECT_ALL_MATCHING_CAP = 20_000
+
+
+def get_dataset_row_ids(
+    table: str, campaign_id: str | None = None, ad_set_id: str | None = None,
+    filters: list[dict] | None = None, search: str | None = None,
+) -> dict:
+    """Every row id matching the current filter/search, for the Dataset page's "select all N
+    matching rows" action -- unlike `get_dataset_rows`, not capped to one page of 500."""
+    spec = DATASET_ROW_TABLES.get(table)
+    if spec is None:
+        raise ValueError(f"Unknown dataset table: {table!r}")
+    clause, params = _dataset_where(table, spec, campaign_id, ad_set_id, filters, search)
+    join_sql = str(spec.get("join") or "")
+    id_column = str(spec["columns"][0])  # every table's first declared column is its id
+    with connect() as db:
+        total = db.execute(f"SELECT COUNT(*) FROM {spec['table']} {join_sql} {clause}", params).fetchone()[0]
+        rows = db.execute(
+            f"SELECT {id_column} FROM {spec['table']} {join_sql} {clause} "
+            f"ORDER BY {spec['order_by']} LIMIT ?",
+            [*params, SELECT_ALL_MATCHING_CAP],
+        ).fetchall()
+    ids = [str(row[0]) for row in rows]
+    return {"ids": ids, "total": int(total), "capped": int(total) > len(ids)}
 
 
 def calculate_forecast_metrics(
@@ -7911,7 +8209,16 @@ def _clean_lead_update_value(field: str, value: object) -> object:
     return cleaned
 
 
-def update_lead_event(lead_id: int, changes: dict) -> dict:
+def update_lead_event(lead_id: int, changes: dict, retrain: bool = True) -> dict:
+    """Apply one or more field edits to a lead.
+
+    `retrain=False` writes the row and returns, leaving `rebuild_aggregates()` +
+    `train_models()` to the caller. That pair costs ~31s here (2s + ~29s), which is far too
+    much to spend inside an interactive request -- the Dataset board fires one PATCH per
+    committed cell, so `app.py` passes False and schedules the work behind the background
+    retrain guard instead. Defaults to True so non-interactive callers keep the old
+    write-then-refresh-everything behaviour without having to know about the guard.
+    """
     clean_changes = {
         field: _clean_lead_update_value(field, value)
         for field, value in changes.items()
@@ -7948,6 +8255,8 @@ def update_lead_event(lead_id: int, changes: dict) -> dict:
             (lead_id,),
         ).fetchone())
 
+    if not retrain:
+        return {"updated": lead_id, "lead": updated, "training_run": None}
     rebuild_aggregates()
     run = train_models()
     return {"updated": lead_id, "lead": updated, "training_run": run}
@@ -8042,13 +8351,16 @@ def delete_ad_performance_row(row_id: int) -> dict:
     return {"deleted": row_id}
 
 
-def delete_lead_event(lead_id: int) -> dict:
+def delete_lead_event(lead_id: int, retrain: bool = True) -> dict:
+    """Delete one lead. See `update_lead_event` for what `retrain=False` defers and why."""
     with connect() as db:
         existing = db.execute("SELECT id FROM lead_events WHERE id=?", (lead_id,)).fetchone()
         if not existing:
             raise ValueError("Lead not found.")
         db.execute("DELETE FROM lead_events WHERE id=?", (lead_id,))
 
+    if not retrain:
+        return {"deleted": lead_id, "training_run": None}
     rebuild_aggregates()
     run = train_models()
     return {"deleted": lead_id, "training_run": run}
