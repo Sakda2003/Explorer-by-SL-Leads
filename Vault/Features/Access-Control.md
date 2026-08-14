@@ -197,15 +197,30 @@ as a public-facing demo of the app itself, with **no real customer data ever loa
   (`github.com/Sakda2003/Explorer-by-SL-Leads`, kept separate from the primary `origin` remote
   pointing at `Sakda101/...`) using the existing root `Dockerfile` unmodified — free web
   service, port 8000, health check `/api/health`.
+- Live at `https://explorer-by-sl-leads.onrender.com/` (first successful deploy 2026-08-14).
 - Same storage caveat as the table above: Render free tier has an **ephemeral disk**, so the
-  SQLite DB resets on every restart/redeploy. Accepted deliberately for this deploy since it's
-  explicitly a UI demo, not a data store.
+  SQLite DB resets on every restart/redeploy — and the free tier also spins down after ~15 min
+  idle, so a *visit* after a quiet spell is enough to lose an import. The `VOLUME ["/data"]`
+  line in the Dockerfile does **not** grant persistence on Render; disks there need a paid
+  instance. Accepted deliberately since this deploy is a UI demo, not a data store. Anything
+  needing to survive stays on the office-PC + Tailscale deployment.
 - **Auth: `BASIC_AUTH_USER`/`BASIC_AUTH_PASS`**, set as Render environment variables (never
   committed) — see the "Three topologies" section above for why Cloudflare/Tailscale mode
   can't apply here. Until those env vars are set, the deploy is unauthenticated; the URL must
   be treated as unlisted, not public, in that window.
 - Render's **Health Check Path must be `/api/health`** — its default placeholder is `/healthz`,
   which this app does not serve, so leaving it would mark a healthy service as failing.
+
+**Gotcha: an inert gate is invisible from the outside.** Verified 2026-08-14 that the first
+live deploy answered `GET /api/dashboard/summary` with `200` and no `WWW-Authenticate` header —
+i.e. `BASIC_AUTH_*` had not been saved in Render's Environment tab, so every route including the
+DELETE ones was open to anyone with the URL. Same failure shape `deploy-windows.ps1` guards
+against on the Tailscale side: the dashboard looks completely normal either way. **The check is
+one curl** — a gated service returns `401` plus a challenge header:
+
+```
+curl -s -o /dev/null -w '%{http_code}\n' https://<host>/api/dashboard/summary   # expect 401
+```
 
 **Gotcha: a partial commit is invisible locally but fatal to the deploy.** The first Render
 build died with `ImportError: cannot import name 'get_dataset_row_ids' from 'backend.core'`.
