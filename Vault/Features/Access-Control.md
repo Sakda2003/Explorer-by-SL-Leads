@@ -204,6 +204,17 @@ as a public-facing demo of the app itself, with **no real customer data ever loa
   committed) — see the "Three topologies" section above for why Cloudflare/Tailscale mode
   can't apply here. Until those env vars are set, the deploy is unauthenticated; the URL must
   be treated as unlisted, not public, in that window.
+- Render's **Health Check Path must be `/api/health`** — its default placeholder is `/healthz`,
+  which this app does not serve, so leaving it would mark a healthy service as failing.
+
+**Gotcha: a partial commit is invisible locally but fatal to the deploy.** The first Render
+build died with `ImportError: cannot import name 'get_dataset_row_ids' from 'backend.core'`.
+Cause: only `app.py`/`auth.py` were committed while the `core.py` half of that feature sat
+uncommitted in the working tree — locally everything ran fine because the working tree had
+both, so nothing surfaced until a clean checkout was built elsewhere. **Before pushing a
+deploy, verify against the pushed commit, not the working tree**: `git archive HEAD | tar -x -C
+<tmp>` then import `backend.app` from that directory. That reproduces exactly what the
+container sees and catches this class of error in seconds.
 
 **Backups go to Google Drive, not B2/R2** — both of those want a card too. Drive is 15 GB free
 on the account Sakda already has, and `deploy/backup.sh` only ever passes `$RCLONE_REMOTE` to
