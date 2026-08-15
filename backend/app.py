@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth
+from . import security
 
 from .core import (
                    ROOT, change_event_coverage, connect, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_forecast_realizations,
@@ -23,19 +24,77 @@ from .core import (
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
                    list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
 
-app = FastAPI(title="LeadLens Forecasting", version="1.0.0")
+# Refuse to boot open on a deployment that declares itself public (Render, or an explicit
+# LEADLENS_REQUIRE_AUTH). This runs before anything else so a misconfigured public deploy fails
+# loudly at startup instead of silently serving every route -- including the DELETE routes.
+auth.require_gate_or_die()
+
+# Hide the interactive API surface (/docs, /redoc, /openapi.json) whenever a gate is configured:
+# it enumerates every route, including the DELETE ones, and there is no reason to publish that on
+# a real deployment. Left on when inert, so it stays available for local development.
+_docs_enabled = not auth.config.mode
+app = FastAPI(
+    title="LeadLens Forecasting",
+    version="1.0.0",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 auth.log_startup_state()
 
+# Resolve the Content-Security-Policy once, hashing the served shell's inline theme script so a
+# strict script-src can allow it without opening 'unsafe-inline'. See backend/security.py.
+security.configure_csp(ROOT / "frontend" / "dist" / "index.html")
+
 
 # Runs ahead of every route and the static mount, so an unauthenticated request cannot reach
-# the dashboard shell either. See backend/auth.py -- inert until Cloudflare Access is configured.
+# the dashboard shell either. See backend/auth.py (who may call) and backend/security.py (how
+# hard they may lean on it: body-size cap, rate limits, brute-force throttle, response headers).
 @app.middleware("http")
 async def require_access(request: Request, call_next):
+    ip = security.client_ip(request)
+    is_https = security.is_https_request(request)
+    exempt = request.url.path in auth._EXEMPT_PATHS
+
+    def _sealed(response):
+        security.apply_headers(response, is_https)
+        return response
+
+    # Reject oversized bodies from the declared length before reading anything into memory.
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > security.MAX_BODY_BYTES:
+        return _sealed(JSONResponse({"detail": "Request body too large."}, status_code=413))
+
+    # A caller who has burned through the failed-sign-in budget is refused before re-checking the
+    # credential, so a shared-password guess cannot be ground out at full speed.
+    if not exempt and security.auth_blocked(ip):
+        return _sealed(JSONResponse(
+            {"detail": "Too many failed sign-in attempts. Try again later."},
+            status_code=429, headers={"Retry-After": str(security.AUTH_FAIL_WINDOW)},
+        ))
+
+    if not exempt and not security.allow_general(ip):
+        return _sealed(JSONResponse(
+            {"detail": "Too many requests."},
+            status_code=429, headers={"Retry-After": str(security.GENERAL_WINDOW)},
+        ))
+
     ok, status, message, headers = await auth.verify(request)
     if not ok:
-        return JSONResponse({"detail": message}, status_code=status, headers=headers or None)
-    return await call_next(request)
+        if status in (401, 403):
+            security.record_auth_failure(ip)
+        return _sealed(JSONResponse({"detail": message}, status_code=status, headers=headers or None))
+
+    # Retrain is CPU-bound (~29s) and holds the GIL; throttle it independently of the general cap.
+    if request.url.path == "/api/models/retrain" and request.method == "POST":
+        if not security.allow_retrain(ip):
+            return _sealed(JSONResponse(
+                {"detail": "Retrain was requested too frequently. Try again shortly."},
+                status_code=429, headers={"Retry-After": str(security.RETRAIN_WINDOW)},
+            ))
+
+    return _sealed(await call_next(request))
 
 
 # In production the frontend is served from this same origin, so no CORS is needed at all --
@@ -120,16 +179,30 @@ def health():
     return {"status": "ok"}
 
 
+def _reject_in_demo() -> None:
+    # The public demo carries no real customer data by design; disabling imports there makes
+    # that a technical control rather than a promise. Set LEADLENS_DEMO_MODE=1 on that deploy.
+    if security.DEMO_MODE:
+        raise HTTPException(403, "Data import is disabled on the demo deployment.")
+
+
 @app.post("/api/uploads/preview")
 async def upload_preview(file: UploadFile = File(...)):
+    _reject_in_demo()
+    # Read at most MAX_UPLOAD_BYTES+1 so a file larger than the cap is rejected without ever
+    # buffering the whole thing -- the one worker on Render free has ~512 MB to lose.
+    content = await file.read(security.MAX_UPLOAD_BYTES + 1)
+    if len(content) > security.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File exceeds the {security.MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit.")
     try:
-        return preview_file(await file.read(), file.filename or "upload.csv")
+        return preview_file(content, file.filename or "upload.csv")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
 @app.post("/api/uploads/confirm")
 def upload_confirm(payload: ConfirmUpload):
+    _reject_in_demo()
     try:
         return import_preview(payload.token, payload.file_name)
     except ValueError as exc:
@@ -391,7 +464,7 @@ def dataset_rows(
         try:
             parsed_filters = json.loads(filters)
         except json.JSONDecodeError as exc:
-            raise HTTPException(400, f"Invalid filters JSON: {exc}") from exc
+            raise HTTPException(400, "filters must be a valid JSON array.") from exc
         if not isinstance(parsed_filters, list):
             raise HTTPException(400, "filters must be a JSON array")
     try:
@@ -418,7 +491,7 @@ def dataset_row_ids(
         try:
             parsed_filters = json.loads(filters)
         except json.JSONDecodeError as exc:
-            raise HTTPException(400, f"Invalid filters JSON: {exc}") from exc
+            raise HTTPException(400, "filters must be a valid JSON array.") from exc
         if not isinstance(parsed_filters, list):
             raise HTTPException(400, "filters must be a JSON array")
     try:

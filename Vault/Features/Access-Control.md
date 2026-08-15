@@ -186,6 +186,49 @@ on AC Power Loss"; `restart: unless-stopped` covers the container), lid-close su
 laptop, and office-ISP outages. If no spare hardware turns up, Hetzner/DO/Vultr all take
 **PayPal**, which often works when a local card fails 3-D Secure.
 
+## Request hardening layer (2026-08-15)
+
+`backend/security.py` sits in front of the routes and is orthogonal to `auth.py`: auth decides
+*who* may call, security limits *how hard* anyone can lean on the process and hardens the browser
+side. It is dependency-free and single-process (the app pins `--workers 1`, so an in-memory
+limiter keyed by client IP is coherent without Redis). Wired into the one `require_access`
+middleware in `app.py`, which now also stamps the response headers on every response including
+the static mount.
+
+- **Fail-closed startup (`auth.require_gate_or_die()`).** The 2026-08-14 open-gate incident
+  proved a warning log doesn't stop a public open deploy. On a host that declares itself public
+  — `RENDER` is auto-detected, or set `LEADLENS_REQUIRE_AUTH=1` — the app now **refuses to boot**
+  with no gate configured, instead of silently serving every DELETE route. Called before the
+  `FastAPI()` object is even built. Local dev sets neither marker, so it stays inert.
+- **Docs hidden when gated.** `/docs`, `/redoc`, `/openapi.json` are `None` whenever
+  `auth.config.mode` is set — no reason to enumerate every route (incl. DELETE) on a real
+  deploy. Left on when inert for local dev.
+- **Rate limiting + brute-force throttle.** Per-IP sliding windows: a general cap (600/60s), a
+  retrain cap (6/300s — it's ~29s CPU-bound and GIL-holding), and a Basic-Auth brute-force
+  throttle (15 failed sign-ins per IP → 429 for 900s). Brute-force is **per-IP not global**, so
+  an attacker can't lock the real user out. Client IP is the left-most `X-Forwarded-For` hop,
+  trustworthy for the same topology reason the header modes are. All tunable via env
+  (`LEADLENS_RATE_*`, `LEADLENS_AUTH_FAIL_*`).
+- **Body/upload caps.** Middleware rejects any body over `LEADLENS_MAX_BODY_MB` (30) from
+  Content-Length before reading; the upload endpoint additionally reads at most
+  `LEADLENS_MAX_UPLOAD_MB`+1 (25) so it never buffers a huge file — the one worker on Render free
+  has ~512 MB to lose. Previously `await file.read()` was unbounded → trivial OOM DoS.
+- **Security headers.** CSP + `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `COOP: same-origin`, `Permissions-Policy`, and HSTS (gated on
+  the request actually being https, so localhost dev isn't wedged onto https). See
+  [[CSP-Inline-Script-Hash]] for why script-src is hash-pinned rather than `'unsafe-inline'`.
+- **Demo-mode import guard (`LEADLENS_DEMO_MODE=1`).** Disables the data-import endpoints so the
+  public demo carries no real customer data as a *technical* control, not a promise.
+- **Preview-token validation.** `import_preview` now rejects any token that isn't 32 hex chars
+  before it reaches `PREVIEW_DIR.glob(f"{token}.*")` — stops a caller smuggling glob
+  metacharacters (`*`, `?`, `[`) to match previews other than their own.
+
+Also: frontend `package.json` specifiers were pinned off `"latest"` to caret ranges of the
+locked versions (lockfile re-synced, `--frozen-lockfile` still passes), and
+`.github/workflows/security-audit.yml` runs `pip-audit` + `pnpm audit` on push/PR/weekly.
+Covered by `tests/test_security.py` (15 tests). SQL was already fully allowlisted/parameterized
+and the frontend has no XSS sinks — those were audited, not changed.
+
 ## Public demo deploy (2026-08-14)
 
 Separate from the live business deployment above: a second, disposable deploy exists purely

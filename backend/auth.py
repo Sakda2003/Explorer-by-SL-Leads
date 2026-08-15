@@ -314,6 +314,27 @@ async def verify(request) -> tuple[bool, int, str, dict[str, str]]:
     return ok, status, message, {}
 
 
+def require_gate_or_die() -> None:
+    """Refuse to boot into an open state on a deployment that is meant to be gated.
+
+    An inert gate is invisible from the outside -- the dashboard looks identical whether or not
+    every DELETE route is open to anyone with the URL (this actually happened on the first Render
+    deploy, 2026-08-14). A warning log did not stop it, so on a host that declares itself public
+    this is promoted to a hard failure: the container will not start until a gate is configured.
+
+    Triggers when `LEADLENS_REQUIRE_AUTH` is truthy, or when a known public-PaaS marker is
+    present (Render sets `RENDER`). Local dev and the test suite set neither, so they stay inert.
+    """
+    require = _flag("LEADLENS_REQUIRE_AUTH") or bool((os.getenv("RENDER") or "").strip())
+    if require and not config.mode:
+        raise RuntimeError(
+            "Refusing to start with no access gate on a deployment that requires one. "
+            "Set BASIC_AUTH_USER + BASIC_AUTH_PASS (public PaaS), or CF_ACCESS_TEAM_DOMAIN + "
+            "CF_ACCESS_AUD, or LEADLENS_TAILSCALE_AUTH=1 -- see backend/auth.py. To intentionally "
+            "run open (local only), unset LEADLENS_REQUIRE_AUTH and RENDER."
+        )
+
+
 def log_startup_state() -> None:
     readers = ", ".join(sorted(config.allowed)) or "anyone the gate admits"
     writers = ", ".join(sorted(config.writers)) or "same as readers"

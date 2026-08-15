@@ -1,0 +1,47 @@
+# Dependency vulnerability scanning. Nothing else watches these pins, so a CVE disclosed in
+# fastapi/pandas/openpyxl/pyjwt (or any frontend package) would otherwise sit unnoticed until
+# the next manual bump. Runs on every push/PR and on a weekly schedule so a vuln disclosed
+# against an unchanged tree still surfaces.
+name: security-audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays 06:00 UTC -- catches CVEs disclosed against a tree nobody has pushed to.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      # Audit the exact pinned runtime deps. --strict fails the job on any known vulnerability.
+      - name: Audit Python dependencies
+        run: pip-audit --strict --requirement requirements.txt
+
+  frontend-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Audit against the committed lockfile without installing anything. Fails on a moderate+
+      # advisory; lower the threshold to `low` once the noise floor is understood.
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: pnpm audit --audit-level moderate

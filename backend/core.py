@@ -2418,6 +2418,10 @@ def _write_ad_performance(
 
 
 def import_preview(token: str, filename: str | None = None) -> dict:
+    # Validate the token shape (uuid4 hex) before it reaches glob(): an unchecked token could
+    # carry glob metacharacters (`*`, `?`, `[`) and match previews other than the caller's own.
+    if not re.fullmatch(r"[0-9a-f]{32}", token or ""):
+        raise ValueError("Preview token is invalid or has expired.")
     matches = list(PREVIEW_DIR.glob(f"{token}.*"))
     if not matches:
         raise ValueError("Preview token is invalid or has expired.")

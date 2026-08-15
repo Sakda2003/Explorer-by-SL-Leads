@@ -22,7 +22,8 @@ codebase.
 ## Modeling
 - [[OLS-Declared-Ten-Variables]] — the multivariate OLS panel on the 10 declared variables
 - [[Change-History-Hand-Recording]] — the 29-ad-set manual change backfill; directional budget types, and recency becoming a 5-bucket categorical
-- [[Forward-Selection-Notebook]] — `forward_selection.ipynb`, correlation-seeded/adjusted-R² greedy variable selection over the pooled Full Information Dataset workbooks
+- [[Forward-Selection-Notebook]] — two notebooks: `forward_selection_all_variables.ipynb` (current, every variable, whole-block categoricals, forward + backward) and the superseded `forward_selection.ipynb`
+- [[Per-Ad-Set-Regression-Report]] — `build_regression_report.py`, the standalone HTML report ranking all 30 ad sets by multivariate adjusted R²; "univariate" means per-variable here, not spend-only
 - [[Forecast-Flatness-Is-The-Data]] — why the 14-day forecast looks flat, measured 6 ways
 - [[Forecast-Flatness-Fix]] — the original 2026-07-23 flat-forecast bug fix
 - [[OLS-In-Forecast-Selection]] — the OLS panel is a diagnostic, not what every ad set's forecast uses; which 3 of 29 ad sets it actually wins
@@ -52,6 +53,9 @@ codebase.
 - [[Screenshotting-The-App]] — the Browser pane can't screenshot when hidden; use Playwright + Edge, with the selector traps listed
 - [[Uvicorn-Reload-Hangs]] — `uvicorn --reload` silently serves stale code here; backend auto-reload goes through the watchfiles CLI in `.claude/launch.json`
 - [[Money-Formatter-Rounded-To-Whole-Dollars]] — `money()` lost cents everywhere until fixed 2026-08-06
+- [[Lead-Spend-Fallback-To-Ad-Performance]] — leads' Amount column went blank 2026-08-01+ once uploads stopped being the lead-grain model-dataset workbook; now falls back to `daily_ad_performance`
+- [[Retrain-Debounce-And-GIL-Contention]] — why a single cell edit froze the board for ~31s, and the three separate costs behind it (inline retrain, UI busy-gate, GIL)
+- [[CSP-Inline-Script-Hash]] — the CSP allows the one inline theme script by sha256 hash, keeping 'unsafe-inline' off script-src
 
 ## Maintenance convention
 - Update after **every** change, not just big or non-obvious ones — see CLAUDE.md at
