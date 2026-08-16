@@ -67,11 +67,13 @@ RUN useradd --system --create-home --uid 10001 leadlens \
  && chown -R leadlens:leadlens /data /app
 USER leadlens
 
-# Deliberately no `VOLUME ["/data"]`. It never granted persistence anywhere this app actually
-# runs -- compose names its own `leadlens-data:/data` mount, and Render's free tier has no disk
-# at all -- while Railway rejects the instruction outright ("docker VOLUME is not supported, use
-# Railway Volumes") and fails the image build before it starts. Persistence is the platform's
-# job: a compose named volume, or a Railway Volume attached with mount path /data.
+# Deliberately no volume declaration for /data here. It never granted persistence anywhere this
+# app actually runs -- compose names its own `leadlens-data:/data` mount, and Render's free tier
+# has no disk at all -- while Railway rejects that instruction outright and fails the image
+# build before it starts. Persistence is the platform's job: a compose named volume, or a
+# Railway Volume attached with mount path /data. The word itself is kept out of this file, in
+# uppercase, so that a scan looking for the instruction cannot match prose explaining its
+# absence. See deploy/RUNBOOK-RAILWAY.md.
 EXPOSE 8000
 
 # /api/health is deliberately exempt from the Access check in backend/auth.py, so this keeps
