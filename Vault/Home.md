@@ -22,6 +22,7 @@ codebase.
 ## Modeling
 - [[OLS-Declared-Ten-Variables]] — the multivariate OLS panel on the 10 declared variables
 - [[Change-History-Hand-Recording]] — the 29-ad-set manual change backfill; directional budget types, and recency becoming a 5-bucket categorical
+- [[Forward-Selection-In-The-App]] — what picks the Multivariate OLS card's variables: greedy search, two entry gates (adjusted R² gain + block F p < 0.10), the per-round "Selection path" trace, and the backtest that kept it out of the forecast path
 - [[Forward-Selection-Notebook]] — two notebooks: `forward_selection_all_variables.ipynb` (current, every variable, whole-block categoricals, forward + backward) and the superseded `forward_selection.ipynb`
 - [[Per-Ad-Set-Regression-Report]] — `build_regression_report.py`, the standalone HTML report ranking all 30 ad sets by multivariate adjusted R²; "univariate" means per-variable here, not spend-only
 - [[Forecast-Flatness-Is-The-Data]] — why the 14-day forecast looks flat, measured 6 ways
@@ -56,6 +57,8 @@ codebase.
 - [[Lead-Spend-Fallback-To-Ad-Performance]] — leads' Amount column went blank 2026-08-01+ once uploads stopped being the lead-grain model-dataset workbook; now falls back to `daily_ad_performance`
 - [[Retrain-Debounce-And-GIL-Contention]] — why a single cell edit froze the board for ~31s, and the three separate costs behind it (inline retrain, UI busy-gate, GIL)
 - [[CSP-Inline-Script-Hash]] — the CSP allows the one inline theme script by sha256 hash, keeping 'unsafe-inline' off script-src
+- [[Model-Dataset-Export-For-Migration]] — `export_model_dataset_chunks.py` re-exports the live DB as re-importable model_dataset workbooks, chunked by date, for migrating history into another deployed instance
+- [[Customer-Traffic-Created-Updated-Alias]] — traffic exports with "Created"/"Updated" headers (no "At") were rejected by the type detector, which never consulted the header-alias map read_tabular already used; also: missing `pyjwt` locally causes "Failed to fetch" on Upload, not an import-logic bug
 
 ## Maintenance convention
 - Update after **every** change, not just big or non-obvious ones — see CLAUDE.md at

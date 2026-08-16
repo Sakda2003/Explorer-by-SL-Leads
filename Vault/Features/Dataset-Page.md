@@ -813,6 +813,133 @@ formatter; the retrain chip appeared; Delete removed a purpose-built throwaway r
 `daily_ad_performance` returned to its original 879 rows. All test mutations were restored.
 `tsc --noEmit` and `npm run build` clean; the impeccable detector reports no new findings.
 
+## Raw data restyled as a Monday-style grid of boxes, 2026-08-14
+
+Per request, with two Monday.com boards as the reference. The board already had Monday's
+*structure* (frozen header, frozen tick column, edge-to-edge status colour bands, density
+presets); what it did not have was Monday's **grid**. Cells carried only a `border-bottom`,
+so the same data read as a list of rows rather than a field of discrete boxes.
+
+**The whole change is one vertical rule**, plus keeping the header in register with it:
+
+- `.board-table tbody td` gained `box-shadow: inset -1px 0 0 var(--line)` — an inset shadow
+  rather than `border-right` so it occupies no layout width and cannot perturb the column
+  widths the resize drag writes (`table-layout: fixed` would otherwise redistribute).
+- `.board-table thead th` (and its `.is-sorted` variant, which fully overrides `box-shadow`)
+  gained the same right inset ahead of their existing bottom/underline insets, so the header
+  columns close with the body's.
+
+**The trap: do not put the cell fill on the `<td>`.** The first attempt painted
+`background: var(--surface)` on every `td` to control hover layering. That silently flattened
+the **zebra striping** — a later theme layer owns row fill through `--board-row` /
+`--board-row-alt` / `--board-row-hover` (`.board-table tbody tr`, `tr:nth-child(even)`,
+`tr:hover`), and a `td` background sits on top of all three. It was invisible in dark, where
+`--surface` and `--board-row-alt` are both `#16181C`, and obvious in light (`#FFFFFF` vs
+`#FBFCFD`). Fill stays on the `<tr>`; only the border is per-cell.
+
+**Selected-row specificity is load-bearing.** That theme layer's `tr:nth-child(even)` and
+`tr:hover` are both `(0,2,2)`, which ties with a plain `tr.is-selected` and wins on source
+order. The selected state therefore spells out `.is-selected`, `.is-selected:nth-child(even)`
+and `.is-selected:hover` to reach `(0,3,2)` and stay visible on an even row and under the
+cursor. The status fills are `(0,3,1)` via `:has()` and outrank all of it by design — that is
+what keeps the Status column reading as continuous colour bands regardless of row state.
+
+Scoped precisely: `board-table` is on exactly one element in `App.tsx` (the Dataset page's
+raw-row table). The Forecast page's lead drilldown uses `.lead-drilldown-table` and is
+untouched.
+
+**Verified** with Playwright + Edge (the Browser pane can't screenshot here — see
+[[Screenshotting-The-App]]) at 1600x1000, `device_scale_factor=2`, in **both** colour schemes
+and on the Leads and Ad performance tabs. Computed values confirm zebra preserved
+(dark `rgb(19,21,25)` / `rgb(22,24,28)`, light `#FFFFFF` / `rgb(251,252,253)`), selected and
+hover distinct from both, the right-edge rule present per theme, and the status fill intact.
+
+## Hover pill removed from editable board cells, 2026-08-14
+
+Reported with a screenshot: hovering an editable cell (Campaign, Customer, Ad Set ID, etc.)
+showed a second, smaller rounded rectangle floating inside the cell around just the text,
+on top of the new grid box from the change above.
+
+**Cause.** Editable cells render `LeadEditableCell`, shared with the Forecast page's lead
+drilldown, whose base `.lead-cell-display:hover` rule (`border-radius: 7px`, its own
+border/background, sized to its own padding rather than the cell) draws a pill to signal
+"this is editable" -- correct on the drilldown table, which has no cell borders of its own.
+On the board every cell now has its own outline (the grid rule above) plus a row-level hover
+fill, so the inner pill became a second, oddly-cropped rectangle competing with the one the
+cell itself already draws.
+
+**Fix.** `.board-table td .lead-cell-display:hover { background: transparent; border-color:
+transparent; }` -- board-scoped, so `.lead-drilldown-table` (a different ancestor class) is
+structurally unreachable by this selector and needs no separate check. `:focus-visible` (the
+actual click-to-edit state) is untouched, since that is a real mode change and still needs
+its own affordance.
+
+Verified: computed styles on a hovered board cell show `background-color:
+rgba(0,0,0,0)` and `border-color: rgba(0,0,0,0)` while the row-level hover fill
+(`rgb(30,33,39)` in dark) still applies -- one outline (the cell's own), not two.
+`tsc --noEmit` clean, 142 tests pass (frontend-only change).
+
+## Variable dictionary section removed from the bottom of the page, 2026-08-14
+
+Per request. The "Variable dictionary" section (`# / Variable / What it means`, the ten-row
+table describing the declared drivers of lead volume) was the last section on the page,
+below "Raw data" — it's gone now, not collapsed or hidden.
+
+`declaredVariables` and `missingDeclaredVariables` (`App.tsx`) are **kept** — the
+"Not shown above" callout under the Correlation section's "Declared" tab still reads from
+`missingDeclaredVariables`, which is itself derived from `declaredVariables`, so removing
+either would have silently broken that unrelated feature. Only the section's own JSX, the
+`varOpen`/`setVarOpen` state it exclusively used (the "(more)"/"(less)" expand toggle on long
+notes), and the now-fully-unused `.dataset-variables-*` CSS block (including its `is-in_model`/
+`is-target` pill variants, which were already dead since the 2026-08-06 Status/Signif. column
+removal noted above) were deleted. Page order is now OLS cards -> scope filter bar ->
+Correlation -> Calculation -> Raw data, with nothing after it.
+
+Verified live: the Dataset page now ends at Raw data's pagination footer, no console errors,
+`tsc --noEmit` clean, `npm run build` clean.
+
+## Filtering from page 2+ flickered and jumped the scroll, fixed 2026-08-14
+
+Reported with a screen capture: paging to page 2/3/4/5 and *then* applying a filter made the
+board flicker repeatedly and the page scroll jump before it settled on the filtered result.
+
+**Cause — a double fetch that could turn into a loop.** Three things combined:
+
+1. The fetch effect had `rowFiltersKey`/`rowSort`/`rowSearch` in its deps, and a *separate*
+   follow-up effect reset `offset` to 0 on those same deps. Effects run in declaration order,
+   so applying a filter on page 5 fired the fetch **first at offset 200** — the server returns
+   an empty page when the filtered set is shorter than that, which is the blank flash — and
+   only then reset the offset, firing a **second** fetch at offset 0.
+2. There was no ordering guard, so the two replies could land in either order.
+3. `.then(setRowsData)` wrote the response wholesale, and the response **carries `offset`**
+   (the endpoint echoes what it was given). So a late offset-200 reply landing after the reset
+   put the pager back on page 5, which re-fired the effect — the loop. Each pass changed the
+   table's row count and therefore its height, which is what moved the scroll position.
+
+**Fix.** The page position is now client-owned `rowsOffset` state, split out of `rowsData`
+(which keeps only `rows`/`total`/`limit`), and the response's `offset` is discarded. A single
+`rowsQueryKey` (table + scope + filters + sort + search) is compared against a ref **during
+render** — React's documented "adjust state when props change" pattern — so the offset is
+already 0 before any effect runs, and there is exactly one fetch. A monotonic `rowsRequestId`
+ref makes any superseded reply a no-op. Both follow-up reset effects were deleted;
+`switchTable` no longer resets the offset by hand either, since the table name is part of the
+key.
+
+**Verified live** on port 8000 by instrumenting `fetch` and sampling the pager label: applying
+a filter from page 5 now issues **one** request (`offset=0`), the label goes
+`201-250 of 3,674` → `1-50 of 3,674` → `1-50 of 2,621` with no intermediate empty state, and
+`window.scrollY` holds at a single value (1269) across the whole transition. Sort and search
+from a deep page behave identically. Stress test — 6 page-forward clicks 40ms apart followed
+immediately by a search — produced exactly 7 requests for 7 actions, monotonic labels, and the
+correct final state, i.e. no reply ever raced backwards.
+
+**Superseded 2026-08-14 for the Leads tab too.** The split described above ("lead endpoints
+retrain inline, ad-performance ones schedule") is gone — the lead endpoints froze the board for
+~31s per committed cell and now use the same background guard, which additionally gained a
+debounce so a burst of edits produces one retrain instead of N. See
+[[Retrain-Debounce-And-GIL-Contention]] for the measurements and the two SQLite write-lock
+traps found alongside it.
+
 **Known limitation, matching existing precedent:** the retrain chip only reflects retrains this
 page initiated. One triggered elsewhere (another tab, another client) won't show here —
 `useRetrainWatcher` has always behaved this way, and `ChangeEventButton` shares the behaviour.
@@ -898,3 +1025,52 @@ Optimization decision table's two type cells. The declared correlation matrix's
 Also removed: every `.change-type-*` rule in `styles.css` (trigger, portaled menu, its two
 reveal keyframes, the reduced-motion guard, the option rows, and the Forecast/Dataset dark
 scoping) — dead the moment the picker went.
+
+## "Select all N matching rows" added, 2026-08-14
+
+The board's header checkbox only ever selected `pageRowIds` — the ≤50 (or ≤500, the
+`/dataset/rows` cap) rows already loaded — even though the label said "on this page".
+There was no way to bulk-select/export/delete everything a filter matched (e.g. all 141
+rows for one campaign) short of manually paging through and re-checking each page. Added
+on request after a user asked why selecting all only grabbed 50 of 141 rows.
+
+**New backend surface**, factored out of `get_dataset_rows()` rather than duplicated:
+`_dataset_where()` (`core.py`) now holds the shared WHERE-clause building (scope, filters,
+search) both `get_dataset_rows()` and the new `get_dataset_row_ids()` call. `get_dataset_
+row_ids()` → `GET /api/dataset/row-ids?table=...` returns every matching row's id — no
+`LIMIT`/`OFFSET` page cap — up to a hard `SELECT_ALL_MATCHING_CAP = 20_000` ceiling, with
+`{ids, total, capped}` so the frontend can tell the user if the true match count exceeded
+the cap. Existing `/dataset/rows`' COUNT query was widened to include the join (previously
+skipped as an optimization since the join used to always be 1:1 on `daily_ad_set_
+aggregates`'s primary key) — needed once `amount_spent_usd` filtering on the "leads" table
+started referencing a joined alias (see [[Lead-Spend-Fallback-To-Ad-Performance]], the same
+day's other fix); still 1:1, so the count itself is unaffected, just now syntactically valid
+when a filter references the alias.
+
+**Frontend**: a `selectedAllMatching` boolean (`App.tsx`) distinguishes "selected exactly
+this page" from "expanded to every matching row" — set true only after the new "Select all
+N rows matching this view" link (`.board-bulk-link`, styled as an underlined text link, not
+a button, to read as secondary to Export/Delete) is clicked. That link appears in the
+floating bulk bar only when `allPageSelected && !selectedAllMatching && total > page size`
+— the same "offer only once the page is fully picked and more exist" pattern as Gmail/
+Sheets. Selecting/deselecting any individual row, switching the Leads/Ad performance/
+Combined export tab, or clicking the bulk bar's close button all reset it to `false`.
+
+**Export CSV had to change too, not just Delete.** `exportSelectedRows` originally read
+`rowsData.rows.filter(...)` — fine for `deleteSelectedRows` (which calls the row endpoint
+per id regardless of what's loaded) but silently wrong for export once selection can span
+thousands of rows across pages that were never fetched: the CSV would have quietly
+contained only whatever page happened to be on screen. Now, when `selectedAllMatching` is
+true, export re-fetches the full matching set via `/dataset/rows` in 500-row pages (same
+filters/scope/search/sort as the selection) before building the CSV. The individual-pick
+path (select a few specific rows without using "select all") is unchanged and still reads
+from `rowsData.rows` — same known limitation as before this change if rows are hand-picked
+across multiple page visits.
+
+Verified live 2026-08-14 via a temporary `leadlens-verify` (port 8010) + `leadlens-frontend`
+Vite proxy override (reverted after): clicking the header checkbox on the Leads tab (3,674
+total, 50/page) showed "50 rows selected" plus the new link; clicking the link expanded
+selection to "3,674 rows selected" and hid the link; Export CSV produced all 3,674 rows
+(verified via a hooked `URL.createObjectURL`, row range Jun 6 – Aug 12) rather than the 50
+that were on screen. `tsc --noEmit` clean; backend test suite green (139 passed, 3
+pre-existing unrelated failures from a missing `jwt` module in this environment).

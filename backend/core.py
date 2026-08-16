@@ -169,6 +169,14 @@ KNOWN_HEADERS = {
     _header_key(column): column
     for column in [*REQUIRED_COLUMNS, *OPTIONAL_SOURCE_COLUMNS]
 }
+# Some traffic exports (e.g. trimmed/partial pulls) shorten "Created At"/"Updated At" to just
+# "Created"/"Updated". Same field, different header -- alias it like the ad-performance exports
+# below, rather than rejecting the file outright.
+for _alias, _canonical in {
+    "Created": "Created At",
+    "Updated": "Updated At",
+}.items():
+    KNOWN_HEADERS[_header_key(_alias)] = _canonical
 AD_KNOWN_HEADERS = {
     _header_key(column): column
     for column in AD_PERFORMANCE_COLUMNS
@@ -1059,7 +1067,10 @@ def _model_dataset_change_events(raw: pd.DataFrame, column, day: pd.Series) -> p
 
 
 def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
-    keys = {_header_key(column) for column in columns}
+    # Canonicalize through KNOWN_HEADERS first so aliased headers (e.g. "Created" for
+    # "Created At") count toward detection the same way they do once read_tabular renames them --
+    # otherwise a file the importer can actually handle gets rejected before it gets that far.
+    keys = {_header_key(KNOWN_HEADERS.get(_header_key(column), column)) for column in columns}
     customer_score = sum(1 for column in SOURCE_REQUIRED_COLUMNS if _header_key(column) in keys)
     ad_score = sum(1 for column in ["Ad set ID", "Day"] if _header_key(column) in keys)
     # Either campaign column will do. Meta's ad-set-level exports routinely carry only
@@ -4646,6 +4657,11 @@ DECLARED_OLS_GROUPS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
 def _select_multivariate_ols_features(values: np.ndarray, feature_rows: list[dict[str, float]]) -> list[str]:
     """Exactly the declared drivers (variables 2-8), with leads as the modelled outcome.
 
+    Still what the forecast fits (`OLS_FORECAST_USES_FORWARD_SELECTION` is False): the
+    forward-selected subset the OLS card shows was backtested against this in 2026-08-16 and
+    forecast 7pp worse. The card and the forecast therefore describe different models on
+    purpose, and that constant's comment is where the reason lives.
+
     Nothing else is admitted. Meta's other funnel metrics (conversations, impressions,
     link clicks, platform leads) and every autoregressive term are excluded even though
     several fit better, because the model is meant to express the declared causal
@@ -4671,31 +4687,74 @@ def _select_multivariate_ols_features(values: np.ndarray, feature_rows: list[dic
     return _prune_rank_dependent_features(feature_rows, varying)
 
 
-def _ols_design_fit(
+def _ols_block_fit(
     y: np.ndarray, feature_rows: list[dict[str, float]], features: list[str],
-) -> tuple[np.ndarray, int] | None:
-    """Least-squares fit of y on [intercept, features]; returns (fitted, df_model) or None.
+) -> dict | None:
+    """Least-squares fit of y on [intercept, features], reduced to what selection reads.
 
-    The lightweight core of _fit_ols_summary, without the standard errors, t/F tests and
-    residual diagnostics. Forward selection runs O(groups^2) fits per scope and only ever
-    reads adjusted R2 off them, so it must not pay for the full summary each time.
+    The lightweight core of _fit_ols_summary, without the standard errors, per-coefficient
+    t tests and residual diagnostics. Forward selection runs O(groups^2) fits per scope and
+    only ever reads R2, adjusted R2 and the residual sum of squares off them, so it must not
+    pay for the full summary each time.
 
     df_model is the design matrix rank minus the intercept, not len(features): the weekday
-    block is rank-deficient by construction, and adjusted R2 has to be charged for the
-    degrees of freedom actually spent, otherwise a group that adds no rank looks free.
+    block is rank-deficient by construction, and both adjusted R2 and the partial F test have
+    to be charged for the degrees of freedom actually spent, otherwise a group that adds no
+    rank looks free.
+
+    An empty feature list is the intercept-only baseline -- a real model (predict the mean),
+    and the one every first-round candidate is measured against.
     """
+    n = len(y)
+    if n <= 1:
+        return None
+    total = float(np.sum((y - np.mean(y)) ** 2))
     if not features:
-        return None
+        return {"sse": total, "r_squared": 0.0, "adjusted_r_squared": 0.0,
+                "df_model": 0, "df_resid": n - 1}
     design = np.asarray([[row.get(feature, 0.0) for feature in features] for row in feature_rows], dtype=float)
-    if design.shape[0] != len(y) or design.shape[1] != len(features):
+    if design.shape[0] != n or design.shape[1] != len(features):
         return None
-    x = np.c_[np.ones(len(design)), design]
+    x = np.c_[np.ones(n), design]
     rank = int(np.linalg.matrix_rank(x))
     df_model = max(0, rank - 1)
-    if df_model <= 0 or len(y) - rank <= 0:
+    df_resid = n - rank
+    if df_model <= 0 or df_resid <= 0:
         return None
     coefficients = np.linalg.pinv(x.T @ x) @ x.T @ y
-    return x @ coefficients, df_model
+    fitted = x @ coefficients
+    sse = float(np.sum((y - fitted) ** 2))
+    return {
+        "sse": sse,
+        "r_squared": 0.0 if total <= 1e-12 else float(1.0 - sse / total),
+        "adjusted_r_squared": _ols_adjusted_r2(y, fitted, df_model),
+        "df_model": df_model,
+        "df_resid": df_resid,
+    }
+
+
+def _partial_f_p_value(base: dict, candidate: dict) -> float | None:
+    """p-value of the block F test for the terms `candidate` adds over `base`.
+
+    Answers "does this whole variable belong in the model", which no per-column t test can:
+    the weekday block carries seven t statistics and not one of them is that question, and
+    Holiday_Proximity's four buckets have the same problem. Returns None when the block adds
+    no degrees of freedom -- it is aliased with what is already in the design, so there is no
+    hypothesis left to test.
+    """
+    delta_df = candidate["df_model"] - base["df_model"]
+    if delta_df <= 0 or candidate["df_resid"] <= 0:
+        return None
+    mse_resid = candidate["sse"] / candidate["df_resid"]
+    if mse_resid <= 1e-12:
+        # Nothing left to test against: the block explains whatever the base model didn't.
+        # Real in this data -- a synthetic-looking ad set whose leads are an exact multiple
+        # of spend fits to machine precision, and F would be a division by zero.
+        return 0.0 if candidate["sse"] < base["sse"] else None
+    f_value = ((base["sse"] - candidate["sse"]) / delta_df) / mse_resid
+    if f_value <= 0.0:
+        return 1.0
+    return _f_survival_p_value(f_value, delta_df, candidate["df_resid"])
 
 
 # Adjusted R2 already charges for each degree of freedom spent, so any positive gain is in
@@ -4703,16 +4762,29 @@ def _ols_design_fit(
 # noise; a genuine 1e-6 improvement in adjusted R2 is not a finding worth a coefficient row.
 FORWARD_SELECTION_MIN_GAIN = 1e-6
 
+# Second entry gate (2026-08-16): a candidate also has to clear this on its block F test.
+# Adjusted R2 alone will happily admit a variable that lifts the fit by 0.0004 with p = 0.6 --
+# noise that happened to lean the right way. Deliberately looser than the conventional 0.05:
+# greedy search picks the best of up to seven candidates each round, so the winner's nominal
+# p-value is optimistically biased and reading it at 0.05 would be false precision. It is a
+# junk filter, not a certificate that what got in is real.
+FORWARD_SELECTION_MAX_P = 0.10
+
 
 def _forward_select_declared_features(
     values: np.ndarray, feature_rows: list[dict[str, float]],
 ) -> dict:
     """Greedy forward selection over the declared variables, scored by adjusted R2.
 
-    Diagnostics only (2026-08-13). `_select_multivariate_ols_features` -- which admits every
-    declared variable that varies and adds rank -- still drives the stored forecasts, so the
-    ridge penalty in `_ols_forecast` keeps scaling with the same feature count it always has.
-    This function feeds the Multivariate OLS card and the per-ad-set regression report.
+    Diagnostics only. This drives the Multivariate OLS card and the per-ad-set regression
+    report; the forecast path deliberately still fits every declared variable that varies,
+    because forward selection was measured against it on held-out WAPE in 2026-08-16 and lost
+    -- see `OLS_FORECAST_USES_FORWARD_SELECTION` for the numbers and the survivorship trap.
+
+    An empty return is a real answer, not a failure: it means nothing cleared both gates on
+    this window. That happens on about a third of rolling-origin windows, which is exactly why
+    the two paths disagree -- the card is willing to say "no declared variable is significant
+    here" and a forecast still has to produce fourteen numbers.
 
     Whole variables enter or stay out together: Holiday_Proximity's four buckets and the seven
     weekday indicators are one candidate each, not eleven. Selecting individual dummies would
@@ -4723,70 +4795,171 @@ def _forward_select_declared_features(
     (max(12, terms + 6) days), so on a thin ad set the search stops at a set that can actually
     be fitted rather than returning one that will be refused downstream.
 
-    Returns the selected columns plus, for every variable left out, the reason and the
+    Two gates, not one (2026-08-16). A candidate enters only if it lifts adjusted R2 by more
+    than FORWARD_SELECTION_MIN_GAIN *and* its block F test clears FORWARD_SELECTION_MAX_P.
+    Adjusted R2 decides the ranking within a round; the p-value decides whether the round's
+    winner is worth having at all.
+
+    After every addition the search takes a backward glance at what is already in: a variable
+    that earned its place early can become redundant once a correlated one joins, and pure
+    greedy forward selection has no way to give the seat back. Both moves strictly increase
+    adjusted R2, so the walk terminates.
+
+    Returns the selected columns, a per-round trace of every candidate tried with its R2,
+    adjusted R2, gain and p-value, plus, for every variable left out, the reason and the
     adjusted-R2 delta it would have produced against the FINAL model -- silently missing
     variables read as bugs on this project, so `_declared_variable_coverage` needs the number.
     """
     y = np.clip(np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
-    result: dict = {"features": [], "order": [], "rejected": {}, "adjusted_r_squared": None}
+    result: dict = {"features": [], "order": [], "rejected": {}, "adjusted_r_squared": None,
+                    "r_squared": None, "steps": [], "alpha": FORWARD_SELECTION_MAX_P}
     if len(y) == 0 or not feature_rows or len(feature_rows) != len(y):
         return result
 
-    remaining = []
+    groups: list[tuple[int, str, list[str]]] = []
     for number, label, features in DECLARED_OLS_GROUPS:
         varying = [
             feature for feature in features
             if np.std([row.get(feature, 0.0) for row in feature_rows]) > 1e-9
         ]
         if varying:
-            remaining.append((number, label, varying))
-    if not remaining:
+            groups.append((number, label, varying))
+    baseline = _ols_block_fit(y, feature_rows, [])
+    if not groups or baseline is None:
         return result
 
-    def evaluate(group_features: list[str], selected: list[str]) -> tuple[float | None, str]:
-        candidate = selected + [feature for feature in group_features if feature not in selected]
-        if len(y) < max(12, len(candidate) + 6):
-            return None, "observations"
-        fit = _ols_design_fit(y, feature_rows, candidate)
-        if fit is None:
-            return None, "rank"
-        fitted, df_model = fit
-        return _ols_adjusted_r2(y, fitted, df_model), "scored"
+    def columns(selection: list[tuple[int, str, list[str]]]) -> list[str]:
+        out: list[str] = []
+        for _, _, features in selection:
+            out.extend(feature for feature in features if feature not in out)
+        return out
 
-    selected: list[str] = []
+    def fit_of(selection: list[tuple[int, str, list[str]]]) -> tuple[dict | None, str]:
+        features = columns(selection)
+        if not features:
+            return baseline, "scored"
+        # The same budget _fit_ols_summary enforces, so the search stops at a set that can
+        # actually be fitted rather than one that will be refused downstream.
+        if len(y) < max(12, len(features) + 6):
+            return None, "observations"
+        fit = _ols_block_fit(y, feature_rows, features)
+        return (fit, "scored") if fit is not None else (None, "rank")
+
+    def measure(base: dict, fit: dict | None, status: str) -> dict:
+        """One row of the trace: what this move would do to the fit, and whether it qualifies."""
+        entry: dict = {"r_squared": None, "adjusted_r_squared": None, "gain": None,
+                       "p_value": None, "df_added": None, "status": status}
+        if fit is None:
+            return entry
+        gain = fit["adjusted_r_squared"] - base["adjusted_r_squared"]
+        entry.update({
+            "r_squared": float(fit["r_squared"]),
+            "adjusted_r_squared": float(fit["adjusted_r_squared"]) if math.isfinite(fit["adjusted_r_squared"]) else None,
+            "gain": float(gain) if math.isfinite(gain) else None,
+            "p_value": _partial_f_p_value(base, fit),
+            "df_added": int(fit["df_model"] - base["df_model"]),
+        })
+        if not math.isfinite(gain):
+            entry["status"] = "rank"
+        elif gain <= FORWARD_SELECTION_MIN_GAIN:
+            entry["status"] = "no_gain"
+        elif entry["p_value"] is None or entry["p_value"] >= FORWARD_SELECTION_MAX_P:
+            entry["status"] = "not_significant"
+        else:
+            entry["status"] = "eligible"
+        return entry
+
+    selected: list[tuple[int, str, list[str]]] = []
+    current = baseline
+
+    def try_drop() -> bool:
+        """Remove an already-selected variable if the model is better without it."""
+        nonlocal selected, current
+        if len(selected) < 2:
+            return False
+        rows, best = [], None
+        for group in selected:
+            trial = [item for item in selected if item is not group]
+            fit, status = fit_of(trial)
+            entry = measure(current, fit, status)
+            entry.update({"number": group[0], "name": group[1]})
+            rows.append(entry)
+            if entry["status"] == "eligible" and (best is None or entry["gain"] > best[0]["gain"]):
+                best = (entry, group, fit)
+        if best is None:
+            return False
+        entry, group, fit = best
+        selected = [item for item in selected if item is not group]
+        current = fit  # type: ignore[assignment]
+        result["steps"].append({
+            "round": len(result["steps"]) + 1, "action": "drop", "winner": group[0],
+            "winner_name": group[1], "candidates": rows,
+            "r_squared": float(current["r_squared"]),
+            "adjusted_r_squared": float(current["adjusted_r_squared"]),
+        })
+        return True
+
+    def try_add() -> bool:
+        """Add the best candidate that clears both gates, if there is one."""
+        nonlocal selected, current
+        remaining = [group for group in groups if group not in selected]
+        if not remaining:
+            return False
+        rows, best = [], None
+        for group in remaining:
+            fit, status = fit_of(selected + [group])
+            entry = measure(current, fit, status)
+            entry.update({"number": group[0], "name": group[1]})
+            rows.append(entry)
+            if entry["status"] == "eligible" and (best is None or entry["gain"] > best[0]["gain"]):
+                best = (entry, group, fit)
+        if best is None:
+            return False
+        entry, group, fit = best
+        selected = selected + [group]
+        current = fit  # type: ignore[assignment]
+        result["steps"].append({
+            "round": len(result["steps"]) + 1, "action": "add", "winner": group[0],
+            "winner_name": group[1], "candidates": rows,
+            "r_squared": float(current["r_squared"]),
+            "adjusted_r_squared": float(current["adjusted_r_squared"]),
+        })
+        return True
+
     # Intercept-only baseline: the mean predictor, whose adjusted R2 is 0 by construction. A
     # variable has to beat "predict the average day" before it earns a place.
-    best_score = 0.0
-    while remaining:
-        best_index, best_gain, winning_score = None, FORWARD_SELECTION_MIN_GAIN, None
-        for index, (_, _, group_features) in enumerate(remaining):
-            score, _reason = evaluate(group_features, selected)
-            if score is None or not math.isfinite(score):
-                continue
-            gain = score - best_score
-            if gain > best_gain:
-                best_index, best_gain, winning_score = index, gain, score
-        if best_index is None or winning_score is None:
-            break
-        number, _, group_features = remaining.pop(best_index)
-        selected = selected + [feature for feature in group_features if feature not in selected]
-        best_score = winning_score
-        result["order"].append(number)
+    # The round cap is a backstop against a pathological add/drop oscillation; every accepted
+    # move raises adjusted R2 by more than the floor and adjusted R2 is bounded above, so the
+    # walk terminates on its own and this should never bind.
+    max_rounds = 4 * len(groups) + 4
+    while len(result["steps"]) < max_rounds:
+        if try_add():
+            try_drop()
+            continue
+        if try_drop():
+            continue
+        break
 
     # Report every rejection against the final model, not against whichever round it lost in --
     # a variable's marginal value depends on what else ended up in the fit.
-    for number, _, group_features in remaining:
-        score, reason = evaluate(group_features, selected)
-        if score is None:
-            result["rejected"][number] = {"reason": reason, "delta": None}
-        else:
-            result["rejected"][number] = {"reason": "no_gain", "delta": float(score - best_score)}
+    for group in groups:
+        if group in selected:
+            continue
+        fit, status = fit_of(selected + [group])
+        entry = measure(current, fit, status)
+        result["rejected"][group[0]] = {
+            "reason": entry["status"] if entry["status"] != "eligible" else "no_gain",
+            "delta": entry["gain"], "p_value": entry["p_value"],
+        }
 
     # Aliased columns can survive the greedy pass inside a winning group (the group earned its
     # place on the columns that did add rank). Prune them the same way the all-declared selector
     # does, so no coefficient row is a pseudoinverse artifact.
-    result["features"] = _prune_rank_dependent_features(feature_rows, selected)
-    result["adjusted_r_squared"] = float(best_score) if selected else None
+    result["features"] = _prune_rank_dependent_features(feature_rows, columns(selected))
+    result["order"] = [number for number, _, _ in selected]
+    if selected:
+        result["adjusted_r_squared"] = float(current["adjusted_r_squared"])
+        result["r_squared"] = float(current["r_squared"])
     return result
 
 
@@ -4808,12 +4981,57 @@ def _prune_rank_dependent_features(
     return kept
 
 
+# Whether the forecast fits the forward-selected variables (what the Multivariate OLS card
+# reports) or every declared variable that varies. FALSE, and measured, not assumed:
+# backtest_forward_selection.py, rolling-origin over all 30 ad sets, 2026-08-16.
+#
+#   all-declared + ridge     14d pooled WAPE 51.0%   median 70.6%   9.1 terms   <- shipping
+#   forward + ridge                          58.0%          69.8%   1.4 terms
+#   forward, no ridge                        59.6%          69.7%
+#   all-declared, no ridge                   56.5%          82.4%
+#
+# Forward selection makes the forecast worse here, and the reason is worth keeping: on 34% of
+# backtest windows (55 of 164) nothing clears the entry gates at all. On those windows the
+# all-declared model still extracts a weak signal from many shrunken coefficients -- which is
+# precisely what the ridge is for -- while hard selection throws it away. Consistent with
+# Vault/Modeling/Forecast-Flatness-Is-The-Data.md: regularised-everything beats select-then-fit
+# on this data.
+#
+# Watch out for the trap that nearly sold the opposite conclusion. An empty selection used to
+# raise, _rolling_origin_backtest swallows the exception, and the model was then scored only on
+# the 66% of windows where it found signal -- which read as 46.3% pooled, a 4.5pp "win" that was
+# pure survivorship. Any future re-test must score every window (hence the intercept fallback in
+# _ols_forecast) or it will lie the same way.
+#
+# Flip to True only after re-running that harness on more data and seeing a real win.
+OLS_FORECAST_USES_FORWARD_SELECTION = False
+
+
 def _ols_forecast(
     values: np.ndarray, dates: pd.DatetimeIndex, horizon: int, context: dict | None = None,
     *, multivariate: bool = False,
 ) -> list[float]:
     feature_rows, future_rows = _ols_feature_frame(values, dates, context, horizon)
-    features = _select_multivariate_ols_features(values, feature_rows) if multivariate else ["spend"]
+    if not multivariate:
+        features = ["spend"]
+    elif OLS_FORECAST_USES_FORWARD_SELECTION:
+        # Refitted at every rolling-origin cutoff on that window's data only, so selection is
+        # part of the forecast rather than something chosen with sight of the held-out days.
+        features = _forward_select_declared_features(values, feature_rows)["features"]
+        if not features:
+            # Nothing cleared both gates, so the fitted model IS the intercept -- return it
+            # rather than raising. Two reasons this is not a cop-out:
+            #   * It is what the search actually concluded. Falling back to the spend line
+            #     instead measured 5.8pp worse pooled WAPE, because the ad sets that select
+            #     nothing are exactly the ones where a spend slope is noise.
+            #   * _forecast_candidate must be total. _forecast_for_series calls it unguarded
+            #     once a model wins selection, so a raise here would take down a whole ad
+            #     set's training run in the narrow case where the backtest windows selected
+            #     variables and the full series then selected none.
+            mean_level = float(np.mean(values)) if len(values) else 0.0
+            return _cap_forecast_values([mean_level] * horizon, values)
+    else:
+        features = _select_multivariate_ols_features(values, feature_rows)
     # Unpenalised, the declared set puts ~14 regressors against ~40 noisy daily counts and
     # backtests at R2 -0.84, i.e. worse than predicting the mean. The penalty scales with
     # feature count because that is what the overfitting scales with. Spend-only is a single
@@ -4920,8 +5138,8 @@ def get_ols_model_summaries(
         return empty
     univariate = _fit_ols_summary(values, feature_rows, ["spend"], "OLS")
     # Forward selection, not every declared variable that happens to vary -- see
-    # _forward_select_declared_features. The forecast path deliberately still uses the
-    # all-declared selector.
+    # _forward_select_declared_features. The forecast path deliberately does not (it fits all
+    # of them under ridge, which backtests better -- OLS_FORECAST_USES_FORWARD_SELECTION).
     selection = _forward_select_declared_features(values, feature_rows)
     selected = selection["features"]
     multivariate = _fit_ols_summary(values, feature_rows, selected, "Multivariate OLS") if selected else None
@@ -4938,6 +5156,18 @@ def get_ols_model_summaries(
         "declared_variables": _declared_variable_coverage(
             feature_rows, selected, multivariate, selection=selection,
         ),
+        # The search itself, round by round, for the "Selection path" panel. Everything the
+        # panel shows was computed during selection anyway -- publishing it is what stops the
+        # chosen variable list from reading as an unexplained verdict.
+        "selection": {
+            "method": "forward",
+            "alpha": selection["alpha"],
+            "min_gain": FORWARD_SELECTION_MIN_GAIN,
+            "order": selection["order"],
+            "steps": selection["steps"],
+            "r_squared": selection["r_squared"],
+            "adjusted_r_squared": selection["adjusted_r_squared"],
+        },
         "scope": scope,
     }
 
@@ -5031,6 +5261,19 @@ def _declared_variable_coverage(
                     "status": "not_selected",
                     "detail": f"Varies, but forward selection left it out -- adding it moves "
                               f"adjusted R2 by {moves}",
+                })
+            elif reason == "not_significant":
+                # It does lift the fit, just not by enough to distinguish from noise. Report
+                # both numbers: the gain on its own reads as "why was this left out?".
+                delta = rejection.get("delta")
+                p_value = rejection.get("p_value")
+                moves = f"{delta:+.4f}" if delta is not None else "no better"
+                significance = f"p = {p_value:.3f}" if p_value is not None else "not estimable"
+                entry.update({
+                    "status": "not_selected",
+                    "detail": f"Varies and moves adjusted R2 by {moves}, but forward selection "
+                              f"left it out -- {significance}, above the {FORWARD_SELECTION_MAX_P:.2f} "
+                              f"entry threshold",
                 })
             elif reason == "observations":
                 entry.update({

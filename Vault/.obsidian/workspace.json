@@ -184,6 +184,7 @@
   },
   "active": "4e14e97028740c5a",
   "lastOpenFiles": [
+    "Home.md.tmp.30512.1e7c713dd6b5",
     "Features/Forecast-Page-OLS-Panel.md.tmp.19072.42738ed9379e",
     "Modeling/OLS-Declared-Ten-Variables.md.tmp.19072.e2534275708d",
     "Modeling/OLS-Declared-Ten-Variables.md.tmp.19072.feb6b6772324",
@@ -195,7 +196,6 @@
     "Home.md",
     "Features/Dataset-Page.md.tmp.30176.9baac0ef93fd",
     "Features/Dataset-Page.md.tmp.30176.b2a222c5e84a",
-    "Modeling/OLS-Declared-Ten-Variables.md.tmp.26168.b4573fd0900d",
     "Gotchas/Uvicorn-Reload-Hangs.md",
     "Features/Dataset-Page.md",
     "Gotchas/Combined-Ad-Set-Import.md",

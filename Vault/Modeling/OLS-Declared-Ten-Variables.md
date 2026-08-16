@@ -11,6 +11,13 @@
 > current behaviour**. The two change **recency** variables (6 and 7) are unaffected and still
 > live. See [[Change-History-Hand-Recording]] for what replaced this.
 
+> [!warning] The panel no longer fits every declared variable — see [[Forward-Selection-In-The-App]]
+> Since 2026-08-13 the Multivariate OLS card fits a forward-**selected** subset of the declared
+> variables, with a block-F significance gate added 2026-08-16 and a per-round "Selection path"
+> trace on the card. Everything below still describes the candidate pool, the encoding and the
+> collinearity handling correctly. What changed is that varying-and-estimable no longer means
+> in-the-fit. The **forecast** path is unaffected: it still uses the all-declared selector.
+
 The Multivariate OLS panel models exactly the ten declared variables and nothing else
 (rebuilt 2026-08-03). `last7_leads` was removed — it had been riding along as a
 "momentum control" but was the strongest regressor, so every declared variable was
@@ -42,7 +49,9 @@ the holiday map is cached and only re-reads the file on process start.
 **Where it renders (updated 2026-08-12):** Dataset (portfolio-wide) and the Forecast page
 (scoped to the selected campaign or ad set), via one shared component. Note
 the share-vs-indicator distinction above applies to the pooled scopes only — at ad-set scope
-the change-type dummies are plain 0/1. See [[Forecast-Page-OLS-Panel]].
+the change-type dummies are plain 0/1. See [[Forecast-Page-OLS-Panel]]. For the same fits run
+across every ad set at once and ranked, see [[Per-Ad-Set-Regression-Report]] — note its
+"univariate" table is one regression per declared variable, not this file's spend-only fit.
 
 **Why:** the panel is meant to express the declared causal framework, not maximize R².
 **How to apply:** don't re-add helper regressors to make the fit look better, and don't
@@ -214,6 +223,15 @@ future-horizon loops) now write `weekday_0`..`weekday_6` (`for weekday in range(
 spec #8's `features` tuple both gained `"weekday_0"`, and the coverage function's detail-list
 special case for spec #8 was removed — `weekday_0` now flows through `in_model`/`varying` and
 `_feature_label()` exactly like the other six, no special-casing needed.
+
+**2026-08-13 correction:** `_select_multivariate_ols_features` now prunes rank-dependent
+columns after dropping constants. It keeps only features that add rank after the intercept and
+earlier declared terms are already in the design. That removes the old all-seven-weekday
+dummy dependency and also drops recency columns when they are just another selected feature
+plus a constant, such as `ad_change_recency = days_since_adset_started - 137`.
+
+Historical note below explains why the old all-seven-weekday encoding was tolerated before the
+rank-prune was added.
 
 **This makes the day-of-week block rank-deficient by construction**, and that's an accepted
 tradeoff, not an oversight: with all seven indicators plus the intercept, the seven always

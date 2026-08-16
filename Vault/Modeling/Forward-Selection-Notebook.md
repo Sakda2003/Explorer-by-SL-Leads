@@ -1,5 +1,63 @@
 # Forward Selection Notebook
 
+> [!note] This note is about the two standalone notebooks. The app runs its own selector —
+> see [[Forward-Selection-In-The-App]] for the one that picks the Multivariate OLS card's
+> variables, which uses a stricter entry rule (adjusted R² gain **and** block F p < 0.10) than
+> either notebook here.
+
+> [!note] There are now two forward-selection notebooks — 2026-08-13
+> `forward_selection_all_variables.ipynb` (below, second section) was written from the same
+> BA222 LN08 source but supersedes `forward_selection.ipynb` on every axis: it reads the
+> curated `master_dataset.xlsx` instead of four separate workbooks, treats categoricals as
+> whole variables via `smf.ols` + `C()` instead of one candidate per dummy, verifies its
+> exclusion rules against the data with asserts, reports a rejection margin for every
+> variable left out, and adds backward selection for comparison. **Decide whether to delete
+> the older one** — keeping both invites two answers to one question.
+
+## `forward_selection_all_variables.ipynb` (2026-08-13)
+
+Built at the user's request after the app-side forward-selection work was paused. 22 cells,
+runs end to end against `Dataset/master_dataset.xlsx` (`master_adset_daily`, 879 rows,
+18 ad sets, 2026-06-06 → 2026-07-31).
+
+**Three things that were not obvious:**
+- **LN08's own loop (Section 4) has a bug and this notebook does not copy it.** The lecture
+  code seeds `maxR2` with the first variable's `.rsquared`, then compares later candidates'
+  `.rsquared_adj` against it. Adjusted R² is always the smaller quantity, so the second
+  variable is judged against an inflated bar and the search can stop one step early. The
+  notebook recomputes the seed model's adjusted R² before the loop and says so in prose.
+- **Categoricals enter as blocks, not as dummies.** `C(day_of_week)` is one candidate. This
+  matches LN08 Section 3.2 (it refuses to drop `C(buildingStyle)` over one insignificant
+  level) and matches the whole-variable convention chosen for the app-side work. Backward
+  selection therefore tests blocks with `anova_lm(typ=2)`, not per-level t-tests.
+- **Rows are dropped for missing values once, up front, not per model.** statsmodels drops
+  them per fit, which would silently change `n` between two models whose adjusted R² are
+  being compared. One row (zero impressions → undefined `cpm`) goes.
+
+**Result on this data:** `messaging_conversations` enters first at adjusted R² **0.9013**
+and the remaining seven selected variables add **0.003 in total** — impressions,
+ad_change_type, ad_set_budget, reach, days_since_adset_started, frequency, spend, in that
+order, final adjusted R² 0.9040. With the notebook's `min_gain=0.001` materiality floor the
+model collapses to two variables (0.9025). Backward selection keeps four
+(messaging_conversations, impressions, reach, ad_set_budget) at 0.9031. All three readings
+say the same thing: **leads are messenger conversations, and nearly everything else is
+decoration.** Same conclusion the older notebook reached on the same underlying window.
+
+`spend` is selected but last, worth +0.00002, p = 0.28 — it is not that spend does not
+drive leads, it is that conversations already carry spend's effect.
+
+**Why:** the user asked for a reusable tool to run forward selection over *every* variable,
+inspired by the lecture notes directly.
+**How to apply:** the interesting knobs are `CANDIDATE_SET = "declared"` (restrict to the
+eight declared drivers, which reproduces the app's framework for comparison) and
+`CAMPAIGN_FIXED_EFFECTS`. Re-run after `python build_master_dataset.py` — the greedy path
+can change with more data, and this file is stale relative to the live database (which is at
+30 ad sets through 2026-08-12). Note the workbook's change-recency/type columns are the
+**inferred** detector outputs the app abandoned 2026-08-06 as wrong; treat any finding about
+them as provisional. See [[Master-Dataset]] and [[OLS-Declared-Ten-Variables]].
+
+## `forward_selection.ipynb` (2026-08-08, superseded)
+
 `forward_selection.ipynb` (project root), built 2026-08-08 from the BA222 Lecture Notes
 08 (Rhoads) forward-selection method — correlation-seeded first variable, then greedy
 add-by-adjusted-R² until no candidate improves it. Runs on the pooled `ad_set_days`

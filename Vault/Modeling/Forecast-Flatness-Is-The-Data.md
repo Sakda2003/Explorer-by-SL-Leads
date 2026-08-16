@@ -26,6 +26,13 @@ without new data:
 - Pooling all ad-set-days with fixed effects is 5.2% worse than per-ad-set fits.
 - Paired test, declared-10 OLS vs flat trailing mean: statistically tied (t = -0.15).
 
+**A seventh measurement, 2026-08-16: variable selection is also not the answer.** Forward
+selection over the declared variables was backtested against the shipping all-declared-under-
+ridge forecast and came out 7pp worse on 14-day pooled WAPE (58.0% vs 51.0%), because a third
+of rolling-origin windows have no individually significant variable at all and shrunken
+coefficients still beat dropping them. Full numbers and the survivorship trap that nearly
+reversed the reading: [[Forward-Selection-In-The-App]].
+
 **Ridge tuning is a trap here.** An apparent sweep optimum vanished under the mean and
 under both split-halves independently — a median artifact. The per-feature ridge
 penalty stays at 10; always check mean + split-half before adopting a hyperparameter

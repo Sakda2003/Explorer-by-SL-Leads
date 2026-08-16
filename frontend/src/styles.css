@@ -2806,6 +2806,41 @@ td code { color: var(--text); font-size: 11px; }
 }
 .model-gov-ols-detail-table .num { text-align: right; }
 .model-gov-ols-diagnostics { margin-top: 18px; }
+/* Forward-selection trace. Reuses the detail table's type and rules, but the last column is a
+   word ("not significant") rather than a number, so it needs its own track sizing instead of
+   the seven fixed numeric columns above. */
+.model-gov-ols-selection-rule {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.model-gov-ols-selection-step { margin-top: 4px; }
+.model-gov-ols-selection-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.model-gov-ols-selection-head b { color: var(--text); font-weight: 500; }
+.model-gov-ols-selection-head .num {
+  flex: none;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.model-gov-ols-selection-table { margin-top: 8px; }
+.model-gov-ols-selection-table .model-gov-ols-detail-table-head,
+.model-gov-ols-selection-table .model-gov-ols-detail-table-row {
+  grid-template-columns: minmax(112px, 1.2fr) repeat(4, 64px) minmax(96px, .9fr);
+  min-width: 520px;
+}
+/* The winning row is the answer to "why this variable" — it has to be findable at a glance
+   without colour alone carrying it, hence the weight change on the label too. */
+.model-gov-ols-detail-table-row.is-winner { color: var(--text); }
+.model-gov-ols-detail-table-row.is-winner span:last-child { color: var(--gold-strong); }
 /* The rules above hardcode dark hex values. Now that these cards also render on the Forecast
    page -- which people do open in light mode -- remap them onto the theme tokens there. */
 @media (max-width: 640px) {
@@ -3967,20 +4002,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .dataset-inventory-item strong { color: var(--text); font-family: var(--font-display); font-size: 24px; font-weight: 700; }
 .dataset-inventory-foot { display: flex; gap: 12px; margin-top: 4px; color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
-.dataset-variables-grid { display: grid; }
-.dataset-variables-head, .dataset-variables-row { display: grid; grid-template-columns: 28px 1.1fr 2.4fr 100px 70px; gap: 12px; align-items: baseline; padding: 9px 0; }
-.dataset-variables-head { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.dataset-variables-row { border-bottom: 1px solid var(--line); font-size: 11.5px; }
-.dataset-variables-row:last-child { border-bottom: 0; }
-.dataset-variables-row.is-flat, .dataset-variables-row.is-missing { opacity: .62; }
-.dataset-variables-row.is-expandable { cursor: pointer; }
-.dataset-variables-name { color: var(--text); font-weight: 600; }
-.dataset-variables-note { color: var(--muted); line-height: 1.5; }
-.dataset-variables-note em { color: var(--yellow-strong); font-style: normal; }
-.dataset-variables-pill { display: inline-flex; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
-.dataset-variables-pill.is-in_model { border-color: color-mix(in srgb, var(--yellow-strong) 55%, transparent); color: var(--yellow-strong); }
-.dataset-variables-pill.is-target { border-color: color-mix(in srgb, var(--series-median) 55%, transparent); color: var(--series-median); }
-
 /* No max-height/vertical overflow here on purpose -- a capped inner scrollbox meant
    scrolling twice (inner box, then page) to see the whole matrix. Horizontal-only
    overflow lets the full height render and the page scroll normally; row/column
@@ -4173,7 +4194,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
 
 /* Frozen header + frozen tick column. The header sits at z-index 3 and the checkbox
    column at 2, so where they cross (the select-all cell) the header still wins. */
-.board-table thead th { position: sticky; top: 0; z-index: 3; padding: 0; background: var(--surface-strong); box-shadow: inset 0 -1px 0 var(--line); }
+/* The right-edge inset continues the body's cell grid up through the header, so the columns
+   read as one set of boxes rather than a bordered body under an unbordered strip. */
+.board-table thead th { position: sticky; top: 0; z-index: 3; padding: 0; background: var(--surface-strong); box-shadow: inset -1px 0 0 var(--line), inset 0 -1px 0 var(--line); }
 .board-table .board-check-col { position: sticky; left: 0; z-index: 2; width: 44px; padding: 0; text-align: center; background: var(--surface); }
 .board-table thead .board-check-col { z-index: 4; background: var(--surface-strong); }
 .board-table tbody .board-check-col { box-shadow: inset -1px 0 0 var(--line); }
@@ -4189,7 +4212,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .board-th-label:hover .board-th-arrow { opacity: .55; }
 .board-th-arrow.is-on { opacity: 1; color: var(--yellow-strong); }
 .board-table th.is-sorted .board-th-label { color: var(--yellow-strong); }
-.board-table th.is-sorted { box-shadow: inset 0 -2px 0 var(--yellow), inset 0 -1px 0 var(--line); }
+.board-table th.is-sorted { box-shadow: inset -1px 0 0 var(--line), inset 0 -2px 0 var(--yellow), inset 0 -1px 0 var(--line); }
 
 /* 5px hit area straddling the column edge, invisible until you approach it. */
 .board-th-resize { position: absolute; top: 0; right: -2px; z-index: 1; width: 5px; height: 100%; cursor: col-resize; touch-action: none; }
@@ -4200,13 +4223,39 @@ tr:hover .benchmark-bar span { opacity: 1; }
    value, so it already establishes the containing block this handle absolutely positions to. */
 
 .board-table tbody tr { transition: background .12s ease; }
-.board-table tbody tr:hover { background: var(--surface-soft); }
-.board-table tbody tr.is-selected { background: color-mix(in srgb, var(--yellow) 6%, transparent); }
 .board-table tbody td { padding: 0 2px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+
+/* Monday's board reads as a GRID OF BOXES, not a list of rows, and the one thing that does
+   it is the vertical rule on every cell -- the same data with only horizontal separators
+   reads as a list. Each cell closes on all four sides, so a data point is a discrete tile.
+   Deliberately border-only: the cell FILL stays on the <tr>, where the theme layer further
+   down owns it (--board-row / --board-row-alt zebra / --board-row-hover). Painting an
+   opaque background on the <td> here would sit on top of all three and silently flatten
+   the zebra striping -- invisible in dark, where --surface and --board-row-alt happen to be
+   the same hex, but obvious in light. Drawn as an inset shadow rather than border-right so
+   it costs no layout width and cannot shift the column sizes the resize drag sets. */
+.board-table tbody td { box-shadow: inset -1px 0 0 var(--line); }
+
+/* Selected rows. Specificity is load-bearing: the theme layer further down sets
+   `tr:nth-child(even)` and `tr:hover` at (0,2,2), which would tie with a plain
+   `tr.is-selected` and win on source order -- so the selected state spells out both
+   variants to reach (0,3,2) and stay visible on an even row and under the cursor. */
+.board-table tbody tr.is-selected,
+.board-table tbody tr.is-selected:nth-child(even),
+.board-table tbody tr.is-selected:hover { background: color-mix(in srgb, var(--yellow) 8%, var(--board-row)); }
 .board-cell-static { display: block; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-table td.num .board-cell-static { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .board-table td .lead-cell-display { min-height: 26px; padding: 4px 9px; }
 .board-table td .lead-cell-input { min-height: 26px; }
+/* The base `.lead-cell-display:hover` (drilldown table) draws its own bordered, rounded pill
+   inset within the cell -- correct there, since that table has no cell borders of its own to
+   signal "editable" instead. On the board every cell already carries its own outline (the
+   Monday-style grid rule above) plus a row-level hover fill, so the inner pill just reads as
+   a second, smaller, oddly-cropped rectangle floating inside the first. Suppressed here so
+   the outer cell is the only outline the board ever draws; focus-visible (the actual
+   click-to-edit state, not just a hover) is left alone since that's a real mode change and
+   still needs its own affordance. */
+.board-table td .lead-cell-display:hover { background: transparent; border-color: transparent; }
 .board-table td .lead-status-select { padding-left: 10px; }
 
 /* Row height. Monday's three presets, driven off one cell min-height. */
@@ -4248,6 +4297,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .board-bulk-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .board-bulk-close { width: 30px; height: 30px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 8px; background: none; cursor: pointer; transition: color .14s ease, background .14s ease, transform .18s cubic-bezier(.16,1,.3,1); }
 .board-bulk-close:hover { color: var(--text); background: var(--surface-soft); transform: rotate(90deg); }
+.board-bulk-link { color: var(--yellow-strong); border: 0; background: none; padding: 0; font: 600 11.5px var(--font-display); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
+.board-bulk-link:hover { color: var(--yellow); }
+.board-bulk-link:disabled { opacity: .5; cursor: not-allowed; text-decoration: none; }
 
 @media (max-width: 720px) {
  .board-bulk-bar { left: 12px; right: 12px; bottom: 14px; transform: none; animation: none; }
@@ -4321,9 +4373,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
 }
 
 @media (max-width: 900px) {
-  .dataset-variables-head, .dataset-variables-row { grid-template-columns: 22px 1fr; }
-  .dataset-variables-head span:nth-child(3), .dataset-variables-head span:nth-child(4), .dataset-variables-head span:nth-child(5),
-  .dataset-variables-row span:nth-child(3), .dataset-variables-row span:nth-child(4), .dataset-variables-row span:nth-child(5) { display: none; }
   .dataset-inventory-item.is-divided { border-left: 0; border-top: 1px solid var(--line); padding-top: 16px; }
 }
 

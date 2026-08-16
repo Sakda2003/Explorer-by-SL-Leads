@@ -463,6 +463,146 @@ class PipelineTests(unittest.TestCase):
         legacy = core._declared_variable_coverage(rows, selection["features"], fit)
         self.assertEqual(next(i for i in legacy if i["number"] == 5)["status"], "available")
 
+    @staticmethod
+    def _multivariate_context(n: int, rng) -> tuple[np.ndarray, pd.DatetimeIndex, dict]:
+        dates = pd.date_range("2026-06-01", periods=n, freq="D")
+        spend = np.array([40.0 + 20.0 * np.sin(i / 4) for i in range(n)])
+        values = 2.0 + 0.1 * spend + rng.normal(0.0, 1.0, n)
+        return values, dates, {
+            "spend_values": spend,
+            "frequency_values": rng.normal(1.6, 0.25, n),
+            "days_since_start_values": np.arange(n, dtype=float),
+            "campaign_values": values * 1.5,
+            "overall_values": values * 3.0,
+        }
+
+    def _fitted_features(self, values, dates, context) -> list[str]:
+        """The feature list _ols_forecast actually hands to the fit -- the returned numbers
+        alone cannot tell the two selectors apart."""
+        seen: list[list[str]] = []
+        original = core._fit_ols_predictions
+
+        def spy(values_, feature_rows, future_rows, features, **kwargs):
+            seen.append(list(features))
+            return original(values_, feature_rows, future_rows, features, **kwargs)
+
+        core._fit_ols_predictions = spy
+        try:
+            forecast = core._ols_forecast(values, dates, 14, context, multivariate=True)
+        finally:
+            core._fit_ols_predictions = original
+        self.assertEqual(len(forecast), 14)
+        return seen[-1] if seen else []
+
+    def test_multivariate_forecast_fits_every_declared_variable_by_default(self):
+        # Phase 3 (2026-08-16) measured forward selection against this and it forecast worse,
+        # so the forecast path keeps the all-declared set under ridge while the OLS card shows
+        # the selected subset. The two disagreeing is deliberate -- see
+        # OLS_FORECAST_USES_FORWARD_SELECTION.
+        self.assertFalse(core.OLS_FORECAST_USES_FORWARD_SELECTION)
+        values, dates, context = self._multivariate_context(45, np.random.default_rng(13))
+        feature_rows, _ = core._ols_feature_frame(values, dates, context, 14)
+        self.assertEqual(self._fitted_features(values, dates, context),
+                         core._select_multivariate_ols_features(values, feature_rows))
+
+    def test_multivariate_forecast_honours_the_forward_selection_switch(self):
+        values, dates, context = self._multivariate_context(45, np.random.default_rng(13))
+        feature_rows, _ = core._ols_feature_frame(values, dates, context, 14)
+        core.OLS_FORECAST_USES_FORWARD_SELECTION = True
+        try:
+            fitted = self._fitted_features(values, dates, context)
+        finally:
+            core.OLS_FORECAST_USES_FORWARD_SELECTION = False
+        self.assertIn("spend", fitted)
+        self.assertEqual(fitted, core._forward_select_declared_features(values, feature_rows)["features"])
+        self.assertLess(len(fitted), len(core._select_multivariate_ols_features(values, feature_rows)))
+
+    def test_multivariate_forecast_returns_the_level_when_nothing_is_selected(self):
+        # A third of rolling-origin windows select nothing. Returning the intercept keeps
+        # _forecast_candidate total -- and keeps a re-test honest, since raising here would let
+        # the model be scored only on the windows where it found signal.
+        n = 40
+        dates = pd.date_range("2026-06-01", periods=n, freq="D")
+        rng = np.random.default_rng(2)
+        values = rng.normal(6.0, 1.5, n)
+        context = {
+            "spend_values": rng.normal(30.0, 5.0, n),
+            "campaign_values": values * 1.5,
+            "overall_values": values * 3.0,
+        }
+        feature_rows, _ = core._ols_feature_frame(values, dates, context, 14)
+        self.assertEqual(core._forward_select_declared_features(values, feature_rows)["features"], [])
+        core.OLS_FORECAST_USES_FORWARD_SELECTION = True
+        try:
+            forecast = core._ols_forecast(values, dates, 14, context, multivariate=True)
+        finally:
+            core.OLS_FORECAST_USES_FORWARD_SELECTION = False
+        self.assertEqual(len(forecast), 14)
+        self.assertEqual(len(set(round(value, 6) for value in forecast)), 1)
+        self.assertAlmostEqual(forecast[0], float(np.mean(values)), places=6)
+
+    def test_forward_selection_reports_every_candidate_it_tried(self):
+        # The selection path panel renders this trace directly, so it has to carry the losers
+        # and their statistics, not just the winner.
+        rng = np.random.default_rng(7)
+        n = 40
+        spend = np.array([10.0 + (i % 9) * 3.0 for i in range(n)])
+        rows = self._forward_rows(n, spend=spend, frequency=rng.normal(2.0, 0.5, n))
+        values = 1.0 + 0.5 * spend + rng.normal(0.0, 1.5, n)
+        selection = core._forward_select_declared_features(values, rows)
+        self.assertEqual([step["action"] for step in selection["steps"]], ["add"])
+        step = selection["steps"][0]
+        self.assertEqual(step["round"], 1)
+        self.assertEqual(step["winner"], 2)
+        self.assertEqual(sorted(row["number"] for row in step["candidates"]), [2, 5])
+        winner = next(row for row in step["candidates"] if row["number"] == 2)
+        self.assertEqual(winner["status"], "eligible")
+        self.assertLess(winner["p_value"], 0.001)
+        self.assertGreater(winner["r_squared"], winner["adjusted_r_squared"])
+        self.assertAlmostEqual(step["adjusted_r_squared"], winner["adjusted_r_squared"])
+        self.assertAlmostEqual(selection["adjusted_r_squared"], winner["adjusted_r_squared"])
+
+    def test_forward_selection_refuses_a_gain_that_is_not_significant(self):
+        # Adjusted R2 rises whenever the block F exceeds 1, which happens well before the term
+        # is distinguishable from noise -- this frequency column lifts adjusted R2 by 0.0003 at
+        # p = 0.30. Gain alone would admit it; the p-value gate is what keeps it out.
+        rng = np.random.default_rng(1)
+        n = 40
+        spend = np.array([10.0 + (i % 9) * 3.0 for i in range(n)])
+        rows = self._forward_rows(n, spend=spend, frequency=rng.normal(2.0, 0.5, n))
+        values = 1.0 + 0.5 * spend + rng.normal(0.0, 2.0, n)
+        selection = core._forward_select_declared_features(values, rows)
+        self.assertEqual(selection["features"], ["spend"])
+        rejection = selection["rejected"][5]
+        self.assertEqual(rejection["reason"], "not_significant")
+        self.assertGreater(rejection["delta"], 0.0)
+        self.assertGreaterEqual(rejection["p_value"], core.FORWARD_SELECTION_MAX_P)
+        coverage = core._declared_variable_coverage(
+            rows, selection["features"],
+            core._fit_ols_summary(values, rows, selection["features"], "Multivariate OLS"),
+            selection=selection,
+        )
+        detail = next(item for item in coverage if item["number"] == 5)["detail"]
+        self.assertIn("p = 0.300", detail)
+
+    def test_forward_selection_tests_a_multi_column_block_with_one_p_value(self):
+        # Seven weekday indicators produce seven t statistics and no single one of them asks
+        # "does day-of-week belong here" -- the trace has to carry the block F instead.
+        n = 56
+        dates = pd.date_range("2026-06-01", periods=n, freq="D")
+        weekdays = {f"weekday_{d}": np.array([1.0 if day.weekday() == d else 0.0 for day in dates])
+                    for d in range(7)}
+        rng = np.random.default_rng(4)
+        values = np.array([9.0 if day.weekday() >= 5 else 2.0 for day in dates]) + rng.normal(0, 0.8, n)
+        rows = self._forward_rows(n, **weekdays)
+        selection = core._forward_select_declared_features(values, rows)
+        candidate = selection["steps"][0]["candidates"][0]
+        self.assertEqual(candidate["number"], 8)
+        # Six degrees of freedom, not seven: the seventh indicator is the intercept's exact
+        # complement and adds no rank.
+        self.assertEqual(candidate["df_added"], 6)
+        self.assertLess(candidate["p_value"], 0.001)
+
     def test_spend_signal_has_positive_diminishing_returns(self):
         dates = pd.date_range("2026-06-01", periods=35, freq="D")
         values = pd.Series([4, 5, 6, 5, 4, 2, 1] * 5, dtype=float).to_numpy()

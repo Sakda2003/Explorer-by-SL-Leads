@@ -1215,12 +1215,74 @@ function OlsDetailBlock({ summary }: { summary: any }) {
  );
 }
 
+// The forward-selection search that chose the Multivariate OLS card's variables, round by
+// round. Every number here was computed during selection itself (backend
+// `_forward_select_declared_features`) — without it the variable list reads as an unexplained
+// verdict, and "why isn't spend in the model?" has no answer on the page.
+// Each round lists every candidate that was tried, not just the winner: R2 for readability,
+// adjusted R2 and its gain for the ranking, and the block F p-value for the entry gate. A
+// variable enters only if it clears both gates, which is why a positive gain can still lose.
+const OLS_SELECTION_STATUS: Record<string, string> = {
+ eligible: 'eligible',
+ no_gain: 'no gain',
+ not_significant: 'not significant',
+ rank: 'not estimable',
+ observations: 'too few days',
+};
+
+function OlsSelectionPath({ selection }: { selection: any }) {
+ const steps: any[] = selection?.steps || [];
+ if (!steps.length) return null;
+ const alpha = Number(selection?.alpha);
+ return (
+  <div className="model-gov-ols-detail model-gov-ols-selection">
+   <p className="model-gov-ols-selection-rule">
+    Greedy forward selection. Each round fits every remaining variable on top of the model so
+    far and keeps the best one — it enters only if it raises adjusted R2 and its block F test
+    clears p &lt; {Number.isFinite(alpha) ? alpha.toFixed(2) : '-'}. Whole variables enter
+    together, so the seven day indicators and the four holiday buckets are one candidate each.
+   </p>
+   {steps.map((step: any) => (
+    <div className="model-gov-ols-selection-step" key={step.round}>
+     <div className="model-gov-ols-selection-head">
+      <span>
+       Round {step.round} · {step.action === 'drop' ? 'removed' : 'added'} <b>{step.winner_name}</b>
+      </span>
+      <span className="num">Adj R2 {olsStat(step.adjusted_r_squared, 4)}</span>
+     </div>
+     <div className="model-gov-ols-detail-table model-gov-ols-selection-table">
+      <div className="model-gov-ols-detail-table-head">
+       <span>Candidate</span><span className="num">R2</span><span className="num">Adj R2</span>
+       <span className="num">Δ Adj R2</span><span className="num">P&gt;F</span><span>Outcome</span>
+      </div>
+      {(step.candidates || []).map((row: any) => (
+       <div
+        className={`model-gov-ols-detail-table-row${row.number === step.winner ? ' is-winner' : ''}`}
+        key={`${step.round}-${row.number}`}
+       >
+        <span>{row.name}</span>
+        <span className="num">{olsStat(row.r_squared, 4)}</span>
+        <span className="num">{olsStat(row.adjusted_r_squared, 4)}</span>
+        <span className="num">{row.gain == null ? '-' : `${row.gain >= 0 ? '+' : ''}${olsStat(row.gain, 4)}`}</span>
+        <span className="num">{olsPValue(row.p_value)}</span>
+        <span>{row.number === step.winner ? (step.action === 'drop' ? 'removed' : 'selected') : (OLS_SELECTION_STATUS[row.status] || row.status)}</span>
+       </div>
+      ))}
+     </div>
+    </div>
+   ))}
+  </div>
+ );
+}
+
 function OlsResultCards(
  { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false }:
  { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean },
 ) {
  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
+ const [pathOpen, setPathOpen] = useState(false);
+ const selectionSteps: any[] = ols?.selection?.steps || [];
  const summaries = [
   { key: 'univariate', label: 'Spend-only OLS', summary: ols?.univariate },
   { key: 'multivariate', label: 'Multivariate OLS', summary: ols?.multivariate },
@@ -1281,6 +1343,20 @@ function OlsResultCards(
          <ChevronDown size={13} className={detailOpen[key] ? 'is-open' : ''} />
         </button>
         {detailOpen[key] && <OlsDetailBlock summary={summary} />}
+       </>
+      )}
+      {key === 'multivariate' && selectionSteps.length > 0 && (
+       <>
+        <button
+         type="button"
+         className="model-gov-ols-detail-toggle"
+         aria-expanded={pathOpen}
+         onClick={() => setPathOpen((open) => !open)}
+        >
+         {pathOpen ? 'Hide selection path' : `Show selection path (${selectionSteps.length} round${selectionSteps.length === 1 ? '' : 's'})`}
+         <ChevronDown size={13} className={pathOpen ? 'is-open' : ''} />
+        </button>
+        {pathOpen && <OlsSelectionPath selection={ols.selection} />}
        </>
       )}
      </article>
@@ -2134,11 +2210,15 @@ function ForecastPage() {
  : olsDays < (olsScope.univariate_days_needed || 12)
  ? `Only ${plural(olsDays, 'day')} of data in this scope - a regression needs at least ${olsScope.univariate_days_needed || 12}. Pick a wider scope.`
  : 'Upload ad performance data with spend before OLS regression results are available.';
- // A multivariate card can vanish on its own while spend-only still fits, purely because
- // the scope is too short for ~18 terms. Without this the reader sees one card and no reason.
- const olsMultivariateNote = ols?.univariate && !ols?.multivariate && olsScope.multivariate_days_needed
+ // A multivariate card can vanish on its own while spend-only still fits, for two unrelated
+ // reasons: the scope is too short for the terms it wants, or (since forward selection drives
+ // this card) no declared variable beat an intercept-only model on adjusted R-squared. Those
+ // read identically -- one missing card -- so the copy has to name which one happened.
+ const olsMultivariateNote = !(ols?.univariate && !ols?.multivariate && olsScope.multivariate_days_needed)
+ ? ''
+ : olsScope.multivariate_terms_wanted
  ? `Multivariate fit needs ${olsScope.multivariate_days_needed} days for its ${olsScope.multivariate_terms_wanted} terms; this scope has ${olsDays}.`
- : '';
+ : 'Forward selection kept no declared variable here - none improved adjusted R-squared over predicting the average day. See the variable dictionary for the margin on each one.';
  // A phase marker needs roughly four days of x-axis to fit its label. Boundaries closer
  // than that still get their divider line, but only the first keeps the caption, so two
  // captions can never be painted over each other.
@@ -4681,13 +4761,17 @@ function DatasetPage() {
  const [ols, setOls] = useState<any>(null);
  const [error, setError] = useState('');
 
- const [varOpen, setVarOpen] = useState<Record<number, boolean>>({});
  const [hoverIdx, setHoverIdx] = useState(-1);
  const [declaredHoverIdx, setDeclaredHoverIdx] = useState(-1);
  const [correlationView, setCorrelationView] = useState<'declared' | 'expanded'>('declared');
 
  const [rowsTable, setRowsTable] = useState<'leads' | 'ad_performance' | 'ad_performance_export'>('leads');
- const [rowsData, setRowsData] = useState<{ rows: any[]; total: number; offset: number; limit: number }>({ rows: [], total: 0, offset: 0, limit: 50 });
+ // Only what the server is authoritative about. The page position is client-owned state
+ // (`rowsOffset` below) and is deliberately NOT read back off the response: the endpoint
+ // echoes the offset it was given, so letting a late reply write it back re-applied a stale
+ // page and kicked off another fetch -- the flicker loop described at the fetch effect.
+ const [rowsData, setRowsData] = useState<{ rows: any[]; total: number; limit: number }>({ rows: [], total: 0, limit: 50 });
+ const [rowsOffset, setRowsOffset] = useState(0);
  const [rowsBusy, setRowsBusy] = useState(false);
  // --- Board state (Monday-style raw-data board) -------------------------------------------
  // Sort and search are server-side: the board pages 50 rows at a time, so sorting or
@@ -4702,6 +4786,11 @@ function DatasetPage() {
  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
  const [density, setDensity] = useState<BoardDensity>('default');
  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+ // True once the user has expanded a page-only selection to every row matching the current
+ // filter/search/scope -- distinguishes "selected exactly this page" from "selected everything
+ // that happens to total the page size", so the banner doesn't re-offer an already-taken action.
+ const [selectedAllMatching, setSelectedAllMatching] = useState(false);
+ const [selectAllMatchingBusy, setSelectAllMatchingBusy] = useState(false);
  const [boardBusy, setBoardBusy] = useState(false);
  const [boardError, setBoardError] = useState('');
 
@@ -4809,6 +4898,33 @@ function DatasetPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [scopeParams, dataRefreshKey]);
 
+ // Everything that defines *which rows* the board is showing, apart from which page of them.
+ // Any change to this must send the pager back to page 1 -- a narrower filter should never
+ // leave it stranded past the new end of the table.
+ const rowsQueryKey = [
+  rowsTable, scopeParams, rowFiltersKey, rowSort?.field ?? '', rowSort?.direction ?? '', rowSearch,
+ ].join(' ');
+ const lastRowsQueryKey = useRef(rowsQueryKey);
+ // Adjusted during render, not in an effect. This is React's documented "adjust state when
+ // props change" escape hatch: the re-render happens before any effect runs, so the fetch
+ // effect below only ever sees the corrected offset.
+ //
+ // It used to be two follow-up effects, and that was the flicker: applying a filter while on
+ // page 5 fired the fetch effect FIRST (still at offset 200, so the server returned an empty
+ // page for a now-shorter result set -- the blank flash), then the reset effect set offset 0
+ // and fired a SECOND fetch. With no ordering guard the two replies could land in either
+ // order, and because the response also carried `offset`, a late offset-200 reply put the
+ // pager back on page 5 and triggered yet another fetch. That loop is what was visibly
+ // flickering and jumping the scroll position as the table's height changed under it.
+ if (lastRowsQueryKey.current !== rowsQueryKey) {
+  lastRowsQueryKey.current = rowsQueryKey;
+  if (rowsOffset !== 0) setRowsOffset(0);
+ }
+
+ // Monotonic request id: only the newest in-flight request may write to state, so an earlier
+ // reply that arrives late is dropped instead of overwriting newer rows.
+ const rowsRequestId = useRef(0);
+
  useEffect(() => {
   setRowsBusy(true);
   const scoped = scopeParams ? `&${scopeParams}` : '';
@@ -4817,31 +4933,22 @@ function DatasetPage() {
    : '';
   const sortQuery = rowSort ? `&sort=${encodeURIComponent(rowSort.field)}&direction=${rowSort.direction}` : '';
   const searchQuery = rowSearch ? `&search=${encodeURIComponent(rowSearch)}` : '';
-  api(`/dataset/rows?table=${rowsTable}&offset=${rowsData.offset}&limit=${rowsData.limit}${scoped}${filterQuery}${sortQuery}${searchQuery}`)
-   .then(setRowsData)
-   .catch((err) => setError(err.message || 'Failed to load rows'))
-   .finally(() => setRowsBusy(false));
+  const requestId = ++rowsRequestId.current;
+  api(`/dataset/rows?table=${rowsTable}&offset=${rowsOffset}&limit=${rowsData.limit}${scoped}${filterQuery}${sortQuery}${searchQuery}`)
+   .then((data) => {
+    if (requestId !== rowsRequestId.current) return;
+    // `offset` from the response is intentionally discarded -- see the state declaration.
+    setRowsData({ rows: data.rows, total: data.total, limit: data.limit });
+   })
+   .catch((err) => { if (requestId === rowsRequestId.current) setError(err.message || 'Failed to load rows'); })
+   .finally(() => { if (requestId === rowsRequestId.current) setRowsBusy(false); });
   // `dataRefreshKey` for the same reason the correlation/OLS effect above needs it: the raw
   // table's declared-variable columns are derived from recorded changes, so a popover save
-  // changes them without touching the scope or page. `rowFiltersKey` (not `completeRowFilters`
-  // itself) so the effect only re-fires when the filters' actual shape changes, not on every
+  // changes them without touching the scope or page. `rowsQueryKey` folds in table/scope/
+  // filters/sort/search, so the effect re-fires on their actual shape rather than on every
   // render that produces a new-but-equal array.
   // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [rowsTable, rowsData.offset, scopeParams, dataRefreshKey, rowFiltersKey, rowSort, rowSearch]);
-
- // Reset pagination whenever the filter set changes, same reasoning as the scope-change reset
- // just below -- a narrower filter should never leave the pager stranded past the new end.
- // Sorting and searching reorder/reduce the whole result set, so they get the same treatment.
- useEffect(() => {
-  setRowsData((prev) => (prev.offset === 0 ? prev : { ...prev, offset: 0 }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [rowFiltersKey, rowSort, rowSearch]);
-
- // Reset pagination back to the first page whenever the scope changes, so a filter switch
- // never leaves the row browser stranded past the end of a now-much-shorter table.
- useEffect(() => {
-  setRowsData((prev) => (prev.offset === 0 ? prev : { ...prev, offset: 0 }));
- }, [scopeParams]);
+ }, [rowsQueryKey, rowsOffset, dataRefreshKey]);
 
  // --- Board behaviour ----------------------------------------------------------------------
  const boardColumns = DATASET_ROW_COLUMNS[rowsTable];
@@ -4852,10 +4959,6 @@ function DatasetPage() {
  // individual cells accept an edit is decided per column by `edit` in DATASET_ROW_COLUMNS --
  // a few columns are joined, computed, or placeholder-only and stay read-only there.
  const boardRowEndpoint = (id: string) => (rowsTable === 'leads' ? `/leads/${id}` : `/dataset/ad-performance/${id}`);
- // The lead endpoints retrain synchronously; the ad-performance ones schedule a background
- // retrain (spend and frequency are model inputs, but a full train_models() takes ~18s and the
- // board fires one request per committed cell). Poll for that one so the UI shows it running.
- const boardRetrainsInBackground = rowsTable !== 'leads';
  const pageRowIds: string[] = rowsData.rows.map((row: any) => String(row.id));
  const selectedOnPage = pageRowIds.filter((id) => selectedRowIds.includes(id));
  const allPageSelected = pageRowIds.length > 0 && selectedOnPage.length === pageRowIds.length;
@@ -4864,9 +4967,10 @@ function DatasetPage() {
  // selection that points at rows the board is no longer showing.
  const switchTable = (table: 'leads' | 'ad_performance' | 'ad_performance_export') => {
   setRowsTable(table);
-  setRowsData((prev) => ({ ...prev, offset: 0 }));
+  // No explicit offset reset needed -- `table` is part of `rowsQueryKey`, so the render-phase
+  // adjustment above already sends the pager back to page 1.
   setRowFilters([]); setAppliedRowFilters([]);
-  setRowSort(null); setHiddenColumns([]); setSelectedRowIds([]);
+  setRowSort(null); setHiddenColumns([]); setSelectedRowIds([]); setSelectedAllMatching(false);
   setSearchDraft(''); setRowSearch(''); setBoardError('');
  };
 
@@ -4882,12 +4986,37 @@ function DatasetPage() {
  };
 
  const toggleRowSelected = (id: string) => {
+  setSelectedAllMatching(false);
   setSelectedRowIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
  };
  const toggleSelectAllOnPage = () => {
+  setSelectedAllMatching(false);
   setSelectedRowIds((current) => (
    allPageSelected ? current.filter((id) => !pageRowIds.includes(id)) : Array.from(new Set([...current, ...pageRowIds]))
   ));
+ };
+ // "Select all N matching rows" -- expands a page-only selection to every row the current
+ // filter/search/scope matches, via /dataset/row-ids (unbounded, unlike /dataset/rows' 500 cap).
+ const selectAllMatchingRows = async () => {
+  setSelectAllMatchingBusy(true);
+  setBoardError('');
+  try {
+   const scoped = scopeParams ? `&${scopeParams}` : '';
+   const filterQuery = allRowFilters.length
+    ? `&filters=${encodeURIComponent(JSON.stringify(allRowFilters.map((row) => ({ field: row.field, operator: row.operator, value: row.value }))))}`
+    : '';
+   const searchQuery = rowSearch ? `&search=${encodeURIComponent(rowSearch)}` : '';
+   const result = await api(`/dataset/row-ids?table=${rowsTable}${scoped}${filterQuery}${searchQuery}`);
+   setSelectedRowIds(result.ids || []);
+   setSelectedAllMatching(true);
+   if (result.capped) {
+    setBoardError(`Only the first ${fmt((result.ids || []).length)} of ${fmt(result.total)} matching rows were selected -- narrow the filter to select the rest.`);
+   }
+  } catch (err: any) {
+   setBoardError(err.message || 'Failed to select all matching rows.');
+  } finally {
+   setSelectAllMatchingBusy(false);
+  }
  };
 
  const setColumnWidth = (key: string, width: number) => {
@@ -4903,24 +5032,31 @@ function DatasetPage() {
  // Same optimistic single-field PATCH the forecast page's lead drilldown uses, so editing a
  // row means the same thing everywhere. The value's shape is decided by the column's own
  // `edit` type rather than by field name, so a new editable column needs no change here.
+ //
+ // Deliberately does NOT set `boardBusy`. Both endpoints now write the row and return, leaving
+ // rebuild_aggregates()/train_models() (~31s together) to the background retrain guard, so the
+ // request is a few milliseconds -- and gating the board on it meant `.board-scroll.is-busy`
+ // (opacity + `pointer-events: none`) blanked the entire table on every committed cell. The
+ // optimistic update already shows the new value immediately; `boardBusy` is kept for bulk
+ // delete, which really does need to lock the board while it walks N rows.
  const commitBoardField = async (row: any, column: DatasetRowColumn, rawValue: string) => {
   let value: any = rawValue;
   if (column.edit === 'number') value = String(rawValue).trim() === '' ? null : Number(rawValue);
   else if (column.edit === 'datetime-local') value = rawValue ? `${rawValue}:00` : '';
-  const previous = rowsData.rows;
+  // Roll back just this one cell rather than restoring a whole-page snapshot. Without the
+  // busy lock, two edits can now be in flight at once, and a snapshot rollback would also
+  // revert whatever the *other* one had already applied.
+  const previousValue = row[column.key];
   setRowsData((current) => ({ ...current, rows: current.rows.map((item: any) => (item.id === row.id ? { ...item, [column.key]: value } : item)) }));
   setBoardError('');
-  setBoardBusy(true);
   try {
    await api(boardRowEndpoint(String(row.id)), {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [column.key]: value }),
    });
-   if (boardRetrainsInBackground) watchRetrain();
+   watchRetrain();
   } catch (err: any) {
-   setRowsData((current) => ({ ...current, rows: previous }));
+   setRowsData((current) => ({ ...current, rows: current.rows.map((item: any) => (item.id === row.id ? { ...item, [column.key]: previousValue } : item)) }));
    setBoardError(err.message || 'Unable to update this row.');
-  } finally {
-   setBoardBusy(false);
   }
  };
 
@@ -4931,12 +5067,14 @@ function DatasetPage() {
   setBoardBusy(true);
   setBoardError('');
   try {
-   // Sequential rather than Promise.all: each delete rewrites the same aggregate tables, and
-   // a burst of concurrent writes against SQLite trades a tidy loop for lock contention.
+   // Sequential rather than Promise.all: a burst of concurrent writes against SQLite trades a
+   // tidy loop for lock contention. Each request is now just the row delete -- the aggregate
+   // rebuild and retrain they all share collapses into one background pass behind the guard.
    for (const id of selectedRowIds) await api(boardRowEndpoint(id), { method: 'DELETE' });
    setSelectedRowIds([]);
+   setSelectedAllMatching(false);
    setDataRefreshKey((key) => key + 1);
-   if (boardRetrainsInBackground) watchRetrain();
+   watchRetrain();
   } catch (err: any) {
    setBoardError(err.message || 'Unable to delete the selected rows.');
   } finally {
@@ -4946,10 +5084,44 @@ function DatasetPage() {
 
  // Exports what's on screen: the visible columns, in their current order, with each column's
  // own renderer applied -- so the file reads the way the board does, not the way the DB does.
- const exportSelectedRows = () => {
-  const chosen = selectedRowIds.length
-   ? rowsData.rows.filter((row: any) => selectedRowIds.includes(String(row.id)))
-   : rowsData.rows;
+ // `rowsData.rows` only ever holds the current page, so a "select all N matching" selection
+ // (which can span far more rows than one page) is re-fetched in full here rather than
+ // silently exported as whatever page happened to be on screen when the button was clicked.
+ const exportSelectedRows = async () => {
+  let chosen: any[];
+  if (selectedAllMatching && selectedRowIds.length) {
+   setSelectAllMatchingBusy(true);
+   setBoardError('');
+   try {
+    const scoped = scopeParams ? `&${scopeParams}` : '';
+    const filterQuery = allRowFilters.length
+     ? `&filters=${encodeURIComponent(JSON.stringify(allRowFilters.map((row) => ({ field: row.field, operator: row.operator, value: row.value }))))}`
+     : '';
+    const sortQuery = rowSort ? `&sort=${encodeURIComponent(rowSort.field)}&direction=${rowSort.direction}` : '';
+    const searchQuery = rowSearch ? `&search=${encodeURIComponent(rowSearch)}` : '';
+    const pages: any[][] = [];
+    let offset = 0;
+    const pageSize = 500;
+    // Bounded by the same cap "select all matching" used to build this selection in the
+    // first place -- can't export more rows than were ever actually selected.
+    while (offset < selectedRowIds.length) {
+     const page = await api(`/dataset/rows?table=${rowsTable}&offset=${offset}&limit=${pageSize}${scoped}${filterQuery}${sortQuery}${searchQuery}`);
+     pages.push(page.rows || []);
+     if (!page.rows?.length) break;
+     offset += pageSize;
+    }
+    chosen = pages.flat();
+   } catch (err: any) {
+    setBoardError(err.message || 'Failed to export all matching rows.');
+    return;
+   } finally {
+    setSelectAllMatchingBusy(false);
+   }
+  } else {
+   chosen = selectedRowIds.length
+    ? rowsData.rows.filter((row: any) => selectedRowIds.includes(String(row.id)))
+    : rowsData.rows;
+  }
   if (!chosen.length) return;
   const escape = (value: any) => {
    const text = value == null ? '' : String(value);
@@ -5017,8 +5189,8 @@ function DatasetPage() {
   (v) => v.status === 'flat_recorded' && !declaredCorrelation?.variables?.some((present) => present.number === v.number)
  );
 
- const rowStart = rowsData.total ? rowsData.offset + 1 : 0;
- const rowEnd = Math.min(rowsData.offset + rowsData.limit, rowsData.total);
+ const rowStart = rowsData.total ? rowsOffset + 1 : 0;
+ const rowEnd = Math.min(rowsOffset + rowsData.limit, rowsData.total);
 
  return (
   <div className="page-content dataset-page">
@@ -5386,8 +5558,8 @@ function DatasetPage() {
     <div className="dataset-rows-pager">
      <span>{rowsData.total ? `${fmt(rowStart)}-${fmt(rowEnd)} of ${fmt(rowsData.total)}` : ''}</span>
      <div>
-      <button className="dataset-link-btn" disabled={rowsBusy || rowsData.offset === 0} onClick={() => setRowsData((prev) => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }))}><ChevronLeft size={13} /> Prev</button>
-      <button className="dataset-link-btn" disabled={rowsBusy || rowEnd >= rowsData.total} onClick={() => setRowsData((prev) => ({ ...prev, offset: prev.offset + prev.limit }))}>Next <ChevronRight size={13} /></button>
+      <button className="dataset-link-btn" disabled={rowsBusy || rowsOffset === 0} onClick={() => setRowsOffset((prev) => Math.max(0, prev - rowsData.limit))}><ChevronLeft size={13} /> Prev</button>
+      <button className="dataset-link-btn" disabled={rowsBusy || rowEnd >= rowsData.total} onClick={() => setRowsOffset((prev) => prev + rowsData.limit)}>Next <ChevronRight size={13} /></button>
      </div>
     </div>
     {/* Monday's floating batch-action bar. Lives at the bottom of the viewport while any row
@@ -5395,35 +5567,23 @@ function DatasetPage() {
     {!!selectedRowIds.length && (
      <div className="board-bulk-bar" role="region" aria-label="Selected row actions">
       <div className="board-bulk-count"><strong>{fmt(selectedRowIds.length)}</strong><span>{selectedRowIds.length === 1 ? 'row' : 'rows'} selected</span></div>
+      {/* Offered only once every row on the page is picked and more rows exist beyond it --
+          the same "select all N matching" pattern as Gmail/Sheets, since ticking the header
+          checkbox can only ever reach the page that happens to be loaded. */}
+      {allPageSelected && !selectedAllMatching && rowsData.total > pageRowIds.length && (
+       <button type="button" className="board-bulk-link" disabled={selectAllMatchingBusy} onClick={() => void selectAllMatchingRows()}>
+        {selectAllMatchingBusy ? 'Selecting...' : `Select all ${fmt(rowsData.total)} rows matching this view`}
+       </button>
+      )}
       <div className="board-bulk-actions">
-       <button type="button" className="board-bulk-btn" onClick={exportSelectedRows}><Download size={14} />Export CSV</button>
+       <button type="button" className="board-bulk-btn" onClick={() => void exportSelectedRows()}><Download size={14} />Export CSV</button>
        <button type="button" className="board-bulk-btn danger" disabled={boardBusy} onClick={() => void deleteSelectedRows()}>
         <Trash2 size={14} />{boardBusy ? 'Deleting...' : 'Delete'}
        </button>
       </div>
-      <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => setSelectedRowIds([])}><X size={15} /></button>
+      <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
      </div>
     )}
-   </section>
-
-   <section className="dataset-section">
-    <div className="dataset-section-head"><div><span>Variable dictionary</span><h3>The eight declared drivers of lead volume</h3></div><p>{selectedAdSetId ? `Ad set ${String(selectedAdSetId).slice(-6)}` : selectedCampaignId ? (selectedCampaignName || 'Selected campaign') : 'Portfolio-wide'}, {ols?.scope?.observations ? `${fmt(ols.scope.observations)} days` : 'no data yet'}</p></div>
-    <div className="dataset-variables-grid" aria-label="Declared variable dictionary">
-     <div className="dataset-variables-head"><span>#</span><span>Variable</span><span>What it means</span></div>
-     {declaredVariables.map((item: any) => {
-      const note = item.note || item.detail || '';
-      const isLong = note.length > 100;
-      const open = !!varOpen[item.number];
-      return (
-       <div className={`dataset-variables-row is-${item.status}${isLong ? ' is-expandable' : ''}`} key={item.number} onClick={() => isLong && setVarOpen((s) => ({ ...s, [item.number]: !s[item.number] }))}>
-        <span>{item.number}</span>
-        <span className="dataset-variables-name">{item.name}</span>
-        <span className="dataset-variables-note">{isLong && !open ? `${note.slice(0, 90).trim()}…` : note}{isLong && <em> {open ? '(less)' : '(more)'}</em>}</span>
-       </div>
-      );
-     })}
-     {!declaredVariables.length && <div className="table-empty">Upload ad performance data with spend before variable coverage is available.</div>}
-    </div>
    </section>
   </div>
  );
