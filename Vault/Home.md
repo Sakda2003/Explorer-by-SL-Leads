@@ -37,7 +37,7 @@ codebase.
 - [[Forecast-Page-OLS-Panel]] — the OLS cards under the forecast chart; scoped to the selected campaign/ad set, and why thin scopes refuse to fit
 - [[Lead-Drilldown-Inline-Edit]] — the date-click lead table now edits inline per cell, Monday.com-style, instead of a separate edit-panel form
 - [[Spend-Leads-Scatter]] — spend-vs-leads scatter with a benchmark-CPL ray; why $0-spend ad sets are held out
-- [[Access-Control]] — two auth topologies (Cloudflare Access / Tailscale Serve), Docker deploy phases, hosting choice
+- [[Access-Control]] — three auth topologies (Cloudflare Access / Tailscale Serve / Basic Auth), Docker deploy phases, hosting choice, and the Railway demo move
 - [[Dataset-Page]] — data inventory, variable dictionary, correlation matrix, and raw-row browser; portfolio-wide audit surface before trusting the forecast
 - [[Model-Performance-Removal]] — Dataset is now the sole portfolio-wide diagnostics surface
 - [[UI-Component-Inventory]] — current app pages and the pre-redesign component catalogue

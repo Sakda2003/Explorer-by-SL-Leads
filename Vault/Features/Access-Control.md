@@ -274,6 +274,48 @@ deploy, verify against the pushed commit, not the working tree**: `git archive H
 <tmp>` then import `backend.app` from that directory. That reproduces exactly what the
 container sees and catches this class of error in seconds.
 
+## Demo moved to Railway (2026-08-16)
+
+Same demo, different host. Full procedure in `deploy/RUNBOOK-RAILWAY.md`; what belongs here is
+what the move cost and what it taught.
+
+**Two failed builds before anything ran, both platform requirements rather than app bugs:**
+- `dockerfile invalid: docker VOLUME at Line 70 is not supported, use Railway Volumes` —
+  Railway rejects the instruction at image validation, in about two seconds, before a layer is
+  built. `VOLUME ["/data"]` never bought anything on any host this app runs on (compose names
+  its own `leadlens-data:/data`, Render's free tier has no disk), so it was deleted rather than
+  worked around. The Dockerfile now also binds `${PORT:-8000}`, which Railway assigns per
+  service; nothing else sets `PORT`, so compose, Render and local keep 8000.
+- Config-as-code lives in `railway.json` at the repo root, validated against
+  `https://railway.com/railway.schema.json` before committing — health check `/api/health`,
+  `numReplicas: 1` (one SQLite writer, same reason as the single uvicorn worker), and
+  `watchPatterns` so a Vault-only commit doesn't trigger a rebuild.
+
+**The real find: the fail-closed gate was keyed on `RENDER` alone**, so moving host would have
+made it silently inert and shipped every DELETE route open — the *exact* incident recorded
+above, reintroduced by changing platform. `require_gate_or_die()` now checks a marker list
+(`RENDER`, `RAILWAY_ENVIRONMENT`, `FLY_APP_NAME`, `DYNO`, `WEBSITE_INSTANCE_ID`) and names the
+one it detected in the error text. **A gate keyed to one platform is a gate with an expiry
+date** — anything internet-facing that is not on that list still needs `LEADLENS_REQUIRE_AUTH=1`
+set by hand.
+
+**Railway's "Suggested Variables" panel is a trap in miniature.** It greps the source for
+env-var names, so it proposed `CF_ACCESS_*`, `LEADLENS_TAILSCALE_AUTH`, `CF_TUNNEL_TOKEN` and
+the two email lists — every topology except the one that applies — and pre-filled
+`LEADLENS_WRITER_EMAILS` with `you@yourdomain.com`, a placeholder copied straight out of
+`.env.example`. Inert under Basic Auth (no per-person identity, so `_verify_basic` never reaches
+`_authorize`), but it would become live and lock everyone out the moment the deploy switched to
+Cloudflare. `.env.example` now ships those two variables **blank** with the example in a
+comment, and documents the Basic Auth pair it had never mentioned — which is why the scanner
+could not suggest the only variables that actually matter.
+
+**Volumes and the non-root user are mutually exclusive on Railway.** Their docs: images running
+as a non-root UID "will have permissions issues" with an attached volume, workaround
+`RAILWAY_RUN_UID=0`. This image runs as UID 10001 on purpose. The demo therefore runs with no
+volume and an ephemeral disk (fine — `LEADLENS_DEMO_MODE=1` blocks the imports that would
+create anything worth keeping). Attaching a volume means running as root, which is a trade
+worth making on a demo and not on the business deployment.
+
 **Backups go to Google Drive, not B2/R2** — both of those want a card too. Drive is 15 GB free
 on the account Sakda already has, and `deploy/backup.sh` only ever passes `$RCLONE_REMOTE` to
 rclone (verified), so this is a config change with no code edit. On a headless box, answer `n`

@@ -28,3 +28,18 @@ Dataset
 design-system
 tests
 *.md
+
+# Analysis artifacts. `output/` is the bigger problem of the two: it collects exported
+# workbooks (traffic_*.xlsx, model_dataset_export/) built from real lead records, and an image
+# layer is world-readable to anyone who can pull it. Same rule as `data/` above -- customer
+# data never gets baked in. `tmp/` is screenshots and scratch PDFs.
+output
+tmp
+.backups
+
+# ~24 MB of design comps and an Obsidian vault. Neither is read at runtime, and the build
+# context is uploaded in full before the first instruction runs.
+Redesign Reference
+Vault
+*.ipynb
+.github
