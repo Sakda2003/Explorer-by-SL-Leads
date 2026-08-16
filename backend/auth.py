@@ -322,16 +322,25 @@ def require_gate_or_die() -> None:
     deploy, 2026-08-14). A warning log did not stop it, so on a host that declares itself public
     this is promoted to a hard failure: the container will not start until a gate is configured.
 
-    Triggers when `LEADLENS_REQUIRE_AUTH` is truthy, or when a known public-PaaS marker is
-    present (Render sets `RENDER`). Local dev and the test suite set neither, so they stay inert.
+    Triggers when `LEADLENS_REQUIRE_AUTH` is truthy, or when any known public-PaaS marker is
+    present. Local dev and the test suite set none of them, so they stay inert.
+
+    The marker list has to be maintained per platform, which is its weakness: a gate keyed on
+    `RENDER` alone is silently inert the moment the app is deployed somewhere else, which is
+    exactly the incident this function exists to prevent, reintroduced by changing host.
+    `RAILWAY_ENVIRONMENT` was added 2026-08-16 when the demo moved to Railway. Anything
+    internet-facing that is not in this list still needs `LEADLENS_REQUIRE_AUTH=1` set by hand.
     """
-    require = _flag("LEADLENS_REQUIRE_AUTH") or bool((os.getenv("RENDER") or "").strip())
+    markers = ("RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME", "DYNO", "WEBSITE_INSTANCE_ID")
+    detected = next((name for name in markers if (os.getenv(name) or "").strip()), None)
+    require = _flag("LEADLENS_REQUIRE_AUTH") or detected is not None
     if require and not config.mode:
         raise RuntimeError(
-            "Refusing to start with no access gate on a deployment that requires one. "
+            "Refusing to start with no access gate on a deployment that requires one "
+            f"(detected: {detected or 'LEADLENS_REQUIRE_AUTH'}). "
             "Set BASIC_AUTH_USER + BASIC_AUTH_PASS (public PaaS), or CF_ACCESS_TEAM_DOMAIN + "
             "CF_ACCESS_AUD, or LEADLENS_TAILSCALE_AUTH=1 -- see backend/auth.py. To intentionally "
-            "run open (local only), unset LEADLENS_REQUIRE_AUTH and RENDER."
+            f"run open (local only), unset LEADLENS_REQUIRE_AUTH and {detected or 'the PaaS marker'}."
         )
 
 

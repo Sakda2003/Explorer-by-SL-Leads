@@ -67,14 +67,22 @@ RUN useradd --system --create-home --uid 10001 leadlens \
  && chown -R leadlens:leadlens /data /app
 USER leadlens
 
-VOLUME ["/data"]
+# Deliberately no `VOLUME ["/data"]`. It never granted persistence anywhere this app actually
+# runs -- compose names its own `leadlens-data:/data` mount, and Render's free tier has no disk
+# at all -- while Railway rejects the instruction outright ("docker VOLUME is not supported, use
+# Railway Volumes") and fails the image build before it starts. Persistence is the platform's
+# job: a compose named volume, or a Railway Volume attached with mount path /data.
 EXPOSE 8000
 
 # /api/health is deliberately exempt from the Access check in backend/auth.py, so this keeps
 # working once authentication is switched on.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/health" || exit 1
 
 # One worker on purpose. The app is a single SQLite file, and concurrent writers across
 # processes would contend on the database lock for no benefit at two users.
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# $PORT is honoured because Railway assigns one per service and routes to it; everywhere else
+# (compose, Render, local) nothing sets it and the 8000 default applies. `exec` keeps uvicorn as
+# PID 1 so it still receives SIGTERM directly -- without it the shell swallows the signal and
+# the container is killed after the stop timeout instead of shutting down cleanly.
+CMD ["sh", "-c", "exec uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
