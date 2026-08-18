@@ -175,6 +175,13 @@ KNOWN_HEADERS = {
 for _alias, _canonical in {
     "Created": "Created At",
     "Updated": "Updated At",
+    "Customer": "Customer Name",
+    "Campaign": "UTM Campaign",
+    "Campaign ID": "UTM Campaign ID",
+    "Ad set ID": "UTM Ad Set ID",
+    "Ad ID": "UTM Ad ID",
+    "Ad title": "FB Ad Title",
+    "Amount": "Amount spent (USD)",
 }.items():
     KNOWN_HEADERS[_header_key(_alias)] = _canonical
 AD_KNOWN_HEADERS = {
@@ -1191,7 +1198,8 @@ def read_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
     parsed = pd.to_datetime(frame["Created At"], format="mixed", errors="coerce")
     frame["Created At"] = parsed
     frame["Updated At"] = pd.to_datetime(frame["Updated At"], format="mixed", errors="coerce")
-    frame["Amount spent (USD)"] = pd.to_numeric(frame["Amount spent (USD)"], errors="coerce")
+    spend_text = frame["Amount spent (USD)"].astype(str).str.replace(r"[$,]", "", regex=True).str.strip()
+    frame["Amount spent (USD)"] = pd.to_numeric(spend_text, errors="coerce")
 
     invalid_date = frame["Created At"].isna()
     unattributed = frame["UTM Ad Set ID"].eq("")

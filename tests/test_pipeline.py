@@ -88,6 +88,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(parsed.loc[0, "UTM Ad Set ID"], "120235942906970078")
         self.assertIsInstance(parsed.loc[0, "UTM Ad Set ID"], str)
 
+    def test_local_leadlens_export_headers_can_be_reimported(self):
+        frame = pd.DataFrame([{
+            "Created": "Jun 6, 2026",
+            "Customer": "Malik King",
+            "Status": "New",
+            "Campaign": "Leads| VISA | TH | FOR",
+            "Campaign ID": "120244603714820078",
+            "Ad set ID": "120244603714800078",
+            "Ad ID": "120244603714810078",
+            "Ad title": "TH1|KFTH1",
+            "Amount": "$1.93",
+        }])
+        parsed = core.read_tabular(io.BytesIO(self.csv_bytes(frame)), ".csv")
+        self.assertEqual(parsed.loc[0, "Customer Name"], "Malik King")
+        self.assertEqual(parsed.loc[0, "UTM Ad Set ID"], "120244603714800078")
+        self.assertEqual(parsed.loc[0, "FB Ad Title"], "TH1|KFTH1")
+        self.assertAlmostEqual(float(parsed.loc[0, "Amount spent (USD)"]), 1.93)
+
     def test_dashboard_insights_reconcile_status_and_campaign_mix(self):
         self.import_frame(frame_for(4), "dashboard-mix.csv")
         insights = core.get_dashboard_insights()
