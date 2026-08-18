@@ -4596,6 +4596,21 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .upload-v2-footer {
   color: var(--muted);
 }
+.upload-batch-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 13px;
+}
+.upload-batch-note b {
+  color: var(--text);
+  font-weight: 500;
+}
 
 /* ============================================================
    UPLOAD COMMIT BAR — the import action, always reachable

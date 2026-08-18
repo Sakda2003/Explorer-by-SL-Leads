@@ -3649,7 +3649,13 @@ function UploadPage() {
  const [busy, setBusy] = useState(false);
  const [dragging, setDragging] = useState(false);
  const [error, setError] = useState('');
+ const [batchFiles, setBatchFiles] = useState<File[]>([]);
+ const [batchIndex, setBatchIndex] = useState(0);
  const input = useRef<HTMLInputElement>(null);
+
+ const clearFileInput = () => {
+ if (input.current) input.current.value = '';
+ };
 
  const inspect = async (file: File) => {
  setBusy(true);
@@ -3662,22 +3668,33 @@ function UploadPage() {
  finally { setBusy(false); }
  };
 
- const resetPreview = () => {
- setPreview(null);
- setError('');
- if (input.current) input.current.value = '';
+ const startImportBatch = (fileList: FileList | File[]) => {
+ const files = Array.from(fileList).filter((file) => /\.(csv|xlsx)$/i.test(file.name));
+ if (busy) return;
+ if (!files.length) {
+ setError('Choose CSV or XLSX files to import.');
+ return;
+ }
+ setBatchFiles(files);
+ setBatchIndex(0);
+ void inspect(files[0]);
  };
 
- const confirmImport = async () => {
- setBusy(true);
- try {
- const result = await api('/uploads/confirm', {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ token: preview.token, file_name: preview.file_name }),
- });
+ const resetPreview = () => {
+ if (batchFiles.length > 1 && batchIndex + 1 < batchFiles.length) {
+ const nextIndex = batchIndex + 1;
+ setBatchIndex(nextIndex);
+ void inspect(batchFiles[nextIndex]);
+ return;
+ }
+ setBatchFiles([]);
+ setBatchIndex(0);
  setPreview(null);
- alert(result.file_type === 'model_dataset'
+ setError('');
+ clearFileInput();
+ };
+
+ const importMessage = (result: any) => result.file_type === 'model_dataset'
  ? [
  `Model dataset imported: ${fmt(result.imported)} new leads, ${fmt(result.duplicates)} already known.`,
  `${fmt(result.ad_set_days_inserted + result.ad_set_days_updated)} ad-set days of context stored${result.zero_lead_days ? `, including ${fmt(result.zero_lead_days)} that spent with no leads` : ''}.`,
@@ -3697,7 +3714,46 @@ function UploadPage() {
  result.budget_periods_written ? `${fmt(result.budget_periods_written)} budget periods recorded.` : '',
  result.budget_periods_kept_manual ? `${fmt(result.budget_periods_kept_manual)} kept your manual entry instead.` : '',
  ].filter(Boolean).join('\n')
- : 'Import complete. Forecasts have been retrained.');
+ : 'Import complete. Forecasts have been retrained.';
+
+ const previewUpload = async (file: File) => {
+ const body = new FormData();
+ body.append('file', file);
+ return api('/uploads/preview', { method: 'POST', body });
+ };
+
+ const confirmPreview = (uploadPreview: any) => api('/uploads/confirm', {
+ method: 'POST',
+ headers: { 'Content-Type': 'application/json' },
+ body: JSON.stringify({ token: uploadPreview.token, file_name: uploadPreview.file_name }),
+ });
+
+ const confirmImport = async () => {
+ setBusy(true);
+ try {
+ if (batchFiles.length > 1) {
+ const imported: string[] = [];
+ for (let index = batchIndex; index < batchFiles.length; index += 1) {
+ setBatchIndex(index);
+ setPreview(null);
+ const filePreview = index === batchIndex ? preview : await previewUpload(batchFiles[index]);
+ setPreview(filePreview);
+ const result = await confirmPreview(filePreview);
+ imported.push(`${filePreview.file_name}: ${result.file_type_label || result.file_type || 'imported'}`);
+ }
+ setBatchFiles([]);
+ setBatchIndex(0);
+ setPreview(null);
+ clearFileInput();
+ alert([`Batch import complete: ${fmt(imported.length)} files imported.`, ...imported].join('\n'));
+ return;
+ }
+ const result = await confirmPreview(preview);
+ setPreview(null);
+ setBatchFiles([]);
+ setBatchIndex(0);
+ clearFileInput();
+ alert(importMessage(result));
  } catch (uploadError: any) { setError(uploadError.message); }
  finally { setBusy(false); }
  };
@@ -3709,6 +3765,10 @@ function UploadPage() {
  const budgetPeriods: any[] = preview?.budget_periods || [];
  const budgetAdSets = new Set(budgetPeriods.map((period) => period.ad_set_id)).size;
  const budgetChanges = budgetPeriods.length - budgetAdSets;
+ const queuedCount = batchFiles.length;
+ const queuePosition = queuedCount ? batchIndex + 1 : 0;
+ const remainingCount = Math.max(0, queuedCount - queuePosition);
+ const filesToImportCount = Math.max(1, queuedCount - batchIndex);
 
  return (
  <div className="page-content narrow upload-page upload-v2-page">
@@ -3730,18 +3790,18 @@ function UploadPage() {
  className={`upload-panel upload-panel-v2 ${dragging ? 'dragging' : ''}${busy ? ' busy' : ''}`}
  role="button"
  tabIndex={0}
- aria-label="Upload a CSV or XLSX file"
+ aria-label="Upload CSV or XLSX files"
  onClick={() => { if (!busy) input.current?.click(); }}
  onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && !busy) { event.preventDefault(); input.current?.click(); } }}
  onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
  onDragLeave={() => setDragging(false)}
- onDrop={(event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file) void inspect(file); }}
+ onDrop={(event) => { event.preventDefault(); setDragging(false); startImportBatch(event.dataTransfer.files); }}
  >
- <input ref={input} type="file" accept=".xlsx,.csv" hidden onChange={(event) => event.target.files?.[0] && void inspect(event.target.files[0])} />
+ <input ref={input} type="file" accept=".xlsx,.csv" multiple hidden onChange={(event) => event.target.files && startImportBatch(event.target.files)} />
  <Upload className="upload-v2-icon" aria-hidden="true" size={28} />
- <h3>{busy ? 'Cleaning your data…' : dragging ? 'Release to upload' : 'Drop your file here'}</h3>
- <p className="upload-sub">{busy ? 'This only takes a moment' : 'or click to browse — CSV or XLSX'}</p>
- <button type="button" className="button primary upload-cta" disabled={busy} onClick={(event) => { event.stopPropagation(); input.current?.click(); }}>{busy ? <RefreshCw className="spin" size={16} /> : <Upload size={16} />}{busy ? 'Preparing' : 'Choose file'}</button>
+ <h3>{busy ? 'Cleaning your data…' : dragging ? 'Release to upload' : 'Drop your files here'}</h3>
+ <p className="upload-sub">{busy ? 'This only takes a moment' : 'or click to browse — CSV or XLSX, one or many'}</p>
+ <button type="button" className="button primary upload-cta" disabled={busy} onClick={(event) => { event.stopPropagation(); input.current?.click(); }}>{busy ? <RefreshCw className="spin" size={16} /> : <Upload size={16} />}{busy ? 'Preparing' : 'Choose files'}</button>
  </div>
  </section>
  <div className="upload-v2-footer">
@@ -3759,6 +3819,12 @@ function UploadPage() {
  </div>
  <span className="file-line-sub">{preview.file_type_label || 'Detected file'} · {preview.date_min} to {preview.date_max}</span>
  </div>
+ {queuedCount > 1 && (
+ <div className="upload-batch-note">
+ <span>File {fmt(queuePosition)} of {fmt(queuedCount)}</span>
+ <b>{remainingCount ? `${fmt(remainingCount)} queued after this` : 'Last file in this batch'}</b>
+ </div>
+ )}
  {isModelDataset ? (
  <div className="mini-metrics cleaning-metrics">
  <div><span>Source rows</span><b>{fmt(preview.source_rows)}</b></div>
@@ -3852,12 +3918,12 @@ function UploadPage() {
  </section>
  <div className="upload-commit-bar">
  <div className="upload-commit-facts">
- <b>{fmt(preview.clean_rows)} {isModelDataset ? 'leads' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'} ready</b>
- <span>{preview.date_min} → {preview.date_max}{isAdPerformance && preview.total_spend != null ? ` · ${cplMoney(preview.total_spend)}` : ''}{preview.rejected_rows ? ` · ${fmt(preview.rejected_rows)} rejected` : ''}</span>
+ <b>{queuedCount > 1 ? `${fmt(filesToImportCount)} files queued` : `${fmt(preview.clean_rows)} ${isModelDataset ? 'leads' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'} ready`}</b>
+ <span>{queuedCount > 1 ? `Previewing ${fmt(queuePosition)} of ${fmt(queuedCount)} · ${preview.file_name}` : `${preview.date_min} → ${preview.date_max}${isAdPerformance && preview.total_spend != null ? ` · ${cplMoney(preview.total_spend)}` : ''}${preview.rejected_rows ? ` · ${fmt(preview.rejected_rows)} rejected` : ''}`}</span>
  </div>
  <div className="upload-commit-actions">
- <button className="button secondary" disabled={busy} onClick={resetPreview}>Discard</button>
- <button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
+ <button className="button secondary" disabled={busy} onClick={resetPreview}>{queuedCount > 1 && remainingCount ? 'Skip file' : 'Discard'}</button>
+ <button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : queuedCount > 1 ? `Import ${fmt(filesToImportCount)} files` : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
  </div>
  </div>
  </>
