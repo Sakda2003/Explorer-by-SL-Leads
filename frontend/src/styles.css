@@ -3059,7 +3059,7 @@ td code { color: var(--text); font-size: 11px; }
 }
 .model-gov-ols-printout {
   padding: 12px;
-  overflow-x: auto;
+  overflow-x: hidden;
   border: 1px solid color-mix(in srgb, var(--ols-rule) 38%, transparent);
   border-radius: 4px;
   background: var(--ols-paper);
@@ -3070,7 +3070,6 @@ td code { color: var(--text); font-size: 11px; }
   box-shadow: inset 0 1px color-mix(in srgb, var(--ols-ink) 4%, transparent);
 }
 .model-gov-ols-print-title {
-  min-width: 760px;
   color: var(--ols-muted);
   font-family: var(--font-mono);
   font-size: 13px;
@@ -3079,7 +3078,7 @@ td code { color: var(--text); font-size: 11px; }
   text-align: center;
 }
 .model-gov-ols-ascii-rule {
-  min-width: 760px;
+  width: 100%;
   overflow: hidden;
   color: var(--ols-rule);
   font-family: var(--font-mono);
@@ -3091,12 +3090,12 @@ td code { color: var(--text); font-size: 11px; }
   color: var(--ols-separator);
 }
 .model-gov-ols-print-summary {
-  min-width: 760px;
+  min-width: 0;
 }
 .model-gov-ols-print-summary-row {
   display: grid;
-  grid-template-columns: 164px minmax(132px, 1fr) 184px 118px;
-  gap: 0 10px;
+  grid-template-columns: minmax(92px, .9fr) minmax(86px, 1fr) minmax(112px, .9fr) minmax(72px, .75fr);
+  gap: 0 6px;
   align-items: baseline;
   min-height: 20px;
   font-family: var(--font-mono);
@@ -3224,21 +3223,21 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-detail-table .num { text-align: right; }
 .model-gov-ols-diagnostics { margin-top: 18px; }
 .model-gov-ols-printout .model-gov-ols-detail-table {
-  min-width: 760px;
+  min-width: 0;
   margin-top: 0;
   overflow: visible;
 }
 .model-gov-ols-printout .model-gov-ols-detail-table-head,
 .model-gov-ols-printout .model-gov-ols-detail-table-row {
-  grid-template-columns: minmax(238px, 1fr) repeat(6, 82px);
-  gap: 0;
-  min-width: 760px;
+  grid-template-columns: minmax(146px, 1.65fr) repeat(6, minmax(52px, .58fr));
+  gap: 0 6px;
+  min-width: 0;
 }
 .model-gov-ols-printout .model-gov-ols-detail-table-head {
   padding: 6px 0 4px;
   color: var(--ols-muted);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -3247,7 +3246,7 @@ td code { color: var(--text); font-size: 11px; }
   border-top: 0;
   color: var(--ols-ink);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 .model-gov-ols-printout .model-gov-ols-detail-table-head span,
 .model-gov-ols-printout .model-gov-ols-detail-table-row span {
@@ -3256,11 +3255,11 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-printout .model-gov-ols-detail-table-row span:first-child {
   color: var(--ols-ink);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 500;
 }
 .model-gov-ols-printout .model-gov-ols-detail-section {
-  min-width: 760px;
+  min-width: 0;
   padding: 7px 0 3px;
   border-top: 0;
   color: var(--ols-muted);
@@ -3277,7 +3276,7 @@ td code { color: var(--text); font-size: 11px; }
   font-size: 11.5px;
 }
 .model-gov-ols-printout .model-gov-ols-term {
-  gap: 7px;
+  gap: 5px;
 }
 .model-gov-ols-printout .model-gov-ols-term b {
   color: inherit;
@@ -3292,7 +3291,7 @@ td code { color: var(--text); font-size: 11px; }
   background: transparent;
   color: var(--ols-muted);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -3336,14 +3335,14 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-selection-table { margin-top: 8px; }
 .model-gov-ols-selection-table .model-gov-ols-detail-table-head,
 .model-gov-ols-selection-table .model-gov-ols-detail-table-row {
-  grid-template-columns: minmax(238px, 1fr) repeat(4, 82px) minmax(120px, .78fr);
-  min-width: 760px;
+  grid-template-columns: minmax(152px, 1.45fr) repeat(4, minmax(56px, .58fr)) minmax(78px, .72fr);
+  min-width: 0;
 }
 .model-gov-ols-selection-printout .model-gov-ols-selection-step {
   margin-top: 12px;
 }
 .model-gov-ols-selection-printout .model-gov-ols-selection-head {
-  min-width: 760px;
+  min-width: 0;
   margin-top: 0;
   color: var(--ols-muted);
   font-family: var(--font-mono);
@@ -3378,6 +3377,39 @@ td code { color: var(--text); font-size: 11px; }
 }
 .model-gov-ols-selection-printout .model-gov-ols-detail-table-row.is-winner .model-gov-ols-selection-outcome {
   color: var(--ols-main);
+}
+@media (max-width: 900px) {
+  .model-gov-ols-printout {
+    padding: 10px;
+    font-size: 11px;
+  }
+  .model-gov-ols-print-title,
+  .model-gov-ols-ascii-rule,
+  .model-gov-ols-print-summary-row b,
+  .model-gov-ols-print-label,
+  .model-gov-ols-printout .model-gov-ols-detail-table-head,
+  .model-gov-ols-printout .model-gov-ols-detail-table-row,
+  .model-gov-ols-printout .model-gov-ols-detail-table-row span:first-child {
+    font-size: 10.5px;
+  }
+  .model-gov-ols-print-summary-row {
+    grid-template-columns: minmax(74px, .8fr) minmax(74px, 1fr) minmax(92px, .8fr) minmax(64px, .7fr);
+    gap: 0 4px;
+  }
+  .model-gov-ols-printout .model-gov-ols-detail-table-head,
+  .model-gov-ols-printout .model-gov-ols-detail-table-row {
+    grid-template-columns: minmax(118px, 1.55fr) repeat(6, minmax(45px, .55fr));
+    gap: 0 4px;
+  }
+  .model-gov-ols-selection-table .model-gov-ols-detail-table-head,
+  .model-gov-ols-selection-table .model-gov-ols-detail-table-row {
+    grid-template-columns: minmax(122px, 1.35fr) repeat(4, minmax(45px, .52fr)) minmax(66px, .7fr);
+    gap: 0 4px;
+  }
+  .model-gov-ols-printout .model-gov-ols-detail-section span,
+  .model-gov-ols-printout .model-gov-ols-term i {
+    display: none;
+  }
 }
 /* The rules above hardcode dark hex values. Now that these cards also render on the Forecast
    page -- which people do open in light mode -- remap them onto the theme tokens there. */
