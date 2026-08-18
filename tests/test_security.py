@@ -57,6 +57,14 @@ class BruteForceTests(unittest.TestCase):
         self.assertTrue(security.auth_blocked("attacker"))
         self.assertFalse(security.auth_blocked("victim"))
 
+    def test_successful_sign_in_can_clear_lockout(self):
+        ip = "1.2.3.4"
+        for _ in range(3):
+            security.record_auth_failure(ip)
+        self.assertTrue(security.auth_blocked(ip))
+        security.clear_auth_failures(ip)
+        self.assertFalse(security.auth_blocked(ip))
+
 
 class ClientIpTests(unittest.TestCase):
     def test_prefers_left_most_forwarded_hop(self):

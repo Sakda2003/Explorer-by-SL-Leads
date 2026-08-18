@@ -69,9 +69,23 @@ async def require_access(request: Request, call_next):
     if exempt:
         return _sealed(await call_next(request))
 
+    is_login_check = request.url.path == "/api/auth/me"
+
     # A caller who has burned through the failed-sign-in budget is refused before re-checking the
-    # credential, so a shared-password guess cannot be ground out at full speed.
+    # credential. The login check itself is allowed through so a real user with the correct
+    # password can recover immediately instead of waiting for the whole window to expire.
     if security.auth_blocked(ip):
+        if is_login_check:
+            ok, status, message, headers = await auth.verify(request)
+            if ok:
+                security.clear_auth_failures(ip)
+                return _sealed(await call_next(request))
+            if status in (401, 403):
+                security.record_auth_failure(ip)
+            return _sealed(JSONResponse(
+                {"detail": "Too many failed sign-in attempts. Try again later."},
+                status_code=429, headers={"Retry-After": str(security.AUTH_FAIL_WINDOW)},
+            ))
         return _sealed(JSONResponse(
             {"detail": "Too many failed sign-in attempts. Try again later."},
             status_code=429, headers={"Retry-After": str(security.AUTH_FAIL_WINDOW)},
@@ -88,6 +102,9 @@ async def require_access(request: Request, call_next):
         if status in (401, 403):
             security.record_auth_failure(ip)
         return _sealed(JSONResponse({"detail": message}, status_code=status, headers=headers or None))
+
+    if is_login_check:
+        security.clear_auth_failures(ip)
 
     # Retrain is CPU-bound (~29s) and holds the GIL; throttle it independently of the general cap.
     if request.url.path == "/api/models/retrain" and request.method == "POST":

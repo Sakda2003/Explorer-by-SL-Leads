@@ -114,6 +114,10 @@ class _SlidingWindow:
                 return 0
             return len(bucket)
 
+    def clear(self, key: str) -> None:
+        with self._lock:
+            self._events.pop(key, None)
+
 
 _general = _SlidingWindow()
 _retrain = _SlidingWindow()
@@ -148,6 +152,10 @@ def auth_blocked(ip: str) -> bool:
 
 def record_auth_failure(ip: str) -> None:
     _auth_fail.hit(ip, AUTH_FAIL_LIMIT, AUTH_FAIL_WINDOW)
+
+
+def clear_auth_failures(ip: str) -> None:
+    _auth_fail.clear(ip)
 
 
 # ---- Security headers --------------------------------------------------------------------
