@@ -3336,13 +3336,49 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-selection-table { margin-top: 8px; }
 .model-gov-ols-selection-table .model-gov-ols-detail-table-head,
 .model-gov-ols-selection-table .model-gov-ols-detail-table-row {
-  grid-template-columns: minmax(112px, 1.2fr) repeat(4, 64px) minmax(96px, .9fr);
-  min-width: 520px;
+  grid-template-columns: minmax(238px, 1fr) repeat(4, 82px) minmax(120px, .78fr);
+  min-width: 760px;
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-step {
+  margin-top: 12px;
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-head {
+  min-width: 760px;
+  margin-top: 0;
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-head b {
+  color: var(--ols-ink);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-head .num {
+  color: var(--ols-ink);
+  font-family: var(--font-mono);
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-table {
+  margin-top: 4px;
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-table .model-gov-ols-detail-table-head {
+  padding-top: 2px;
+}
+.model-gov-ols-selection-printout .model-gov-ols-selection-outcome {
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
 }
 /* The winning row is the answer to "why this variable" — it has to be findable at a glance
    without colour alone carrying it, hence the weight change on the label too. */
 .model-gov-ols-detail-table-row.is-winner { color: var(--text); }
 .model-gov-ols-detail-table-row.is-winner span:last-child { color: var(--gold-strong); }
+.model-gov-ols-selection-printout .model-gov-ols-detail-table-row.is-winner {
+  color: var(--ols-ink);
+  font-weight: 600;
+}
+.model-gov-ols-selection-printout .model-gov-ols-detail-table-row.is-winner .model-gov-ols-selection-outcome {
+  color: var(--ols-main);
+}
 /* The rules above hardcode dark hex values. Now that these cards also render on the Forecast
    page -- which people do open in light mode -- remap them onto the theme tokens there. */
 @media (max-width: 640px) {

@@ -1403,24 +1403,51 @@ const OLS_SELECTION_STATUS: Record<string, string> = {
  rank: 'not estimable',
  observations: 'too few days',
 };
+const olsSelectionCandidateKind = (row: any): 'main' | 'categorical' | 'other' => {
+ const number = Number(row?.number);
+ if (number === 3 || number === 8) return 'categorical';
+ if ([2, 4, 5, 6, 7].includes(number)) return 'main';
+ return 'other';
+};
 
-function OlsSelectionPath({ selection }: { selection: any }) {
+function OlsSelectionPath({ selection, title = 'Forward Selection Path' }: { selection: any; title?: string }) {
  const steps: any[] = selection?.steps || [];
  if (!steps.length) return null;
  const alpha = Number(selection?.alpha);
+ const rule = '='.repeat(94);
+ const thinRule = '-'.repeat(94);
+ const selected = steps.filter((step) => step.action !== 'drop').length;
+ const removed = steps.length - selected;
  return (
-  <div className="model-gov-ols-detail model-gov-ols-selection">
-   <p className="model-gov-ols-selection-rule">
-    Greedy forward selection. Each round fits every remaining variable on top of the model so
-    far and keeps the best one — it enters only if it raises adjusted R2 and its block F test
-    clears p &lt; {Number.isFinite(alpha) ? alpha.toFixed(2) : '-'}. Whole variables enter
-    together, so the seven day indicators and the four holiday buckets are one candidate each.
-   </p>
+  <div className="model-gov-ols-detail model-gov-ols-printout model-gov-ols-selection model-gov-ols-selection-printout">
+   <div className="model-gov-ols-print-title">{title}</div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+   <div className="model-gov-ols-print-summary">
+    <div className="model-gov-ols-print-summary-row">
+     <span className="model-gov-ols-print-label">Method:</span>
+     <b>Greedy forward selection</b>
+     <span className="model-gov-ols-print-label">Entry gate:</span>
+     <b>p &lt; {Number.isFinite(alpha) ? alpha.toFixed(2) : '-'}</b>
+    </div>
+    <div className="model-gov-ols-print-summary-row">
+     <span className="model-gov-ols-print-label">Rounds:</span>
+     <b>{fmt(steps.length)}</b>
+     <span className="model-gov-ols-print-label">Accepted variables:</span>
+     <b>{fmt(selected)}</b>
+    </div>
+    <div className="model-gov-ols-print-summary-row">
+     <span className="model-gov-ols-print-label">Blocks:</span>
+     <b>Main + categorical</b>
+     <span className="model-gov-ols-print-label">Removed variables:</span>
+     <b>{fmt(removed)}</b>
+    </div>
+   </div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
    {steps.map((step: any) => (
     <div className="model-gov-ols-selection-step" key={step.round}>
      <div className="model-gov-ols-selection-head">
       <span>
-       Round {step.round} · {step.action === 'drop' ? 'removed' : 'added'} <b>{step.winner_name}</b>
+       Round {step.round}: {step.action === 'drop' ? 'removed' : 'added'} <b>{step.winner_name}</b>
       </span>
       <span className="num">Adj R2 {olsStat(step.adjusted_r_squared, 4)}</span>
      </div>
@@ -1429,29 +1456,38 @@ function OlsSelectionPath({ selection }: { selection: any }) {
        <span>Candidate</span><span className="num">R2</span><span className="num">Adj R2</span>
        <span className="num">Δ Adj R2</span><span className="num">P&gt;F</span><span>Outcome</span>
       </div>
-      {(step.candidates || []).map((row: any) => (
-       <div
-        className={`model-gov-ols-detail-table-row${row.number === step.winner ? ' is-winner' : ''}`}
-        key={`${step.round}-${row.number}`}
-       >
-        <span>{row.name}</span>
-        <span className="num">{olsStat(row.r_squared, 4)}</span>
-        <span className="num">{olsStat(row.adjusted_r_squared, 4)}</span>
-        <span className="num">{row.gain == null ? '-' : `${row.gain >= 0 ? '+' : ''}${olsStat(row.gain, 4)}`}</span>
-        <span className="num">{olsPValue(row.p_value)}</span>
-        <span>{row.number === step.winner ? (step.action === 'drop' ? 'removed' : 'selected') : (OLS_SELECTION_STATUS[row.status] || row.status)}</span>
-       </div>
-      ))}
+      <div className="model-gov-ols-ascii-rule thin" aria-hidden="true">{thinRule}</div>
+      {(step.candidates || []).map((row: any) => {
+       const kind = olsSelectionCandidateKind(row);
+       const outcome = row.number === step.winner ? (step.action === 'drop' ? 'removed' : 'selected') : (OLS_SELECTION_STATUS[row.status] || row.status);
+       return (
+        <div
+         className={`model-gov-ols-detail-table-row term-${kind}${row.number === step.winner ? ' is-winner' : ''}`}
+         key={`${step.round}-${row.number}`}
+        >
+         <span className="model-gov-ols-term">
+          <b>{row.name}</b>
+          <i>{olsTermKindLabel(kind)}</i>
+         </span>
+         <span className="num">{olsStat(row.r_squared, 4)}</span>
+         <span className="num">{olsStat(row.adjusted_r_squared, 4)}</span>
+         <span className="num">{row.gain == null ? '-' : `${row.gain >= 0 ? '+' : ''}${olsStat(row.gain, 4)}`}</span>
+         <span className="num">{olsPValue(row.p_value)}</span>
+         <span className="model-gov-ols-selection-outcome">{outcome}</span>
+        </div>
+       );
+      })}
      </div>
     </div>
    ))}
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
   </div>
  );
 }
 
 function OlsResultCards(
- { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false }:
- { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean },
+ { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle }:
+ { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string },
 ) {
  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
@@ -1536,7 +1572,7 @@ function OlsResultCards(
          {pathOpen ? 'Hide selection path' : `Show selection path (${selectionSteps.length} round${selectionSteps.length === 1 ? '' : 's'})`}
          <ChevronDown size={13} className={pathOpen ? 'is-open' : ''} />
         </button>
-        {pathOpen && <OlsSelectionPath selection={ols.selection} />}
+        {pathOpen && <OlsSelectionPath selection={ols.selection} title={selectionPathTitle} />}
        </>
       )}
      </article>
@@ -5273,6 +5309,11 @@ function DatasetPage() {
   setColumnWidths((current) => ({ ...current, [`${rowsTable}:${key}`]: width }));
  };
  const columnWidthOf = (col: DatasetRowColumn) => columnWidths[`${rowsTable}:${col.key}`] ?? col.width ?? 140;
+ const selectionPathTitle = selectedAdSetId
+  ? 'Forward Selection Path for Selected Ad Set'
+  : selectedCampaignId
+   ? 'Forward Selection Path for Selected Campaign'
+   : 'Forward Selection Path Across All Ad Sets';
  // The board sizes to the sum of its columns and scrolls, rather than being squeezed into the
  // container: with `table-layout: fixed`, a `width: 100%` table redistributes any shortfall or
  // overflow across the columns proportionally, which silently undoes every resize drag. The
@@ -5476,7 +5517,7 @@ function DatasetPage() {
    {error && <div className="error-banner">{error}</div>}
 
    <section className="dataset-section">
-    <OlsResultCards ols={ols} coefficients={false} className="dataset-ols" emptyCopy="Upload ad performance data with spend before OLS regression results are available." />
+    <OlsResultCards ols={ols} coefficients={false} className="dataset-ols" selectionPathTitle={selectionPathTitle} emptyCopy="Upload ad performance data with spend before OLS regression results are available." />
    </section>
 
    <section className="dataset-section dataset-scope-section" aria-label="Filter by campaign or ad set">
