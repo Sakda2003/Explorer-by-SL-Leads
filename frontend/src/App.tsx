@@ -1296,44 +1296,56 @@ function loessCurve(
 // and the residual diagnostics row. Only ever rendered inside a "Show Detail" toggle, since it
 // duplicates the fit-stat pills already visible above it.
 function OlsDetailBlock({ summary }: { summary: any }) {
- const summaryRows: [string, string][] = [
-  ['Dep. Variable', String(summary.dep_variable ?? '-')],
-  ['Model', String(summary.model ?? '-')],
-  ['Method', String(summary.method ?? '-')],
-  ['Covariance Type', String(summary.covariance_type ?? '-')],
-  ['No. Observations', fmt(summary.no_observations)],
-  ['Df Residuals', fmt(summary.df_residuals)],
-  ['Df Model', fmt(summary.df_model)],
-  ['R-squared', olsStat(summary.r_squared, 3)],
-  ['Adj. R-squared', olsStat(summary.adjusted_r_squared, 3)],
-  ['F-statistic', olsStat(summary.f_statistic, 2)],
-  ['Prob (F-statistic)', olsPValue(summary.f_p_value)],
-  ['Log-Likelihood', olsStat(summary.log_likelihood, 2)],
-  ['AIC', olsStat(summary.aic, 1)],
-  ['BIC', olsStat(summary.bic, 1)],
+ const rule = '='.repeat(94);
+ const thinRule = '-'.repeat(94);
+ const summaryRows: [[string, string], [string, string] | null][] = [
+  [['Dep. Variable', String(summary.dep_variable ?? '-')], ['R-squared', olsStat(summary.r_squared, 3)]],
+  [['Model', String(summary.model ?? '-')], ['Adj. R-squared', olsStat(summary.adjusted_r_squared, 3)]],
+  [['Method', String(summary.method ?? '-')], ['F-statistic', olsStat(summary.f_statistic, 2)]],
+  [['No. Observations', fmt(summary.no_observations)], ['Prob (F-statistic)', olsPValue(summary.f_p_value)]],
+  [['Df Residuals', fmt(summary.df_residuals)], ['Log-Likelihood', olsStat(summary.log_likelihood, 2)]],
+  [['Df Model', fmt(summary.df_model)], ['AIC', olsStat(summary.aic, 1)]],
+  [['Covariance Type', String(summary.covariance_type ?? '-')], ['BIC', olsStat(summary.bic, 1)]],
+  [['RMSE', olsStat(summary.rmse, 2)], null],
  ];
- const diagnosticRows: [string, string][] = [
-  ['Durbin-Watson', olsStat(summary.durbin_watson, 3)],
-  ['Skew', olsStat(summary.skew, 3)],
-  ['Kurtosis', olsStat(summary.kurtosis, 3)],
-  ['Jarque-Bera (JB)', olsStat(summary.jarque_bera, 3)],
-  ['Prob(JB)', olsPValue(summary.jarque_bera_p_value)],
-  ['Cond. No.', olsCondNo(summary.cond_no)],
+ const diagnosticRows: [[string, string], [string, string]][] = [
+  [['Omnibus', '-'], ['Durbin-Watson', olsStat(summary.durbin_watson, 3)]],
+  [['Prob(Omnibus)', '-'], ['Jarque-Bera (JB)', olsStat(summary.jarque_bera, 3)]],
+  [['Skew', olsStat(summary.skew, 3)], ['Prob(JB)', olsPValue(summary.jarque_bera_p_value)]],
+  [['Kurtosis', olsStat(summary.kurtosis, 3)], ['Cond. No.', olsCondNo(summary.cond_no)]],
  ];
  const coefficientSections = olsCoefficientSections(summary.coefficients || []);
  return (
-  <div className="model-gov-ols-detail">
-   <div className="model-gov-ols-summary-grid">
-    {summaryRows.map(([label, value]) => (
-     <div className="model-gov-ols-summary-row" key={label}><span>{label}</span><b>{value}</b></div>
+  <div className="model-gov-ols-detail model-gov-ols-printout">
+   <div className="model-gov-ols-print-title">OLS Regression Results</div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+   <div className="model-gov-ols-print-summary">
+    {summaryRows.map(([left, right]) => (
+     <div className="model-gov-ols-print-summary-row" key={left[0]}>
+      <span className="model-gov-ols-print-label">{left[0]}:</span>
+      <b>{left[1]}</b>
+      {right ? (
+       <>
+        <span className="model-gov-ols-print-label">{right[0]}:</span>
+        <b>{right[1]}</b>
+       </>
+      ) : (
+       <>
+        <span />
+        <span />
+       </>
+      )}
+     </div>
     ))}
    </div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
    <div className="model-gov-ols-detail-table">
     <div className="model-gov-ols-detail-table-head">
      <span>Term</span><span className="num">Coef</span><span className="num">Std err</span>
      <span className="num">t</span><span className="num">P&gt;|t|</span>
      <span className="num">[0.025</span><span className="num">0.975]</span>
     </div>
+    <div className="model-gov-ols-ascii-rule thin" aria-hidden="true">{thinRule}</div>
     {coefficientSections.map((section) => (
      <Fragment key={section.key}>
       <div className="model-gov-ols-detail-section">
@@ -1361,11 +1373,18 @@ function OlsDetailBlock({ summary }: { summary: any }) {
      </Fragment>
     ))}
    </div>
-   <div className="model-gov-ols-summary-grid model-gov-ols-diagnostics">
-    {diagnosticRows.map(([label, value]) => (
-     <div className="model-gov-ols-summary-row" key={label}><span>{label}</span><b>{value}</b></div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+   <div className="model-gov-ols-print-summary model-gov-ols-diagnostics">
+    {diagnosticRows.map(([left, right]) => (
+     <div className="model-gov-ols-print-summary-row" key={left[0]}>
+      <span className="model-gov-ols-print-label emph">{left[0]}:</span>
+      <b>{left[1]}</b>
+      <span className="model-gov-ols-print-label">{right[0]}:</span>
+      <b>{right[1]}</b>
+     </div>
     ))}
    </div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
   </div>
  );
 }

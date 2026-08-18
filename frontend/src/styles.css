@@ -3037,6 +3037,91 @@ td code { color: var(--text); font-size: 11px; }
   border-top: 1px solid var(--line);
   animation: card-reveal .16s ease both;
 }
+:root[data-theme="dark"] .model-gov-ols-printout {
+  --ols-paper: #101216;
+  --ols-ink: #D4DAE4;
+  --ols-muted: #8F98A6;
+  --ols-rule: #717A86;
+  --ols-separator: #5E87FF;
+  --ols-alert: #FF5F62;
+  --ols-main: var(--gold-strong);
+  --ols-category: #82A7FF;
+}
+:root[data-theme="light"] .model-gov-ols-printout {
+  --ols-paper: #FFFFFF;
+  --ols-ink: #46505D;
+  --ols-muted: #7D8793;
+  --ols-rule: #6F7782;
+  --ols-separator: #0B57FF;
+  --ols-alert: #D92D2D;
+  --ols-main: #8A6200;
+  --ols-category: #174EA6;
+}
+.model-gov-ols-printout {
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--ols-rule) 38%, transparent);
+  border-radius: 4px;
+  background: var(--ols-paper);
+  color: var(--ols-ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.34;
+  box-shadow: inset 0 1px color-mix(in srgb, var(--ols-ink) 4%, transparent);
+}
+.model-gov-ols-print-title {
+  min-width: 760px;
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.1;
+  text-align: center;
+}
+.model-gov-ols-ascii-rule {
+  min-width: 760px;
+  overflow: hidden;
+  color: var(--ols-rule);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.model-gov-ols-ascii-rule.thin {
+  color: var(--ols-separator);
+}
+.model-gov-ols-print-summary {
+  min-width: 760px;
+}
+.model-gov-ols-print-summary-row {
+  display: grid;
+  grid-template-columns: 164px minmax(132px, 1fr) 184px 118px;
+  gap: 0 10px;
+  align-items: baseline;
+  min-height: 20px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.model-gov-ols-print-label {
+  color: var(--ols-muted);
+  font-weight: 500;
+}
+.model-gov-ols-print-label.emph {
+  color: var(--ols-alert);
+  font-weight: 700;
+}
+.model-gov-ols-print-summary-row b {
+  overflow: hidden;
+  color: var(--ols-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-gov-ols-print-summary-row b:nth-child(2) {
+  text-align: right;
+}
 .model-gov-ols-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3138,6 +3223,91 @@ td code { color: var(--text); font-size: 11px; }
 }
 .model-gov-ols-detail-table .num { text-align: right; }
 .model-gov-ols-diagnostics { margin-top: 18px; }
+.model-gov-ols-printout .model-gov-ols-detail-table {
+  min-width: 760px;
+  margin-top: 0;
+  overflow: visible;
+}
+.model-gov-ols-printout .model-gov-ols-detail-table-head,
+.model-gov-ols-printout .model-gov-ols-detail-table-row {
+  grid-template-columns: minmax(238px, 1fr) repeat(6, 82px);
+  gap: 0;
+  min-width: 760px;
+}
+.model-gov-ols-printout .model-gov-ols-detail-table-head {
+  padding: 6px 0 4px;
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.model-gov-ols-printout .model-gov-ols-detail-table-row {
+  border-top: 0;
+  color: var(--ols-ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.model-gov-ols-printout .model-gov-ols-detail-table-head span,
+.model-gov-ols-printout .model-gov-ols-detail-table-row span {
+  padding: 2px 0;
+}
+.model-gov-ols-printout .model-gov-ols-detail-table-row span:first-child {
+  color: var(--ols-ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.model-gov-ols-printout .model-gov-ols-detail-section {
+  min-width: 760px;
+  padding: 7px 0 3px;
+  border-top: 0;
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
+}
+.model-gov-ols-printout .model-gov-ols-detail-section b {
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.model-gov-ols-printout .model-gov-ols-detail-section span {
+  font-size: 11.5px;
+}
+.model-gov-ols-printout .model-gov-ols-term {
+  gap: 7px;
+}
+.model-gov-ols-printout .model-gov-ols-term b {
+  color: inherit;
+}
+.model-gov-ols-printout .model-gov-ols-term small {
+  display: none;
+}
+.model-gov-ols-printout .model-gov-ols-term i {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ols-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.model-gov-ols-printout .term-main .model-gov-ols-term b,
+.model-gov-ols-printout .term-main .model-gov-ols-term i {
+  color: var(--ols-main);
+}
+.model-gov-ols-printout .term-categorical .model-gov-ols-term b,
+.model-gov-ols-printout .term-categorical .model-gov-ols-term i {
+  color: var(--ols-category);
+}
+.model-gov-ols-printout .model-gov-ols-diagnostics {
+  margin-top: 0;
+}
 /* Forward-selection trace. Reuses the detail table's type and rules, but the last column is a
    word ("not significant") rather than a number, so it needs its own track sizing instead of
    the seven fixed numeric columns above. */
