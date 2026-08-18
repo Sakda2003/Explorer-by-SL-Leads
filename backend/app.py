@@ -194,6 +194,26 @@ class AdSetStartDate(BaseModel):
     notes: str | None = None
 
 
+class AdminUserPayload(BaseModel):
+    email: str
+    full_name: str | None = ""
+    role: str = "staff"
+    status: str = "active"
+    password: str | None = None
+
+
+def _current_user(request: Request) -> str:
+    return str(getattr(request.state, "user_email", "") or "")
+
+
+def _require_admin(request: Request) -> None:
+    # Local development can run with no access gate; keep the admin screen usable there.
+    if not auth.config.mode:
+        return
+    if getattr(request.state, "user_role", "") != "admin":
+        raise HTTPException(403, "Admin access is required.")
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -206,7 +226,65 @@ def auth_status():
 
 @app.get("/api/auth/me")
 def auth_me(request: Request):
-    return {"user": getattr(request.state, "user_email", "")}
+    return {
+        "user": getattr(request.state, "user_email", ""),
+        "role": getattr(request.state, "user_role", ""),
+        "name": getattr(request.state, "user_name", ""),
+    }
+
+
+@app.get("/api/admin/users")
+def admin_users(request: Request):
+    _require_admin(request)
+    return {"users": auth.list_users(), "activity": auth.list_user_audit(25)}
+
+
+@app.post("/api/admin/users")
+def admin_create_user(payload: AdminUserPayload, request: Request):
+    _require_admin(request)
+    try:
+        return auth.save_user(payload.dict(exclude_unset=True), _current_user(request))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.patch("/api/admin/users/{user_id}")
+def admin_update_user(user_id: int, payload: AdminUserPayload, request: Request):
+    _require_admin(request)
+    try:
+        return auth.save_user(payload.dict(exclude_unset=True), _current_user(request), user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: int, request: Request):
+    _require_admin(request)
+    try:
+        return auth.delete_user(user_id, _current_user(request))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/admin/activity")
+def admin_activity(request: Request, limit: int = Query(80, ge=1, le=250)):
+    _require_admin(request)
+    return {"activity": auth.list_user_audit(limit)}
+
+
+@app.get("/api/admin/users.csv")
+def admin_export_users(request: Request):
+    _require_admin(request)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Email", "Full Name", "Role", "Status", "Created", "Last Login", "Password Set"])
+    for user in auth.list_users():
+        writer.writerow([
+            user["email"], user["full_name"], user["role"], user["status"],
+            user["created_at"], user["last_login_at"], "yes" if user["has_password"] else "no",
+        ])
+    return Response(output.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=admin-users.csv"})
 
 
 def _reject_in_demo() -> None:

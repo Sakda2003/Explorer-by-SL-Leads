@@ -456,7 +456,32 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS ix_budget_periods_adset
           ON ad_set_budget_periods(ad_set_id, start_date);
+        CREATE TABLE IF NOT EXISTS app_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          email TEXT NOT NULL UNIQUE,
+          full_name TEXT NOT NULL DEFAULT '',
+          role TEXT NOT NULL DEFAULT 'staff',
+          status TEXT NOT NULL DEFAULT 'active',
+          password_hash TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_login_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_app_users_status_role
+          ON app_users(status, role);
+        CREATE TABLE IF NOT EXISTS app_user_audit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_email TEXT NOT NULL DEFAULT '',
+          action TEXT NOT NULL,
+          target_email TEXT NOT NULL DEFAULT '',
+          detail TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_app_user_audit_created
+          ON app_user_audit(created_at);
         """)
+        from . import auth
+        auth.ensure_basic_user(db)
         existing_upload_columns = {row[1] for row in db.execute("PRAGMA table_info(raw_uploads)")}
         for name, definition in (
             ("file_type", "TEXT NOT NULL DEFAULT 'customer_traffic'"),

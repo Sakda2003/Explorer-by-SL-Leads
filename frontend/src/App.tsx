@@ -37,6 +37,7 @@ import {
  Rows3,
  Search,
  Settings,
+ ShieldCheck,
  SlidersHorizontal,
  Sun,
  Trash2,
@@ -49,7 +50,7 @@ import {
 } from 'lucide-react';
 
 const API = '/api';
-type Page = 'Forecast' | 'Optimization' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings';
+type Page = 'Forecast' | 'Optimization' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
 const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
 let apiAuthHeader = '';
 
@@ -88,8 +89,8 @@ const navGroups: { label: string; items: [Page, any][] }[] = [
   ],
  },
  {
-  label: 'System',
-  items: [['Settings', Settings]],
+ label: 'System',
+  items: [['Settings', Settings], ['Admin', ShieldCheck]],
  },
 ];
 
@@ -6276,6 +6277,335 @@ function OptimizationPage() {
   </div>
  );
 }
+
+type AdminUser = {
+ id: number;
+ email: string;
+ full_name: string;
+ role: 'admin' | 'manager' | 'staff';
+ status: 'active' | 'disabled';
+ created_at: string;
+ updated_at: string;
+ last_login_at: string | null;
+ has_password: boolean;
+};
+
+type AdminActivity = {
+ id: number;
+ actor_email: string;
+ action: string;
+ target_email: string;
+ detail: string;
+ created_at: string;
+};
+
+const ADMIN_ROLES = [
+ { value: 'staff', label: 'Staff' },
+ { value: 'manager', label: 'Manager' },
+ { value: 'admin', label: 'Admin' },
+] as const;
+
+const ADMIN_STATUSES = [
+ { value: 'active', label: 'Active' },
+ { value: 'disabled', label: 'Disabled' },
+] as const;
+
+const adminRoleLabel = (role: string) => ADMIN_ROLES.find((item) => item.value === role)?.label || role;
+const adminStatusLabel = (status: string) => ADMIN_STATUSES.find((item) => item.value === status)?.label || status;
+
+const adminDateTime = (value: string | null | undefined) => {
+ if (!value) return '-';
+ const date = new Date(value);
+ if (Number.isNaN(date.getTime())) return String(value).slice(0, 16).replace('T', ' ');
+ return new Intl.DateTimeFormat('en-US', {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+ }).format(date);
+};
+
+function AdminPage() {
+ const [tab, setTab] = useState<'users' | 'rules' | 'activity'>('users');
+ const [users, setUsers] = useState<AdminUser[]>([]);
+ const [activity, setActivity] = useState<AdminActivity[]>([]);
+ const [loading, setLoading] = useState(true);
+ const [saving, setSaving] = useState(false);
+ const [error, setError] = useState('');
+ const [message, setMessage] = useState('');
+ const [draft, setDraft] = useState({ email: '', full_name: '', role: 'staff', password: '' });
+ const [editing, setEditing] = useState<(AdminUser & { password?: string }) | null>(null);
+
+ const activeCount = users.filter((user) => user.status === 'active').length;
+ const adminCount = users.filter((user) => user.status === 'active' && user.role === 'admin').length;
+
+ const load = async () => {
+  setLoading(true);
+  try {
+   const data = await api('/admin/users');
+   setUsers(data.users || []);
+   setActivity(data.activity || []);
+   setError('');
+  } catch (loadError: any) {
+   setError(loadError.message || 'Could not load admin users');
+  } finally {
+   setLoading(false);
+  }
+ };
+
+ useEffect(() => {
+  void load();
+ }, []);
+
+ const saveNewUser = async (event: FormEvent<HTMLFormElement>) => {
+  event.preventDefault();
+  setSaving(true);
+  setError('');
+  setMessage('');
+  try {
+   await api('/admin/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+     email: draft.email.trim(),
+     full_name: draft.full_name.trim(),
+     role: draft.role,
+     status: 'active',
+     password: draft.password,
+    }),
+   });
+   setDraft({ email: '', full_name: '', role: 'staff', password: '' });
+   setMessage('User added.');
+   await load();
+  } catch (saveError: any) {
+   setError(saveError.message || 'Could not add user');
+  } finally {
+   setSaving(false);
+  }
+ };
+
+ const saveEdit = async (event: FormEvent<HTMLFormElement>) => {
+  event.preventDefault();
+  if (!editing) return;
+  setSaving(true);
+  setError('');
+  setMessage('');
+  try {
+   await api(`/admin/users/${editing.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+     email: editing.email.trim(),
+     full_name: editing.full_name.trim(),
+     role: editing.role,
+     status: editing.status,
+     password: editing.password?.trim() || undefined,
+    }),
+   });
+   setEditing(null);
+   setMessage('User updated.');
+   await load();
+  } catch (saveError: any) {
+   setError(saveError.message || 'Could not update user');
+  } finally {
+   setSaving(false);
+  }
+ };
+
+ const deleteEditing = async () => {
+  if (!editing) return;
+  setSaving(true);
+  setError('');
+  setMessage('');
+  try {
+   await api(`/admin/users/${editing.id}`, { method: 'DELETE' });
+   setEditing(null);
+   setMessage('User deleted.');
+   await load();
+  } catch (deleteError: any) {
+   setError(deleteError.message || 'Could not delete user');
+  } finally {
+   setSaving(false);
+  }
+ };
+
+ const exportUsers = async () => {
+  try {
+   await downloadApiFile('/admin/users.csv', 'admin-users.csv');
+  } catch (exportError: any) {
+   setError(exportError.message || 'Could not export users');
+  }
+ };
+
+ const rules = [
+  ['Admin', 'Full user control, password changes, imports, deletes, and all dashboard writes.'],
+  ['Manager', 'Can change forecasting data and operational records, but cannot manage users.'],
+  ['Staff', 'Read-only dashboard access.'],
+ ];
+
+ return (
+  <div className="page-content admin-page">
+   <div className="admin-tabs" role="tablist" aria-label="Admin sections">
+    <button type="button" className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}><UserPlus size={14} />Users</button>
+    <button type="button" className={tab === 'rules' ? 'active' : ''} onClick={() => setTab('rules')}><SlidersHorizontal size={14} />Access Rules</button>
+    <button type="button" className={tab === 'activity' ? 'active' : ''} onClick={() => setTab('activity')}><Activity size={14} />Activity Log</button>
+   </div>
+
+   {error && <div className="admin-alert error" role="alert">{error}</div>}
+   {message && <div className="admin-alert success" role="status">{message}</div>}
+
+   {tab === 'users' && (
+    <>
+     <form className="admin-add-card" onSubmit={saveNewUser}>
+      <div className="admin-section-title">Add New User</div>
+      <div className="admin-form-grid">
+       <label>
+        <span>Email</span>
+        <input type="email" value={draft.email} placeholder="user@example.com" onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} />
+       </label>
+       <label>
+        <span>Full Name</span>
+        <input value={draft.full_name} placeholder="Jane Smith" onChange={(event) => setDraft((current) => ({ ...current, full_name: event.target.value }))} />
+       </label>
+       <label>
+        <span>Role</span>
+        <select value={draft.role} onChange={(event) => setDraft((current) => ({ ...current, role: event.target.value }))}>
+         {ADMIN_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+        </select>
+       </label>
+       <label>
+        <span>Password</span>
+        <input type="password" value={draft.password} placeholder="Temporary password" onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} />
+       </label>
+      </div>
+      <div className="admin-add-actions">
+       <button className="button primary" type="submit" disabled={saving || !draft.email.trim() || !draft.password}>
+        <Plus size={14} />{saving ? 'Adding' : 'Add User'}
+       </button>
+      </div>
+     </form>
+
+     <div className="admin-table-head">
+      <div>
+       <span className="admin-section-title">All Users ({users.length})</span>
+       <small>{activeCount} active, {adminCount} admin</small>
+      </div>
+      <button type="button" className="ghost-button" onClick={exportUsers}><Download size={14} />Export CSV</button>
+     </div>
+
+     <section className="admin-table-card">
+      <div className="admin-table-scroll">
+       <table className="admin-users-table">
+        <thead>
+         <tr>
+          <th>Email</th>
+          <th>Name</th>
+          <th>Role</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Last Login</th>
+          <th>Password</th>
+          <th></th>
+         </tr>
+        </thead>
+        <tbody>
+         {loading ? (
+          <tr><td colSpan={8} className="admin-empty">Loading users...</td></tr>
+         ) : users.length ? users.map((user) => (
+          <tr key={user.id}>
+           <td><b>{user.email}</b></td>
+           <td>{user.full_name || '-'}</td>
+           <td><span className={`admin-role role-${user.role}`}>{adminRoleLabel(user.role)}</span></td>
+           <td><span className={`admin-status status-${user.status}`}>{adminStatusLabel(user.status)}</span></td>
+           <td>{adminDateTime(user.created_at)}</td>
+           <td><strong>{adminDateTime(user.last_login_at)}</strong></td>
+           <td>{user.has_password ? 'Set' : 'Missing'}</td>
+           <td><button type="button" className="admin-edit-btn" onClick={() => setEditing({ ...user, password: '' })}>Edit</button></td>
+          </tr>
+         )) : (
+          <tr><td colSpan={8} className="admin-empty">No users yet.</td></tr>
+         )}
+        </tbody>
+       </table>
+      </div>
+     </section>
+    </>
+   )}
+
+   {tab === 'rules' && (
+    <section className="admin-rules">
+     {rules.map(([title, detail]) => (
+      <article key={title}>
+       <ShieldCheck size={18} />
+       <div><b>{title}</b><p>{detail}</p></div>
+      </article>
+     ))}
+    </section>
+   )}
+
+   {tab === 'activity' && (
+    <section className="admin-activity">
+     {(activity.length ? activity : []).map((event) => (
+      <article key={event.id}>
+       <span>{adminDateTime(event.created_at)}</span>
+       <b>{event.action.replace(/_/g, ' ')}</b>
+       <p>{event.actor_email || 'system'} {event.target_email ? `-> ${event.target_email}` : ''}</p>
+       {event.detail && <small>{event.detail}</small>}
+      </article>
+     ))}
+     {!activity.length && <div className="admin-empty">No activity yet.</div>}
+    </section>
+   )}
+
+   {editing && createPortal(
+    <div className="admin-modal-backdrop" role="presentation" onMouseDown={(event) => {
+     if (event.target === event.currentTarget) setEditing(null);
+    }}>
+     <form className="admin-modal" role="dialog" aria-modal="true" aria-label="Edit user" onSubmit={saveEdit}>
+      <div className="admin-modal-head">
+       <div>
+        <span className="admin-section-title">Edit User</span>
+        <p>{editing.email}</p>
+       </div>
+       <button type="button" className="admin-icon-btn" aria-label="Close edit user" onClick={() => setEditing(null)}><X size={16} /></button>
+      </div>
+      <div className="admin-modal-grid">
+       <label>
+        <span>Full Name</span>
+        <input value={editing.full_name} onChange={(event) => setEditing((current) => current && ({ ...current, full_name: event.target.value }))} />
+       </label>
+       <label>
+        <span>Email</span>
+        <input type="email" value={editing.email} onChange={(event) => setEditing((current) => current && ({ ...current, email: event.target.value }))} />
+       </label>
+       <label>
+        <span>Role</span>
+        <select value={editing.role} onChange={(event) => setEditing((current) => current && ({ ...current, role: event.target.value as AdminUser['role'] }))}>
+         {ADMIN_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+        </select>
+       </label>
+       <label>
+        <span>Status</span>
+        <select value={editing.status} onChange={(event) => setEditing((current) => current && ({ ...current, status: event.target.value as AdminUser['status'] }))}>
+         {ADMIN_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+        </select>
+       </label>
+       <label className="admin-modal-password">
+        <span>New Password</span>
+        <input type="password" value={editing.password || ''} placeholder="Leave blank to keep" onChange={(event) => setEditing((current) => current && ({ ...current, password: event.target.value }))} />
+       </label>
+      </div>
+      <div className="admin-modal-actions">
+       <button className="button primary" type="submit" disabled={saving}>{saving ? 'Saving' : 'Save Changes'}</button>
+       <button className="button secondary" type="button" onClick={() => setEditing(null)}>Cancel</button>
+       <button className="admin-delete-btn" type="button" disabled={saving} onClick={deleteEditing}><Trash2 size={14} />Delete User</button>
+      </div>
+     </form>
+    </div>,
+    document.body,
+   )}
+  </div>
+ );
+}
+
 function SettingsPage() {
  const rules = [
   ['Lead counting rule', 'Each validated row becomes one lead event.', '1 row = 1 lead'],
@@ -6356,7 +6686,7 @@ export function App() {
 
  return (
  <Shell page={page} setPage={setPage} onSignOut={auth.required ? signOut : undefined}>
- {page === 'Forecast' ? <ForecastPage /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Upload Data' ? <UploadPage /> : page === 'Data History' ? <HistoryPage /> : page === 'Dataset' ? <DatasetPage /> : <SettingsPage />}
+ {page === 'Forecast' ? <ForecastPage /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Upload Data' ? <UploadPage /> : page === 'Data History' ? <HistoryPage /> : page === 'Dataset' ? <DatasetPage /> : page === 'Admin' ? <AdminPage /> : <SettingsPage />}
  </Shell>
  );
 }

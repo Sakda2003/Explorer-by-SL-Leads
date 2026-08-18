@@ -51,10 +51,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import logging
 import os
 import secrets
+import sqlite3
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import jwt
@@ -73,6 +77,9 @@ _EXEMPT_PATHS = frozenset({"/api/health", "/api/auth/status"})
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _JWKS_TTL_SECONDS = 600
+_PASSWORD_ITERATIONS = 260_000
+_USER_ROLES = frozenset({"admin", "manager", "staff"})
+_ACTIVE_STATUS = "active"
 
 # Set by `tailscale serve` on every proxied request, and stripped from whatever the client
 # sent, so it cannot be smuggled in from the far side of the proxy. Note that `tailscale
@@ -80,6 +87,237 @@ _JWKS_TTL_SECONDS = 600
 # no identity, so it arrives here with no header and is refused. That is the correct outcome
 # -- funnel would put this database on the open internet.
 _TAILSCALE_IDENTITY_HEADER = "Tailscale-User-Login"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _db_path() -> Path:
+    root = Path(__file__).resolve().parents[1]
+    data_dir = Path(os.getenv("LEADLENS_DATA_DIR", root / "data"))
+    return Path(os.getenv("LEADLENS_DB_PATH", data_dir / "leadlens.db"))
+
+
+def _connect_users():
+    conn = sqlite3.connect(_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _user_tables_ready(conn) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_users'"
+    ).fetchone()
+    return row is not None
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PASSWORD_ITERATIONS)
+    return "pbkdf2_sha256${}${}${}".format(
+        _PASSWORD_ITERATIONS,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(digest).decode("ascii"),
+    )
+
+
+def _verify_password(password: str, stored: str | None) -> bool:
+    if not stored:
+        return False
+    try:
+        algorithm, iterations, salt, expected = stored.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            base64.b64decode(salt),
+            int(iterations),
+        )
+        return secrets.compare_digest(base64.b64encode(digest).decode("ascii"), expected)
+    except (ValueError, TypeError, binascii.Error):
+        return False
+
+
+def _normalize_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def _clean_role(role: str | None) -> str:
+    value = str(role or "staff").strip().lower()
+    if value not in _USER_ROLES:
+        raise ValueError("Role must be admin, manager, or staff.")
+    return value
+
+
+def _clean_status(status: str | None) -> str:
+    value = str(status or _ACTIVE_STATUS).strip().lower()
+    if value not in {"active", "disabled"}:
+        raise ValueError("Status must be active or disabled.")
+    return value
+
+
+def _role_may_write(role: str) -> bool:
+    return role in {"admin", "manager"}
+
+
+def _record_user_audit(db, actor: str, action: str, target: str = "", detail: str = "") -> None:
+    if not _user_tables_ready(db):
+        return
+    db.execute(
+        "INSERT INTO app_user_audit(actor_email, action, target_email, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+        (_normalize_email(actor), action, _normalize_email(target), detail, _utc_now()),
+    )
+
+
+def _user_public(row) -> dict:
+    return {
+        "id": int(row["id"]),
+        "email": row["email"],
+        "full_name": row["full_name"] or "",
+        "role": row["role"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "last_login_at": row["last_login_at"],
+        "has_password": bool(row["password_hash"]),
+    }
+
+
+def _user_by_email(db, email: str):
+    if not _user_tables_ready(db):
+        return None
+    return db.execute("SELECT * FROM app_users WHERE email=?", (_normalize_email(email),)).fetchone()
+
+
+def ensure_basic_user(db=None) -> None:
+    """Keep the environment Basic Auth account available as an admin user."""
+    username = (os.getenv("BASIC_AUTH_USER") or "").strip()
+    password = os.getenv("BASIC_AUTH_PASS") or ""
+    if not username or not password:
+        return
+    owns = db is None
+    conn = db or _connect_users()
+    try:
+        if not _user_tables_ready(conn):
+            return
+        email = _normalize_email(username)
+        now = _utc_now()
+        existing = _user_by_email(conn, email)
+        hashed = _hash_password(password)
+        if existing:
+            if (
+                existing["role"] != "admin"
+                or existing["status"] != "active"
+                or not _verify_password(password, existing["password_hash"])
+            ):
+                conn.execute(
+                    """UPDATE app_users
+                       SET role='admin', status='active', password_hash=?, updated_at=?
+                       WHERE email=?""",
+                    (hashed, now, email),
+                )
+        else:
+            conn.execute(
+                """INSERT INTO app_users(email, full_name, role, status, password_hash, created_at, updated_at)
+                   VALUES (?, ?, 'admin', 'active', ?, ?, ?)""",
+                (email, "Administrator", hashed, now, now),
+            )
+        if owns:
+            conn.commit()
+    finally:
+        if owns:
+            conn.close()
+
+
+def list_users() -> list[dict]:
+    with _connect_users() as db:
+        if not _user_tables_ready(db):
+            return []
+        rows = db.execute("SELECT * FROM app_users ORDER BY status, role, email").fetchall()
+        return [_user_public(row) for row in rows]
+
+
+def list_user_audit(limit: int = 80) -> list[dict]:
+    with _connect_users() as db:
+        if not _user_tables_ready(db):
+            return []
+        rows = db.execute(
+            """SELECT id, actor_email, action, target_email, detail, created_at
+               FROM app_user_audit ORDER BY datetime(created_at) DESC, id DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def _active_admin_count(db, exclude_id: int | None = None) -> int:
+    params: list[object] = []
+    where = "role='admin' AND status='active'"
+    if exclude_id is not None:
+        where += " AND id<>?"
+        params.append(exclude_id)
+    return int(db.execute(f"SELECT COUNT(*) FROM app_users WHERE {where}", params).fetchone()[0])
+
+
+def save_user(payload: dict, actor: str, user_id: int | None = None) -> dict:
+    email = _normalize_email(payload.get("email", ""))
+    if not email or "@" not in email:
+        raise ValueError("A valid email is required.")
+    role = _clean_role(payload.get("role"))
+    status = _clean_status(payload.get("status"))
+    full_name = str(payload.get("full_name") or "").strip()
+    password = str(payload.get("password") or "")
+    now = _utc_now()
+    with _connect_users() as db:
+        if not _user_tables_ready(db):
+            raise ValueError("User table is not ready.")
+        if user_id is None:
+            if not password:
+                raise ValueError("A password is required for new users.")
+            db.execute(
+                """INSERT INTO app_users(email, full_name, role, status, password_hash, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (email, full_name, role, status, _hash_password(password), now, now),
+            )
+            _record_user_audit(db, actor, "created_user", email, f"role={role}; status={status}")
+            row = _user_by_email(db, email)
+            return _user_public(row)
+
+        existing = db.execute("SELECT * FROM app_users WHERE id=?", (user_id,)).fetchone()
+        if not existing:
+            raise ValueError("User not found.")
+        if existing["role"] == "admin" and existing["status"] == "active" and (
+            role != "admin" or status != "active"
+        ) and _active_admin_count(db, exclude_id=user_id) == 0:
+            raise ValueError("At least one active admin is required.")
+        fields = ["email=?", "full_name=?", "role=?", "status=?", "updated_at=?"]
+        values: list[object] = [email, full_name, role, status, now]
+        detail = f"role={role}; status={status}"
+        if password:
+            fields.append("password_hash=?")
+            values.append(_hash_password(password))
+            detail += "; password=changed"
+        values.append(user_id)
+        db.execute(f"UPDATE app_users SET {', '.join(fields)} WHERE id=?", values)
+        _record_user_audit(db, actor, "updated_user", email, detail)
+        row = db.execute("SELECT * FROM app_users WHERE id=?", (user_id,)).fetchone()
+        return _user_public(row)
+
+
+def delete_user(user_id: int, actor: str) -> dict:
+    with _connect_users() as db:
+        if not _user_tables_ready(db):
+            raise ValueError("User table is not ready.")
+        row = db.execute("SELECT * FROM app_users WHERE id=?", (user_id,)).fetchone()
+        if not row:
+            raise ValueError("User not found.")
+        if row["role"] == "admin" and row["status"] == "active" and _active_admin_count(db, exclude_id=user_id) == 0:
+            raise ValueError("At least one active admin is required.")
+        email = row["email"]
+        db.execute("DELETE FROM app_users WHERE id=?", (user_id,))
+        _record_user_audit(db, actor, "deleted_user", email)
+        return {"deleted": True, "email": email}
 
 
 def _emails(name: str) -> frozenset[str]:
@@ -226,6 +464,18 @@ def _authorize(email: str, request) -> tuple[bool, int, str]:
         return False, 403, "This account has read-only access."
 
     request.state.user_email = email
+    try:
+        with _connect_users() as db:
+            user = _user_by_email(db, email)
+            if user and user["status"] == _ACTIVE_STATUS:
+                request.state.user_role = user["role"]
+                request.state.user_name = user["full_name"] or ""
+            else:
+                request.state.user_role = "manager" if config.may_write(email) else "staff"
+                request.state.user_name = ""
+    except sqlite3.Error:
+        request.state.user_role = "manager" if config.may_write(email) else "staff"
+        request.state.user_name = ""
     return True, 200, ""
 
 
@@ -262,9 +512,9 @@ def is_exempt_request(request) -> bool:
 
 
 def _basic_challenge_for(request) -> dict[str, str]:
-    # API callers get JSON errors for the custom login screen. Top-level protected document
-    # requests may still advertise Basic Auth for non-React clients.
-    return {} if request.url.path.startswith("/api/") else _BASIC_CHALLENGE
+    # The custom React login probes /api/auth/me and should render its own error. Other
+    # protected routes still advertise RFC 7617 so non-React clients understand the gate.
+    return {} if request.url.path == "/api/auth/me" else _BASIC_CHALLENGE
 
 
 def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
@@ -282,12 +532,39 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
     except (binascii.Error, UnicodeDecodeError):
         return False, 401, "Sign-in is not valid.", challenge
     username, _, password = decoded.partition(":")
+    normalized = _normalize_email(username)
+    try:
+        ensure_basic_user()
+        with _connect_users() as db:
+            user = _user_by_email(db, normalized)
+            if user:
+                if user["status"] != _ACTIVE_STATUS or not _verify_password(password, user["password_hash"]):
+                    log.warning("Rejected app user sign-in attempt for %r", username)
+                    return False, 401, "Sign-in is not valid.", challenge
+                if request.method in _WRITE_METHODS and not _role_may_write(user["role"]):
+                    log.warning("Denied write for %s on %s", normalized, request.url.path)
+                    return False, 403, "This account has read-only access.", {}
+                if request.url.path == "/api/auth/me":
+                    now = _utc_now()
+                    db.execute("UPDATE app_users SET last_login_at=?, updated_at=? WHERE id=?", (now, now, user["id"]))
+                    _record_user_audit(db, normalized, "signed_in", normalized)
+                request.state.user_email = normalized
+                request.state.user_role = user["role"]
+                request.state.user_name = user["full_name"] or ""
+                return True, 200, "", {}
+    except sqlite3.Error:
+        pass
+    if not (config.basic_user and config.basic_pass):
+        log.warning("Rejected Basic Auth attempt for user %r", username)
+        return False, 401, "Sign-in is not valid.", challenge
     user_ok = secrets.compare_digest(username, config.basic_user)
     pass_ok = secrets.compare_digest(password, config.basic_pass)
     if not (user_ok and pass_ok):
         log.warning("Rejected Basic Auth attempt for user %r", username)
         return False, 401, "Sign-in is not valid.", challenge
-    request.state.user_email = username
+    request.state.user_email = normalized or username
+    request.state.user_role = "admin"
+    request.state.user_name = "Administrator"
     return True, 200, "", {}
 
 
