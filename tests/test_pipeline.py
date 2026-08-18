@@ -1,9 +1,11 @@
 import io
+import os
 import tempfile
 import unittest
 import math
 from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -1431,6 +1433,57 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
         self.assertAlmostEqual(row["Impressions"], 1650.0)
         self.assertAlmostEqual(row["Ad Set Budget"], 3.5)
         self.assertEqual(row["Ad Set Budget Type"], "Daily")
+
+    def test_local_leadlens_derived_export_without_spend_is_accepted(self):
+        rows = []
+        for offset in range(8):
+            day = date(2026, 6, 6) + timedelta(days=offset)
+            rows.append({
+                "Day": day.strftime("%-d-%b-%y") if os.name != "nt" else day.strftime("%#d-%b-%y"),
+                "Campaign": self.CAMPAIGN,
+                "Campaign ID": "1.20236E+17",
+                "Ad set ID": "1.20236E+17",
+                "days_since_adset_started": 202 + offset,
+                "ad_set_change_recency": "0_3_days" if offset < 4 else "4_7_days",
+                "ad_change_recency": "no_recent_change",
+            })
+        content = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+
+        preview = core.preview_file(content, "leadlens-ad_performance-2026-08-18.csv")
+
+        self.assertEqual(preview["file_type"], core.LEADLENS_DERIVED_TYPE)
+        self.assertEqual(preview["clean_rows"], 8)
+        self.assertEqual(preview["unique_ad_sets"], 1)
+        self.assertEqual(preview["start_dates"], 1)
+        self.assertEqual(preview["change_events_by_scope"], {"ad_set": 1})
+
+    def test_leadlens_derived_import_writes_starts_and_reconstructed_changes(self):
+        rows = []
+        for offset in range(8):
+            day = pd.Timestamp("2026-06-06") + pd.Timedelta(days=offset)
+            rows.append({
+                "Day": day.strftime("%Y-%m-%d"),
+                "Campaign": self.CAMPAIGN,
+                "Campaign ID": "1.20236E+17",
+                "Ad set ID": "1.20236E+17",
+                "days_since_adset_started": 202 + offset,
+                "ad_set_change_recency": "0_3_days" if offset < 4 else "4_7_days",
+                "ad_change_recency": "no_recent_change",
+            })
+        content = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+        preview = core.preview_file(content, "leadlens-derived.csv")
+
+        with mock.patch.object(core, "train_models", return_value={"status": "skipped"}):
+            result = core.import_preview(preview["token"], "leadlens-derived.csv")
+
+        self.assertEqual(result["file_type"], core.LEADLENS_DERIVED_TYPE)
+        self.assertEqual(result["start_dates_inserted"], 1)
+        self.assertEqual(result["change_events_inserted"], 1)
+        starts = core.list_ad_set_start_dates(self.AD_SET)
+        self.assertEqual(starts[0]["start_date"], "2025-11-16")
+        events = core.list_change_events(scope="ad_set", ad_set_id=self.AD_SET)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["start_date"], "2026-06-06")
 
     def test_unknown_campaign_is_rejected_not_guessed(self):
         """Loosening the detector must not let unattributable rows into the database.

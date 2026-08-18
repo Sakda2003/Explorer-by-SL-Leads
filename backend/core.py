@@ -46,6 +46,7 @@ CUSTOMER_TRAFFIC_TYPE = "customer_traffic"
 AD_PERFORMANCE_TYPE = "ad_performance"
 CHANGE_LOG_TYPE = "change_log"
 MODEL_DATASET_TYPE = "model_dataset"
+LEADLENS_DERIVED_TYPE = "leadlens_derived_variables"
 
 AD_PERFORMANCE_COLUMNS = [
     "Campaign name", "Campaign ID", "Ad set ID", "Ad ID", "Day", "Delivery status", "Delivery level",
@@ -850,6 +851,289 @@ def read_change_log_workbook(path_or_buffer, extension: str) -> pd.DataFrame:
     return events
 
 
+LEADLENS_DERIVED_REQUIRED = [
+    "Day", "Campaign name", "Ad set ID", "days_since_adset_started",
+    "ad_set_change_recency", "ad_change_recency",
+]
+
+
+def is_leadlens_derived_columns(columns: Iterable[object]) -> bool:
+    ad_keys = {_header_key(AD_KNOWN_HEADERS.get(_header_key(column), column)) for column in columns}
+    return all(_header_key(column) in ad_keys for column in LEADLENS_DERIVED_REQUIRED)
+
+
+def _candidate_ad_set_signatures(dates: pd.Series) -> dict[str, dict[str, object]]:
+    starts = dict(_confirmed_ad_set_starts())
+    date_index = pd.DatetimeIndex(pd.to_datetime(dates, errors="coerce").dropna().dt.normalize().unique())
+    signatures: dict[str, dict[str, object]] = {}
+    options = _historical_campaign_ad_set_options()
+    for candidates in options.values():
+        for candidate in candidates:
+            ad_set_id = str(candidate["ad_set_id"])
+            if ad_set_id in signatures:
+                continue
+            start = starts.get(ad_set_id)
+            days_by_date: dict[pd.Timestamp, int] = {}
+            if start is not None:
+                for day in date_index:
+                    days_by_date[pd.Timestamp(day).normalize()] = int((pd.Timestamp(day).normalize() - start).days)
+            signatures[ad_set_id] = {
+                "start": start,
+                "days_since": days_by_date,
+                "ad_set_change_recency": {
+                    pd.Timestamp(day).normalize(): _change_state_as_of(_recorded_change_events("ad_set", ad_set_id), pd.Timestamp(day))
+                    for day in date_index
+                },
+                "ad_change_recency": {
+                    pd.Timestamp(day).normalize(): _change_state_as_of(_recorded_change_events("ad", ad_set_id), pd.Timestamp(day))
+                    for day in date_index
+                },
+            }
+    return signatures
+
+
+def _historical_campaign_day_ad_sets() -> dict[tuple[str, pd.Timestamp], set[str]]:
+    if not DB_PATH.exists():
+        return {}
+    try:
+        with connect() as db:
+            rows = db.execute(
+                """SELECT campaign_name, day, ad_set_id
+                   FROM daily_ad_performance
+                   WHERE TRIM(COALESCE(campaign_name, '')) <> ''
+                     AND TRIM(COALESCE(day, '')) <> ''
+                     AND TRIM(COALESCE(ad_set_id, '')) <> ''"""
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+    out: dict[tuple[str, pd.Timestamp], set[str]] = {}
+    for row in rows:
+        day = pd.to_datetime(row["day"], errors="coerce")
+        if pd.isna(day):
+            continue
+        out.setdefault((_lookup_text(row["campaign_name"]), day.normalize()), set()).add(str(row["ad_set_id"]))
+    return out
+
+
+def _resolve_derived_ad_set_ids(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+    options_by_campaign = _historical_campaign_ad_set_options()
+    active_ad_sets = _historical_campaign_day_ad_sets()
+    signatures = _candidate_ad_set_signatures(frame["Day"])
+    recovered = 0
+    unresolved = 0
+    ambiguous = 0
+
+    for index, row in frame.iterrows():
+        ad_set = _safe_id(row["Ad set ID"], "Ad set ID", int(row["_source_row"]))
+        campaign_id = _safe_id(row["Campaign ID"], "Campaign ID", int(row["_source_row"]))
+        frame.at[index, "Ad set ID"] = ad_set
+        frame.at[index, "Campaign ID"] = campaign_id
+        if ad_set:
+            continue
+        candidates = options_by_campaign.get(_lookup_text(row["Campaign name"]), [])
+        if not candidates:
+            unresolved += 1
+            continue
+        matches = candidates
+        day = row["Day"]
+        if pd.notna(day):
+            active = active_ad_sets.get((_lookup_text(row["Campaign name"]), day))
+            if active:
+                active_matches = [candidate for candidate in matches if str(candidate["ad_set_id"]) in active]
+                if active_matches:
+                    matches = active_matches
+        age = row["days_since_adset_started"]
+        if pd.notna(day) and not pd.isna(age):
+            age_matches = [
+                candidate for candidate in matches
+                if signatures.get(str(candidate["ad_set_id"]), {}).get("days_since", {}).get(day) == int(age)
+            ]
+            if age_matches:
+                matches = age_matches
+        for column in ("ad_set_change_recency", "ad_change_recency"):
+            value = str(row[column]).strip()
+            if pd.isna(day) or not value:
+                continue
+            recency_matches = [
+                candidate for candidate in matches
+                if signatures.get(str(candidate["ad_set_id"]), {}).get(column, {}).get(day) == value
+            ]
+            if recency_matches:
+                matches = recency_matches
+        if len(matches) == 1:
+            frame.at[index, "Ad set ID"] = str(matches[0]["ad_set_id"])
+            frame.at[index, "Campaign ID"] = str(matches[0]["campaign_id"])
+            recovered += 1
+        else:
+            ambiguous += int(len(matches) > 1)
+            unresolved += int(len(matches) <= 1)
+
+    blank = frame["Ad set ID"].eq("")
+    for (campaign, day), group in frame.loc[blank & frame["Day"].notna()].groupby(["Campaign name", "Day"], sort=False):
+        active = active_ad_sets.get((_lookup_text(campaign), day))
+        if not active:
+            continue
+        candidates = [
+            candidate for candidate in options_by_campaign.get(_lookup_text(campaign), [])
+            if str(candidate["ad_set_id"]) in active
+        ]
+        if len(candidates) != len(group):
+            continue
+        for index, candidate in zip(group.index, sorted(candidates, key=lambda item: str(item["ad_set_id"]))):
+            frame.at[index, "Ad set ID"] = str(candidate["ad_set_id"])
+            frame.at[index, "Campaign ID"] = str(candidate["campaign_id"])
+            recovered += 1
+            if ambiguous:
+                ambiguous -= 1
+
+    return frame, {
+        "recovered_ad_set_ids": recovered,
+        "unresolved_attribution_rows": unresolved,
+        "ambiguous_attribution_rows": ambiguous,
+    }
+
+
+def _event_dates_from_recency_buckets(group: pd.DataFrame, column: str) -> tuple[list[pd.Timestamp], int]:
+    events: list[pd.Timestamp] = []
+    ambiguous_runs = 0
+    low: pd.Timestamp | None = None
+    high: pd.Timestamp | None = None
+
+    def flush() -> None:
+        nonlocal low, high, ambiguous_runs
+        if low is None or high is None:
+            return
+        if low == high:
+            events.append(low)
+        else:
+            ambiguous_runs += 1
+        low = high = None
+
+    for row in group.sort_values("Day").itertuples():
+        bucket = str(getattr(row, column)).strip()
+        if bucket == NO_RECENT_CHANGE_BUCKET or bucket not in RECENCY_BUCKET_DAY_RANGES:
+            flush()
+            continue
+        start, end = RECENCY_BUCKET_DAY_RANGES[bucket]
+        row_low = pd.Timestamp(row.Day).normalize() - pd.Timedelta(days=end)
+        row_high = pd.Timestamp(row.Day).normalize() - pd.Timedelta(days=start)
+        if low is None or high is None:
+            low, high = row_low, row_high
+            continue
+        next_low = max(low, row_low)
+        next_high = min(high, row_high)
+        if next_low <= next_high:
+            low, high = next_low, next_high
+            continue
+        flush()
+        low, high = row_low, row_high
+    flush()
+    return sorted(set(events)), ambiguous_runs
+
+
+def read_leadlens_derived_tabular(path_or_buffer, extension: str) -> dict[str, object]:
+    frame, source_columns = _read_raw_frame(path_or_buffer, extension)
+    renamed: dict[object, str] = {}
+    for column in frame.columns:
+        canonical = AD_KNOWN_HEADERS.get(_header_key(column))
+        if canonical:
+            renamed[column] = canonical
+    frame = frame.rename(columns=renamed)
+    frame.columns = [str(column).strip() for column in frame.columns]
+    missing = [column for column in LEADLENS_DERIVED_REQUIRED if column not in frame.columns]
+    if missing:
+        raise ValueError("Missing required LeadLens derived-variable columns: " + ", ".join(missing))
+    if "Campaign ID" not in frame.columns:
+        frame["Campaign ID"] = ""
+
+    source_rows = len(frame)
+    frame["_source_row"] = range(2, source_rows + 2)
+    frame = frame.dropna(how="all").copy()
+    for column in ["Campaign name", "Campaign ID", "Ad set ID", "ad_set_change_recency", "ad_change_recency"]:
+        frame[column] = frame[column].fillna("").astype(str).str.strip()
+    frame["Day"] = pd.to_datetime(frame["Day"], format="mixed", errors="coerce").dt.normalize()
+    frame["days_since_adset_started"] = pd.to_numeric(frame["days_since_adset_started"], errors="coerce")
+    for column in ["ad_set_change_recency", "ad_change_recency"]:
+        frame[column] = frame[column].str.strip()
+    invalid_bucket = ~(
+        frame["ad_set_change_recency"].isin(RECENCY_BUCKETS)
+        & frame["ad_change_recency"].isin(RECENCY_BUCKETS)
+    )
+    frame, recovery = _resolve_derived_ad_set_ids(frame)
+    missing_required = (
+        frame["Day"].isna()
+        | frame["Campaign name"].eq("")
+        | frame["Ad set ID"].eq("")
+        | frame["days_since_adset_started"].isna()
+        | invalid_bucket
+    )
+    clean = frame.loc[~missing_required].copy().reset_index(drop=True)
+    if clean.empty:
+        raise ValueError(
+            "No valid LeadLens derived-variable rows remain after cleaning. Check Day, Campaign, "
+            "Ad set ID, days_since_adset_started, and recency bucket values."
+        )
+
+    start_candidates = clean.assign(
+        start_date=clean["Day"] - pd.to_timedelta(clean["days_since_adset_started"].astype(int), unit="D")
+    )
+    starts = (
+        start_candidates.groupby("Ad set ID", sort=True)["start_date"]
+        .agg(lambda values: values.value_counts().index[0])
+        .reset_index()
+        .rename(columns={"Ad set ID": "ad_set_id"})
+    )
+    starts["start_date"] = pd.to_datetime(starts["start_date"]).dt.normalize()
+    starts["confirmed_by"] = "LeadLens derived CSV"
+    starts["notes"] = "Imported from LeadLens derived-variable CSV."
+
+    event_frames = []
+    ambiguous_runs = 0
+    for ad_set_id, group in clean.groupby("Ad set ID", sort=True):
+        for source_column, scope in (("ad_set_change_recency", "ad_set"), ("ad_change_recency", "ad")):
+            dates, ambiguous = _event_dates_from_recency_buckets(group, source_column)
+            ambiguous_runs += ambiguous
+            if dates:
+                event_frames.append(pd.DataFrame({
+                    "scope": scope,
+                    "event_date": dates,
+                    "ad_set_id": str(ad_set_id),
+                    "ad_id": "",
+                    "source": CONFIRMED_SOURCE,
+                    "confirmed_by": "LeadLens derived CSV",
+                    "notes": f"Reconstructed from {source_column} bucket sequence.",
+                }))
+    changes = pd.concat(event_frames, ignore_index=True) if event_frames else pd.DataFrame(columns=[
+        "scope", "event_date", "ad_set_id", "ad_id", "source", "confirmed_by", "notes",
+    ])
+    if len(changes):
+        changes = changes.drop_duplicates(["scope", "event_date", "ad_set_id", "ad_id"], keep="last")
+        changes["event_date"] = pd.to_datetime(changes["event_date"]).dt.normalize()
+
+    report = {
+        "source_rows": int(source_rows),
+        "clean_rows": int(len(clean)),
+        "excluded_rows": int(missing_required.sum()),
+        "invalid_dates": int(frame["Day"].isna().sum()),
+        "invalid_bucket_rows": int(invalid_bucket.sum()),
+        "invalid_start_age_rows": int(frame["days_since_adset_started"].isna().sum()),
+        "unique_ad_sets": int(clean["Ad set ID"].nunique()),
+        "date_min": clean["Day"].min().date().isoformat(),
+        "date_max": clean["Day"].max().date().isoformat(),
+        "start_dates": int(len(starts)),
+        "change_events": int(len(changes)),
+        "change_events_by_scope": changes.groupby("scope").size().to_dict() if len(changes) else {},
+        "ambiguous_recency_runs": int(ambiguous_runs),
+        "source_columns": source_columns,
+        "recognized_columns": list(dict.fromkeys(
+            AD_KNOWN_HEADERS[_header_key(column)] for column in source_columns if _header_key(column) in AD_KNOWN_HEADERS
+        )),
+        "ignored_columns": [column for column in source_columns if _header_key(column) not in AD_KNOWN_HEADERS],
+        **recovery,
+    }
+    return {"rows": clean, "starts": starts, "changes": changes, "report": report}
+
+
 MODEL_DATASET_SHEET = "model_dataset"
 # Optional companion sheet at ad set x day grain. A lead-grain sheet can only describe days
 # that produced a lead, so days that spent and got nothing are invisible in it. This sheet
@@ -1094,9 +1378,14 @@ def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
     has_spend = _header_key("Amount spent (USD)") in ad_keys
     if customer_score == len(SOURCE_REQUIRED_COLUMNS):
         return CUSTOMER_TRAFFIC_TYPE
+    if is_leadlens_derived_columns(columns):
+        return LEADLENS_DERIVED_TYPE
     if ad_score == 2 and has_campaign and has_spend:
         return AD_PERFORMANCE_TYPE
-    raise ValueError("File type could not be detected. Upload a customer traffic export or Meta ad performance CSV with Amount spent (USD).")
+    raise ValueError(
+        "File type could not be detected. Upload a customer traffic export, Meta ad performance "
+        "CSV with Amount spent (USD), LeadLens derived-variable CSV, or change-log workbook."
+    )
 
 
 def read_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
@@ -1487,6 +1776,12 @@ NO_RECENT_CHANGE_BUCKET = "no_recent_change"
 # Ordered oldest-known-first for the correlation matrix's ordinal encoding: the scale is
 # monotone in time-since-change, with the baseline as the far end.
 RECENCY_BUCKETS = (*(name for _, name in RECENCY_BUCKET_EDGES), NO_RECENT_CHANGE_BUCKET)
+RECENCY_BUCKET_DAY_RANGES = {
+    "0_3_days": (0, 3),
+    "4_7_days": (4, 7),
+    "8_14_days": (8, 14),
+    "15_59_days": (15, 59),
+}
 
 
 def recency_bucket(days: object) -> str:
@@ -1843,6 +2138,8 @@ def preview_file(content: bytes, filename: str) -> dict:
                 "columns": preview_columns,
                 "rows": preview_rows.to_dict(orient="records"),
             }
+        if file_type == LEADLENS_DERIVED_TYPE:
+            return _preview_leadlens_derived(target, token, filename)
         frame = read_tabular(target, extension)
     except Exception:
         target.unlink(missing_ok=True)
@@ -1880,6 +2177,57 @@ def preview_file(content: bytes, filename: str) -> dict:
         "missing_values": missing_values,
         "columns": preview_columns,
         "rows": preview_rows.to_dict(orient="records"),
+    }
+
+
+def _preview_leadlens_derived(target: Path, token: str, filename: str) -> dict:
+    parsed = read_leadlens_derived_tabular(target, target.suffix)
+    report = parsed["report"]
+    rows = parsed["rows"].loc[:, [
+        "Day", "Campaign name", "Campaign ID", "Ad set ID",
+        "days_since_adset_started", "ad_set_change_recency", "ad_change_recency",
+    ]].head(8).copy()
+    rows["Day"] = rows["Day"].apply(lambda v: v.date().isoformat() if pd.notna(v) else None)
+    rows = rows.astype(object).where(pd.notna(rows), None)
+    warnings = []
+    if report.get("unresolved_attribution_rows") or report.get("ambiguous_attribution_rows"):
+        warnings.append(
+            "Some rows could not be mapped back to exact ad set IDs. Scientific-notation IDs "
+            "are only accepted when campaign history can resolve them unambiguously."
+        )
+    if report.get("ambiguous_recency_runs"):
+        warnings.append(
+            f"{report['ambiguous_recency_runs']} recency runs did not identify an exact event date "
+            "and will be skipped. Import the changelog workbook when exact dates are available."
+        )
+    return {
+        "token": token,
+        "file_name": filename,
+        "file_type": LEADLENS_DERIVED_TYPE,
+        "file_type_label": "LeadLens derived variables",
+        "total_leads": 0,
+        "source_rows": report["source_rows"],
+        "clean_rows": report["clean_rows"],
+        "excluded_rows": report["excluded_rows"],
+        "rejected_rows": report["excluded_rows"],
+        "duplicates_removed": 0,
+        "unique_ad_sets": report["unique_ad_sets"],
+        "date_min": report["date_min"],
+        "date_max": report["date_max"],
+        "start_dates": report["start_dates"],
+        "change_events": report["change_events"],
+        "change_events_by_scope": report["change_events_by_scope"],
+        "recovered_ad_set_ids": report["recovered_ad_set_ids"],
+        "unresolved_attribution_rows": report["unresolved_attribution_rows"],
+        "ambiguous_attribution_rows": report["ambiguous_attribution_rows"],
+        "ambiguous_recency_runs": report["ambiguous_recency_runs"],
+        "source_columns": report["source_columns"],
+        "recognized_columns": report["recognized_columns"],
+        "ignored_columns": report["ignored_columns"],
+        "warnings": warnings,
+        "missing_values": {},
+        "columns": list(rows.columns),
+        "rows": rows.to_dict(orient="records"),
     }
 
 
@@ -2130,6 +2478,95 @@ def _import_change_log_preview(preview_path: Path, filename: str | None = None) 
         "unconfirmed_rows": report.get("unconfirmed_rows", 0),
         "by_scope": report.get("by_scope", {}),
         "sheets_read": report.get("sheets_read", []),
+        "training_run": run,
+    }
+
+
+def _import_leadlens_derived_preview(preview_path: Path, filename: str | None = None) -> dict:
+    parsed = read_leadlens_derived_tabular(preview_path, preview_path.suffix)
+    rows, starts, changes, report = parsed["rows"], parsed["starts"], parsed["changes"], parsed["report"]
+    stored_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}{preview_path.suffix}"
+    stored_path = UPLOAD_DIR / stored_name
+    shutil.move(str(preview_path), stored_path)
+    file_hash = hashlib.sha256(stored_path.read_bytes()).hexdigest()
+    now = utc_now()
+    start_inserted = start_updated = 0
+    change_inserted = change_updated = 0
+    with connect() as db:
+        cur = db.execute(
+            """INSERT INTO raw_uploads(file_name, stored_path, file_sha256, file_type, uploaded_at,
+               row_count, cleaned_count, excluded_count, recovered_count, date_min, date_max)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                filename or stored_path.name,
+                str(stored_path),
+                file_hash,
+                LEADLENS_DERIVED_TYPE,
+                now,
+                report["source_rows"],
+                report["clean_rows"],
+                report["excluded_rows"],
+                report.get("recovered_ad_set_ids", 0),
+                report["date_min"],
+                report["date_max"],
+            ),
+        )
+        upload_id = cur.lastrowid
+        for row in starts.itertuples():
+            start_date = row.start_date.date().isoformat()
+            existed = db.execute(
+                "SELECT 1 FROM ad_set_start_dates WHERE ad_set_id=?",
+                (row.ad_set_id,),
+            ).fetchone()
+            db.execute(
+                """INSERT INTO ad_set_start_dates(ad_set_id, start_date, confirmed_by, notes, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(ad_set_id) DO UPDATE SET
+                   start_date=excluded.start_date,
+                   confirmed_by=excluded.confirmed_by,
+                   notes=excluded.notes,
+                   updated_at=excluded.updated_at""",
+                (row.ad_set_id, start_date, row.confirmed_by or None, row.notes or None, now, now),
+            )
+            start_inserted += int(existed is None)
+            start_updated += int(existed is not None)
+        for row in changes.itertuples():
+            event_date = row.event_date.date().isoformat()
+            existed = db.execute(
+                "SELECT 1 FROM change_events WHERE scope=? AND event_date=? AND ad_set_id=? AND ad_id=?",
+                (row.scope, event_date, row.ad_set_id, row.ad_id),
+            ).fetchone()
+            db.execute(
+                """INSERT INTO change_events(upload_id, scope, event_date, ad_set_id, ad_id,
+                   source, confirmed_by, notes, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(scope, event_date, ad_set_id, ad_id) DO UPDATE SET
+                   upload_id=excluded.upload_id,
+                   source=excluded.source,
+                   confirmed_by=excluded.confirmed_by,
+                   notes=excluded.notes,
+                   updated_at=excluded.updated_at""",
+                (upload_id, row.scope, event_date, row.ad_set_id, row.ad_id,
+                 row.source, row.confirmed_by or None, row.notes or None, now, now),
+            )
+            change_inserted += int(existed is None)
+            change_updated += int(existed is not None)
+        db.execute(
+            "UPDATE raw_uploads SET imported_count=?, updated_count=? WHERE id=?",
+            (start_inserted + change_inserted, start_updated + change_updated, upload_id),
+        )
+    _clear_change_caches()
+    run = train_models()
+    return {
+        "upload_id": upload_id,
+        "file_type": LEADLENS_DERIVED_TYPE,
+        "cleaned": len(rows),
+        "excluded": report["excluded_rows"],
+        "start_dates_inserted": start_inserted,
+        "start_dates_updated": start_updated,
+        "change_events_inserted": change_inserted,
+        "change_events_updated": change_updated,
+        "ambiguous_recency_runs": report.get("ambiguous_recency_runs", 0),
         "training_run": run,
     }
 
@@ -2478,6 +2915,8 @@ def import_preview(token: str, filename: str | None = None) -> dict:
     file_type = detect_upload_type_from_columns(source_columns)
     if file_type == AD_PERFORMANCE_TYPE:
         return _import_ad_performance_preview(preview_path, filename)
+    if file_type == LEADLENS_DERIVED_TYPE:
+        return _import_leadlens_derived_preview(preview_path, filename)
     return _import_customer_traffic_preview(preview_path, filename)
 
 
@@ -8668,7 +9107,7 @@ def delete_upload(upload_id: int) -> dict:
         if brought_leads:
             db.execute("DELETE FROM lead_events WHERE id NOT IN (SELECT lead_id FROM upload_lead_links)")
     path.unlink(missing_ok=True)
-    if file_type in (CHANGE_LOG_TYPE, MODEL_DATASET_TYPE):
+    if file_type in (CHANGE_LOG_TYPE, MODEL_DATASET_TYPE, LEADLENS_DERIVED_TYPE):
         _clear_change_caches()
     if brought_leads:
         rebuild_aggregates()
