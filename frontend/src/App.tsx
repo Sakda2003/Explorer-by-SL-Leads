@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react';
 import explorerLogo from './assets/explorer-logo.png';
@@ -1213,6 +1213,37 @@ const olsPValue = (value: any) => value == null || !Number.isFinite(Number(value
 // print a 19-digit integer, so large values switch to scientific notation the way statsmodels'
 // own summary table does.
 const olsCondNo = (value: any) => value == null || !Number.isFinite(Number(value)) ? '-' : Number(value) >= 10000 ? Number(value).toExponential(2) : Number(value).toFixed(2);
+const OLS_MAIN_FEATURES = new Set(['spend', 'frequency', 'days_since_adset_started', 'ad_change_recency', 'ad_set_change_recency']);
+const olsTermKind = (row: any): 'baseline' | 'main' | 'categorical' | 'other' => {
+ const feature = String(row?.feature || '');
+ if (feature === 'Intercept') return 'baseline';
+ if (OLS_MAIN_FEATURES.has(feature)) return 'main';
+ if (feature.startsWith('holiday_') || feature.startsWith('weekday_')) return 'categorical';
+ return 'other';
+};
+const olsTermKindLabel = (kind: ReturnType<typeof olsTermKind>) => (
+ kind === 'baseline' ? 'baseline'
+ : kind === 'main' ? 'main variable'
+ : kind === 'categorical' ? 'categorical'
+ : 'other'
+);
+const olsTermVariableLabel = (row: any) => {
+ const feature = String(row?.feature || '');
+ if (feature.startsWith('holiday_')) return 'Holiday proximity dummy';
+ if (feature.startsWith('weekday_')) return 'Day-of-week dummy';
+ if (feature === 'Intercept') return 'Model baseline';
+ return 'Numeric driver';
+};
+const olsCoefficientSections = (rows: any[]) => {
+ const sections = [
+  { key: 'baseline', label: 'Baseline term', note: 'Intercept before any driver is applied.', rows: [] as any[] },
+  { key: 'main', label: 'Main variables', note: 'Continuous or ordinal declared drivers entered as single terms.', rows: [] as any[] },
+  { key: 'categorical', label: 'Categorical variables', note: 'Dummy-coded bucket terms, like statsmodels C(...) output.', rows: [] as any[] },
+  { key: 'other', label: 'Other controls', note: 'Additional estimable terms returned by the model.', rows: [] as any[] },
+ ];
+ rows.forEach((row) => sections.find((section) => section.key === olsTermKind(row))?.rows.push(row));
+ return sections.filter((section) => section.rows.length);
+};
 
 // LOESS: locally weighted linear regression, sampled onto an evenly spaced grid across the
 // observed x range. At each grid point, fits a weighted line using only the `k` nearest
@@ -1289,6 +1320,7 @@ function OlsDetailBlock({ summary }: { summary: any }) {
   ['Prob(JB)', olsPValue(summary.jarque_bera_p_value)],
   ['Cond. No.', olsCondNo(summary.cond_no)],
  ];
+ const coefficientSections = olsCoefficientSections(summary.coefficients || []);
  return (
   <div className="model-gov-ols-detail">
    <div className="model-gov-ols-summary-grid">
@@ -1302,16 +1334,31 @@ function OlsDetailBlock({ summary }: { summary: any }) {
      <span className="num">t</span><span className="num">P&gt;|t|</span>
      <span className="num">[0.025</span><span className="num">0.975]</span>
     </div>
-    {summary.coefficients.map((row: any) => (
-     <div className="model-gov-ols-detail-table-row" key={row.feature}>
-      <span>{row.term}</span>
-      <span className="num">{olsStat(row.coef, 4)}</span>
-      <span className="num">{olsStat(row.std_err, 4)}</span>
-      <span className="num">{olsStat(row.t, 3)}</span>
-      <span className="num">{olsPValue(row.p_value)}</span>
-      <span className="num">{olsStat(row.ci_low, 3)}</span>
-      <span className="num">{olsStat(row.ci_high, 3)}</span>
-     </div>
+    {coefficientSections.map((section) => (
+     <Fragment key={section.key}>
+      <div className="model-gov-ols-detail-section">
+       <b>{section.label}</b>
+       <span>{section.note}</span>
+      </div>
+      {section.rows.map((row: any) => {
+       const kind = olsTermKind(row);
+       return (
+        <div className={`model-gov-ols-detail-table-row term-${kind}`} key={row.feature}>
+         <span className="model-gov-ols-term">
+          <b>{row.term}</b>
+          <small>{olsTermVariableLabel(row)}</small>
+          <i>{olsTermKindLabel(kind)}</i>
+         </span>
+         <span className="num">{olsStat(row.coef, 4)}</span>
+         <span className="num">{olsStat(row.std_err, 4)}</span>
+         <span className="num">{olsStat(row.t, 3)}</span>
+         <span className="num">{olsPValue(row.p_value)}</span>
+         <span className="num">{olsStat(row.ci_low, 3)}</span>
+         <span className="num">{olsStat(row.ci_high, 3)}</span>
+        </div>
+       );
+      })}
+     </Fragment>
     ))}
    </div>
    <div className="model-gov-ols-summary-grid model-gov-ols-diagnostics">
@@ -1420,16 +1467,22 @@ function OlsResultCards(
        <>
         <div className="model-gov-ols-table">
          <div className="model-gov-ols-table-head"><span>Term</span><span className="num">Coef</span><span className="num">Std err</span><span className="num">t</span><span className="num">P&gt;|t|</span><span className="num">95% CI</span></div>
-         {visibleTerms.map((row: any) => (
-          <div className="model-gov-ols-table-row" key={`${key}-${row.feature}`}>
-           <span>{row.term}</span>
+         {visibleTerms.map((row: any) => {
+          const kind = olsTermKind(row);
+          return (
+          <div className={`model-gov-ols-table-row term-${kind}`} key={`${key}-${row.feature}`}>
+           <span className="model-gov-ols-term">
+            <b>{row.term}</b>
+            <i>{olsTermKindLabel(kind)}</i>
+           </span>
            <span className="num">{olsStat(row.coef, 4)}</span>
            <span className="num">{olsStat(row.std_err, 4)}</span>
            <span className="num">{olsStat(row.t, 3)}</span>
            <span className="num">{olsPValue(row.p_value)}</span>
            <span className="num">{olsStat(row.ci_low, 2)} to {olsStat(row.ci_high, 2)}</span>
           </div>
-         ))}
+          );
+         })}
         </div>
         {collapseTerms && summary.coefficients.length > 6 && (
          <button className="dataset-link-btn" onClick={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}>

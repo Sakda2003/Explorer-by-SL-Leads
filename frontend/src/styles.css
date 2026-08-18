@@ -2948,6 +2948,55 @@ td code { color: var(--text); font-size: 11px; }
   font-weight: 500;
   letter-spacing: -.006em;
 }
+.model-gov-ols-term {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.model-gov-ols-term b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-gov-ols-term small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-gov-ols-term i {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: .04em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.model-gov-ols-table-row.term-main .model-gov-ols-term i,
+.model-gov-ols-detail-table-row.term-main .model-gov-ols-term i {
+  border-color: color-mix(in srgb, var(--gold) 58%, var(--line));
+  color: var(--gold-strong);
+  background: color-mix(in srgb, var(--gold) 13%, transparent);
+}
+.model-gov-ols-table-row.term-categorical .model-gov-ols-term i,
+.model-gov-ols-detail-table-row.term-categorical .model-gov-ols-term i {
+  border-color: color-mix(in srgb, var(--corr-cold) 44%, var(--line));
+  color: color-mix(in srgb, var(--corr-cold) 42%, var(--text));
+  background: color-mix(in srgb, var(--corr-cold) 12%, transparent);
+}
 .model-gov-ols-table .num {
   text-align: right;
 }
@@ -3019,9 +3068,9 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-detail-table-head,
 .model-gov-ols-detail-table-row {
   display: grid;
-  grid-template-columns: minmax(112px, 1.2fr) repeat(6, 64px);
+  grid-template-columns: minmax(180px, 1.2fr) repeat(6, 64px);
   gap: 0 8px;
-  min-width: 560px;
+  min-width: 628px;
 }
 .model-gov-ols-detail-table-head {
   padding: 0 0 8px;
@@ -3053,6 +3102,39 @@ td code { color: var(--text); font-size: 11px; }
   font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
+}
+.model-gov-ols-detail-section {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0 7px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+}
+.model-gov-ols-detail-table-head + .model-gov-ols-detail-section { border-top: 0; }
+.model-gov-ols-detail-section b {
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.model-gov-ols-detail-section span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-gov-ols-detail-table-row .model-gov-ols-term {
+  padding: 6px 0;
+}
+.model-gov-ols-detail-table-row .model-gov-ols-term b,
+.model-gov-ols-detail-table-row .model-gov-ols-term small,
+.model-gov-ols-detail-table-row .model-gov-ols-term i {
+  padding: 0;
 }
 .model-gov-ols-detail-table .num { text-align: right; }
 .model-gov-ols-diagnostics { margin-top: 18px; }
