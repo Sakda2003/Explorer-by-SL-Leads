@@ -195,6 +195,10 @@ for _alias, _canonical in {
     "Impression": "Impressions",
     "Messaging Conversation": "Messaging conversations started",
     "Cost Per Message": "Cost per messaging conversation started",
+    "Campaign": "Campaign name",
+    "Spend": "Amount spent (USD)",
+    "CPL": "Cost per lead",
+    "Budget": "Ad Set Budget",
 }.items():
     AD_KNOWN_HEADERS[_header_key(_alias)] = _canonical
 
@@ -1078,15 +1082,16 @@ def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
     # "Created At") count toward detection the same way they do once read_tabular renames them --
     # otherwise a file the importer can actually handle gets rejected before it gets that far.
     keys = {_header_key(KNOWN_HEADERS.get(_header_key(column), column)) for column in columns}
+    ad_keys = {_header_key(AD_KNOWN_HEADERS.get(_header_key(column), column)) for column in columns}
     customer_score = sum(1 for column in SOURCE_REQUIRED_COLUMNS if _header_key(column) in keys)
-    ad_score = sum(1 for column in ["Ad set ID", "Day"] if _header_key(column) in keys)
+    ad_score = sum(1 for column in ["Ad set ID", "Day"] if _header_key(column) in ad_keys)
     # Either campaign column will do. Meta's ad-set-level exports routinely carry only
     # `Campaign name`, and _repair_ad_performance_attribution reconstructs the ID from it
     # against known campaigns -- so requiring the ID here rejected files the importer could
     # already handle, before the repair ever got a chance to run. Rows whose campaign still
     # cannot be resolved are rejected later, so nothing unattributed reaches the database.
-    has_campaign = _header_key("Campaign ID") in keys or _header_key("Campaign name") in keys
-    has_spend = _header_key("Amount spent (USD)") in keys
+    has_campaign = _header_key("Campaign ID") in ad_keys or _header_key("Campaign name") in ad_keys
+    has_spend = _header_key("Amount spent (USD)") in ad_keys
     if customer_score == len(SOURCE_REQUIRED_COLUMNS):
         return CUSTOMER_TRAFFIC_TYPE
     if ad_score == 2 and has_campaign and has_spend:
@@ -1284,6 +1289,19 @@ def _safe_number(value: object) -> float | None:
     if pd.isna(parsed):
         return None
     return -float(parsed) if negative else float(parsed)
+
+
+def _split_ad_set_budget(value: object) -> tuple[object, str]:
+    """Return (budget_amount, budget_type) from exports like "$3.50 / Daily"."""
+    if pd.isna(value):
+        return value, ""
+    text = str(value).strip()
+    if not text:
+        return value, ""
+    if "/" not in text:
+        return value, ""
+    amount, _, budget_type = text.partition("/")
+    return amount.strip(), re.sub(r"\s+", " ", budget_type.strip())
 
 
 def _status_text(value: object) -> str:
@@ -1677,6 +1695,13 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
             frame[column] = np.nan if column in [*AD_NUMERIC_COLUMNS, *AD_DATE_COLUMNS] else ""
     for column in [*AD_TEXT_COLUMNS, *AD_ID_COLUMNS]:
         frame[column] = frame[column].fillna("").astype(str).str.strip()
+    if "Ad Set Budget" in frame.columns:
+        combined_budget = frame["Ad Set Budget"].map(_split_ad_set_budget)
+        budget_amount = combined_budget.map(lambda item: item[0])
+        budget_type = combined_budget.map(lambda item: item[1])
+        fill_type = budget_type.ne("") & frame["Ad Set Budget Type"].eq("")
+        frame["Ad Set Budget"] = budget_amount
+        frame.loc[fill_type, "Ad Set Budget Type"] = budget_type[fill_type]
     for column in AD_ID_COLUMNS:
         frame[column] = [
             _safe_id(value, column, int(row_number))

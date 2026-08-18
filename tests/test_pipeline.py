@@ -1406,6 +1406,32 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
         self.assertAlmostEqual(frame.iloc[0]["Reach"], 1249.0)
         self.assertAlmostEqual(frame.iloc[0]["Frequency"], 1.283427, places=5)
 
+    def test_local_leadlens_ad_export_headers_can_be_reimported(self):
+        rows = [{
+            "Day": "Jun 6, 2026",
+            "Campaign": self.CAMPAIGN,
+            "Campaign ID": "c99",
+            "Ad set ID": self.AD_SET,
+            "Spend": "$3.87",
+            "Leads": 3,
+            "CPL": "$1.29",
+            "Reach": "1,292",
+            "Impressions": "1,650",
+            "Frequency": 1.2771,
+            "Budget": "$3.50 / Daily",
+            "days_since_adset_started": 202,
+            "ad_set_change_recency": "15_59_days",
+            "ad_change_recency": "15_59_days",
+        }]
+        frame = core.read_ad_performance_tabular(ad_export_csv(rows), ".csv")
+        row = frame.iloc[0]
+        self.assertAlmostEqual(row["Amount spent (USD)"], 3.87)
+        self.assertAlmostEqual(row["Cost per lead"], 1.29)
+        self.assertAlmostEqual(row["Reach"], 1292.0)
+        self.assertAlmostEqual(row["Impressions"], 1650.0)
+        self.assertAlmostEqual(row["Ad Set Budget"], 3.5)
+        self.assertEqual(row["Ad Set Budget Type"], "Daily")
+
     def test_unknown_campaign_is_rejected_not_guessed(self):
         """Loosening the detector must not let unattributable rows into the database.
 
