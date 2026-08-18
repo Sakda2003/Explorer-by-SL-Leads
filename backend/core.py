@@ -512,6 +512,7 @@ def init_db() -> None:
                 db.execute("ALTER TABLE change_events DROP COLUMN change_type")
             except sqlite3.OperationalError:
                 pass
+        _backfill_imported_ad_performance_derived_values(db)
         existing_metric_columns = {row[1] for row in db.execute("PRAGMA table_info(model_backtest_metrics)")}
         for name in ("weekday_wape", "weekend_wape", "weekday_bias", "weekend_bias",
                      "weekday_seasonality_strength", "forecast_variance_ratio", "flatness_penalty",
@@ -2090,6 +2091,58 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
     cleaned.attrs["cleaning_report"] = report
     cleaned.attrs["ad_level_rows"] = ad_level_rows
     return cleaned
+
+
+def _backfill_imported_ad_performance_derived_values(db: sqlite3.Connection) -> int:
+    try:
+        uploads = db.execute(
+            "SELECT id, stored_path FROM raw_uploads WHERE file_type=?",
+            (AD_PERFORMANCE_TYPE,),
+        ).fetchall()
+    except sqlite3.Error:
+        return 0
+    updated = 0
+    for upload in uploads:
+        path = Path(upload["stored_path"])
+        if not path.exists():
+            continue
+        try:
+            _, source_columns = _read_raw_frame(path, path.suffix)
+        except Exception:
+            continue
+        if not is_leadlens_derived_columns(source_columns):
+            continue
+        try:
+            frame = read_ad_performance_tabular(path, path.suffix)
+        except Exception:
+            continue
+        for _, row in frame.iterrows():
+            days = row.get("days_since_adset_started")
+            ad_set_recency = str(row.get("ad_set_change_recency") or "").strip() or None
+            ad_recency = str(row.get("ad_change_recency") or "").strip() or None
+            if (days is None or pd.isna(days)) and ad_set_recency is None and ad_recency is None:
+                continue
+            cursor = db.execute(
+                """UPDATE daily_ad_performance
+                   SET days_since_adset_started_imported=?,
+                       ad_set_change_recency_imported=?,
+                       ad_change_recency_imported=?
+                   WHERE upload_id=? AND day=? AND campaign_id=? AND ad_set_id=?
+                     AND days_since_adset_started_imported IS NULL
+                     AND ad_set_change_recency_imported IS NULL
+                     AND ad_change_recency_imported IS NULL""",
+                (
+                    _float_ready(days),
+                    ad_set_recency,
+                    ad_recency,
+                    int(upload["id"]),
+                    _date_ready(row["Day"]),
+                    str(row["Campaign ID"]).strip(),
+                    str(row["Ad set ID"]).strip(),
+                ),
+            )
+            updated += int(cursor.rowcount or 0)
+    return updated
 
 
 def preview_file(content: bytes, filename: str) -> dict:

@@ -1477,6 +1477,57 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
         self.assertEqual(row["ad_set_change_recency"], "0_3_days")
         self.assertEqual(row["ad_change_recency"], "no_recent_change")
 
+    def test_existing_leadlens_ad_export_backfills_blank_derived_columns(self):
+        rows = []
+        for offset in range(8):
+            day = pd.Timestamp("2026-06-06") + pd.Timedelta(days=offset)
+            rows.append({
+                "Day": day.strftime("%Y-%m-%d"),
+                "Campaign": self.CAMPAIGN,
+                "Campaign ID": "c99",
+                "Ad set ID": self.AD_SET,
+                "Spend": "$3.87",
+                "Leads": 3,
+                "CPL": "$1.29",
+                "Reach": "1,292",
+                "Impressions": "1,650",
+                "Frequency": 1.2771,
+                "Budget": "$3.50 / Daily",
+                "days_since_adset_started": 202 + offset,
+                "ad_set_change_recency": "0_3_days" if offset < 4 else "4_7_days",
+                "ad_change_recency": "no_recent_change",
+            })
+        content = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+        preview = core.preview_file(content, "ad_performance-2026-08-18.csv")
+        with mock.patch.object(core, "train_models", return_value={"status": "skipped"}):
+            core.import_preview(preview["token"], "ad_performance-2026-08-18.csv")
+
+        with core.connect() as db:
+            db.execute(
+                """UPDATE daily_ad_performance
+                   SET days_since_adset_started_imported=NULL,
+                       ad_set_change_recency_imported=NULL,
+                       ad_change_recency_imported=NULL"""
+            )
+            blank = db.execute(
+                """SELECT days_since_adset_started_imported,
+                          ad_set_change_recency_imported,
+                          ad_change_recency_imported
+                   FROM daily_ad_performance
+                   LIMIT 1"""
+            ).fetchone()
+            self.assertIsNone(blank["days_since_adset_started_imported"])
+            self.assertIsNone(blank["ad_set_change_recency_imported"])
+            self.assertIsNone(blank["ad_change_recency_imported"])
+            updated = core._backfill_imported_ad_performance_derived_values(db)
+
+        self.assertEqual(updated, 8)
+        board = core.get_dataset_rows("ad_performance_export", limit=1)
+        row = board["rows"][0]
+        self.assertEqual(row["days_since_adset_started"], 202)
+        self.assertEqual(row["ad_set_change_recency"], "0_3_days")
+        self.assertEqual(row["ad_change_recency"], "no_recent_change")
+
     def test_local_leadlens_derived_export_without_spend_is_accepted(self):
         rows = []
         for offset in range(8):
