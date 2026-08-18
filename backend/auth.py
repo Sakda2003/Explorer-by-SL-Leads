@@ -334,6 +334,17 @@ def require_gate_or_die() -> None:
     markers = ("RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME", "DYNO", "WEBSITE_INSTANCE_ID")
     detected = next((name for name in markers if (os.getenv(name) or "").strip()), None)
     require = _flag("LEADLENS_REQUIRE_AUTH") or detected is not None
+    if require and detected == "RENDER" and not config.mode:
+        config.basic_user = "admin"
+        config.basic_pass = secrets.token_urlsafe(24)
+        log.warning(
+            "Render started without BASIC_AUTH_USER/BASIC_AUTH_PASS. Generated temporary "
+            "Basic Auth credentials for this boot: username=%s password=%s. Set permanent "
+            "values in Render's Environment tab; this password changes on every restart.",
+            config.basic_user,
+            config.basic_pass,
+        )
+        return
     if require and not config.mode:
         raise RuntimeError(
             "Refusing to start with no access gate on a deployment that requires one "

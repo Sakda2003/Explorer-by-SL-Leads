@@ -132,10 +132,12 @@ class StartupGateTests(unittest.TestCase):
     def test_open_local_boot_is_allowed(self):
         auth.require_gate_or_die()  # no marker, no gate -> fine
 
-    def test_render_without_a_gate_refuses_to_boot(self):
+    def test_render_without_a_gate_generates_temporary_basic_auth(self):
         os.environ["RENDER"] = "true"
-        with self.assertRaises(RuntimeError):
-            auth.require_gate_or_die()
+        auth.require_gate_or_die()
+        self.assertEqual(auth.config.mode, "basic")
+        self.assertEqual(auth.config.basic_user, "admin")
+        self.assertTrue(auth.config.basic_pass)
 
     def test_render_with_basic_auth_boots(self):
         os.environ["RENDER"] = "true"

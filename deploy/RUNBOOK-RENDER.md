@@ -34,6 +34,17 @@ the Blueprint in Render or add the same variables by hand in the existing servic
 tab. A commit alone does not create secret environment variables on a manually configured
 service.
 
+As a last-resort safety net, a Render boot with no configured gate generates temporary Basic
+Auth credentials and logs them:
+
+```text
+Generated temporary Basic Auth credentials for this boot: username=admin password=...
+```
+
+That keeps the public URL from being open, but it is not an operating setup: the password
+changes on every restart. Replace it with permanent `BASIC_AUTH_USER` and `BASIC_AUTH_PASS`
+values in the Render Environment tab.
+
 ## Persistent storage
 
 The Docker image defaults `LEADLENS_DATA_DIR=/data`. Render's normal filesystem is ephemeral,
