@@ -5360,6 +5360,7 @@ function DatasetPage() {
  // coefficients; this view keeps the declared variable inventory visible around them.
  const declaredCorrelation = (() => {
   if (!correlation?.variables?.length && !declaredVariableList.length) return null;
+  const sourceMatrix = Array.isArray(correlation?.matrix) ? correlation.matrix : [];
   const groups = new Map<number, { number: number; name: string; indices: number[]; status?: string; detail?: string }>();
   (correlation?.variables || []).forEach((v: any, idx: number) => {
    const group: { number: number; name: string; indices: number[]; status?: string; detail?: string } =
@@ -5380,13 +5381,16 @@ function DatasetPage() {
    if (rowGroup.number === colGroup.number) return 1;
    if (!rowGroup.indices.length || !colGroup.indices.length) return null;
    let strongest = 0;
+   let hasStrongest = false;
    for (const ri of rowGroup.indices) {
     for (const ci of colGroup.indices) {
-     const value = correlation.matrix[ri][ci];
+     const value = sourceMatrix[ri]?.[ci];
+     if (typeof value !== 'number' || !Number.isFinite(value)) continue;
      if (Math.abs(value) > Math.abs(strongest)) strongest = value;
+     hasStrongest = true;
     }
    }
-   return Math.round(strongest * 100) / 100;
+   return hasStrongest ? Math.round(strongest * 100) / 100 : null;
   }));
   return { variables: ordered, matrix };
  })();
@@ -5539,7 +5543,7 @@ function DatasetPage() {
           <tr key={rowVar.number}>
            <th className={ri === declaredHoverIdx ? 'is-hover' : ''} onMouseEnter={() => setDeclaredHoverIdx(ri)} onMouseLeave={() => setDeclaredHoverIdx(-1)} title={`#${rowVar.number} ${rowVar.name}`}>{DATASET_DECLARED_SHORT_LABEL[rowVar.number] || rowVar.name}</th>
            {declaredCorrelation.variables.map((colVar, ci: number) => {
-            const value = declaredCorrelation.matrix[ri][ci];
+            const value = declaredCorrelation.matrix[ri]?.[ci];
             const rowLabel = DATASET_DECLARED_SHORT_LABEL[rowVar.number] || rowVar.name;
             const colLabel = DATASET_DECLARED_SHORT_LABEL[colVar.number] || colVar.name;
             const hasValue = typeof value === 'number' && Number.isFinite(value);
@@ -5593,9 +5597,10 @@ function DatasetPage() {
           <tr key={rowVar.key}>
            <th className={ri === hoverIdx ? 'is-hover' : ''} onMouseEnter={() => setHoverIdx(ri)} onMouseLeave={() => setHoverIdx(-1)} title={`${rowVar.variable_name}: ${rowVar.label}`}>{rowVar.label}</th>
            {correlation.variables.map((colVar: any, ci: number) => {
-            const value = correlation.matrix[ri][ci];
+            const value = correlation.matrix?.[ri]?.[ci];
+            const hasValue = typeof value === 'number' && Number.isFinite(value);
             return (
-             <td key={colVar.key} className={ri === hoverIdx || ci === hoverIdx ? 'is-hover' : ''} style={correlationCellStyle(value)} title={`${rowVar.label} vs ${colVar.label}: ${value.toFixed(2)}`}>{value.toFixed(2)}</td>
+             <td key={colVar.key} className={`${ri === hoverIdx || ci === hoverIdx ? 'is-hover ' : ''}${hasValue ? '' : 'is-undefined'}`} style={hasValue ? correlationCellStyle(value) : undefined} title={hasValue ? `${rowVar.label} vs ${colVar.label}: ${value.toFixed(2)}` : `${rowVar.label} vs ${colVar.label}: undefined because one feature is constant or unavailable`}>{hasValue ? value.toFixed(2) : '-'}</td>
             );
            })}
           </tr>
@@ -5621,16 +5626,16 @@ function DatasetPage() {
         <span className="dataset-formula-den">σx · σy</span>
        </span>
        <div className="dataset-formula-meta">
-        <span><b>{fmt(correlation.sample_size)}</b> days</span>
-        {correlation.date_start && correlation.date_end && <span>{dateFmt(correlation.date_start)} – {dateFmt(correlation.date_end)}</span>}
+        <span><b>{fmt(correlation?.sample_size || 0)}</b> days</span>
+        {correlation?.date_start && correlation?.date_end && <span>{dateFmt(correlation.date_start)} – {dateFmt(correlation.date_end)}</span>}
         <span>{selectedAdSetId ? 'Ad set scope' : selectedCampaignId ? 'Campaign scope' : 'Portfolio scope'}</span>
        </div>
       </div>
       <div className="dataset-formula-chips">
        {declaredCorrelation.variables.map((v) => (
-        <div className="dataset-formula-chip" key={v.number} title={v.indices.map((index: number) => correlation.variables[index]?.label).filter(Boolean).join(', ')}>
+        <div className="dataset-formula-chip" key={v.number} title={v.indices.map((index: number) => correlation?.variables?.[index]?.label).filter(Boolean).join(', ')}>
          <b>{DATASET_DECLARED_SHORT_LABEL[v.number] || v.name}</b>
-         <small>{v.indices.map((index: number) => correlation.variables[index]?.label).filter(Boolean).join(', ') || '—'}</small>
+         <small>{v.indices.map((index: number) => correlation?.variables?.[index]?.label).filter(Boolean).join(', ') || '—'}</small>
         </div>
        ))}
       </div>
