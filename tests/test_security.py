@@ -144,6 +144,16 @@ class StartupGateTests(unittest.TestCase):
         auth.config.basic_user, auth.config.basic_pass = "demo", "secret"
         auth.require_gate_or_die()  # gate present -> no raise
 
+    def test_basic_auth_allows_the_react_shell_to_load(self):
+        auth.config.basic_user, auth.config.basic_pass = "demo", "secret"
+        request = SimpleNamespace(url=SimpleNamespace(path="/"), method="GET")
+        self.assertTrue(auth.is_exempt_request(request))
+
+    def test_basic_auth_keeps_api_routes_protected(self):
+        auth.config.basic_user, auth.config.basic_pass = "demo", "secret"
+        request = SimpleNamespace(url=SimpleNamespace(path="/api/dashboard/summary"), method="GET")
+        self.assertFalse(auth.is_exempt_request(request))
+
 
 class PreviewTokenTests(unittest.TestCase):
     def test_non_hex_token_is_refused_before_glob(self):

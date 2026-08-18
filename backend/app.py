@@ -55,7 +55,7 @@ security.configure_csp(ROOT / "frontend" / "dist" / "index.html")
 async def require_access(request: Request, call_next):
     ip = security.client_ip(request)
     is_https = security.is_https_request(request)
-    exempt = request.url.path in auth._EXEMPT_PATHS
+    exempt = auth.is_exempt_request(request)
 
     def _sealed(response):
         security.apply_headers(response, is_https)
@@ -66,15 +66,18 @@ async def require_access(request: Request, call_next):
     if content_length and content_length.isdigit() and int(content_length) > security.MAX_BODY_BYTES:
         return _sealed(JSONResponse({"detail": "Request body too large."}, status_code=413))
 
+    if exempt:
+        return _sealed(await call_next(request))
+
     # A caller who has burned through the failed-sign-in budget is refused before re-checking the
     # credential, so a shared-password guess cannot be ground out at full speed.
-    if not exempt and security.auth_blocked(ip):
+    if security.auth_blocked(ip):
         return _sealed(JSONResponse(
             {"detail": "Too many failed sign-in attempts. Try again later."},
             status_code=429, headers={"Retry-After": str(security.AUTH_FAIL_WINDOW)},
         ))
 
-    if not exempt and not security.allow_general(ip):
+    if not security.allow_general(ip):
         return _sealed(JSONResponse(
             {"detail": "Too many requests."},
             status_code=429, headers={"Retry-After": str(security.GENERAL_WINDOW)},
@@ -177,6 +180,16 @@ class AdSetStartDate(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/auth/status")
+def auth_status():
+    return {"required": bool(auth.config.mode), "mode": auth.config.mode or "open"}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    return {"user": getattr(request.state, "user_email", "")}
 
 
 def _reject_in_demo() -> None:

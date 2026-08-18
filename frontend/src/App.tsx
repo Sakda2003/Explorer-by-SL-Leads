@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
+import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react';
 import explorerLogo from './assets/explorer-logo.png';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ReferenceArea, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import {
@@ -27,6 +27,7 @@ import {
  Info,
  Layers3,
  Lock,
+ LogOut,
  Megaphone,
  Menu,
  Moon,
@@ -49,6 +50,12 @@ import {
 
 const API = '/api';
 type Page = 'Forecast' | 'Optimization' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings';
+const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
+let apiAuthHeader = '';
+
+const setApiAuthHeader = (value: string) => {
+ apiAuthHeader = value;
+};
 
 // Mirrors CHANGE_SCOPES in backend/core.py. Change TYPE was removed from the model on
 // 2026-08-11, so a change is now just a scope and a date -- there is no category to pick.
@@ -209,13 +216,46 @@ const LEAD_QUALITY_OPTIONS = [
 // "awaiting-document-and-payment".
 const leadQualitySlug = (value: string) => String(value || 'intake').toLowerCase().replace(/\s+/g, '-');
 
+const withAuth = (options?: RequestInit): RequestInit => {
+ const headers = new Headers(options?.headers);
+ if (apiAuthHeader && !headers.has('Authorization')) headers.set('Authorization', apiAuthHeader);
+ return { ...options, headers };
+};
+
+const apiFetch = (path: string, options?: RequestInit) => fetch(API + path, withAuth(options));
+
 const api = async (path: string, options?: RequestInit) => {
- const response = await fetch(API + path, options);
+ const response = await apiFetch(path, options);
  if (!response.ok) {
  const body = await response.json().catch(() => ({ detail: 'Request failed' }));
  throw new Error(body.detail || 'Request failed');
  }
  return response.json();
+};
+
+const basicAuthHeader = (username: string, password: string) => {
+ const bytes = new TextEncoder().encode(`${username}:${password}`);
+ let binary = '';
+ bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+ return `Basic ${btoa(binary)}`;
+};
+
+const downloadApiFile = async (path: string, fallbackName: string) => {
+ const response = await apiFetch(path);
+ if (!response.ok) {
+ const body = await response.json().catch(() => ({ detail: 'Download failed' }));
+ throw new Error(body.detail || 'Download failed');
+ }
+ const blob = await response.blob();
+ const disposition = response.headers.get('Content-Disposition') || '';
+ const match = disposition.match(/filename="?([^"]+)"?/i);
+ const link = document.createElement('a');
+ link.href = URL.createObjectURL(blob);
+ link.download = match?.[1] || fallbackName;
+ document.body.appendChild(link);
+ link.click();
+ link.remove();
+ URL.revokeObjectURL(link.href);
 };
 
 // Saving a change event or start date kicks off a background retrain (see `_request_retrain`
@@ -1007,7 +1047,70 @@ function AmbientSystem() {
  );
 }
 
-function Shell({ page, setPage, children }: { page: Page; setPage: (page: Page) => void; children: any }) {
+function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSignedIn: (token: string, user: string) => void }) {
+ const [username, setUsername] = useState('admin');
+ const [password, setPassword] = useState('');
+ const [busy, setBusy] = useState(false);
+ const [error, setError] = useState('');
+
+ const submit = async (event: FormEvent<HTMLFormElement>) => {
+  event.preventDefault();
+  if (checking || busy) return;
+  const token = basicAuthHeader(username.trim(), password);
+  setBusy(true);
+  setError('');
+  try {
+   const me = await api('/auth/me', { headers: { Authorization: token } });
+   onSignedIn(token, me.user || username.trim());
+  } catch (signInError: any) {
+   setError(signInError.message || 'Sign-in failed');
+  } finally {
+   setBusy(false);
+  }
+ };
+
+ return (
+ <div className="login-screen">
+ <div className="login-backdrop" aria-hidden="true" />
+ <section className="login-card" aria-label="Sign in">
+ <div className="login-visual" aria-hidden="true">
+ <div className="login-visual-grid" />
+ <div className="login-visual-shapes"><i /><i /><i /></div>
+ <div className="login-visual-copy">
+ <img src={explorerLogo} alt="" />
+ <span>Explorer by SL</span>
+ <b>Customer traffic forecasting</b>
+ </div>
+ </div>
+ <form className="login-panel" onSubmit={submit}>
+ <div className="login-form-inner">
+ <div className="login-title">
+ <span><Lock size={15} /> Private workspace</span>
+ <h1>Welcome</h1>
+ <p>Log in to your account to continue</p>
+ </div>
+ <label className="login-field">
+ <span>Username</span>
+ <div><UserCheck size={17} /><input value={username} autoComplete="username" disabled={checking || busy} onChange={(event) => setUsername(event.target.value)} /></div>
+ </label>
+ <label className="login-field">
+ <span>Password</span>
+ <div><Lock size={17} /><input type="password" value={password} autoComplete="current-password" disabled={checking || busy} onChange={(event) => setPassword(event.target.value)} autoFocus /></div>
+ </label>
+ {error && <p className="login-error" role="alert">{error}</p>}
+ <button className="login-submit" type="submit" disabled={checking || busy || !username.trim() || !password}>
+ {checking || busy ? <RefreshCw className="spin" size={16} /> : <Lock size={16} />}
+ {checking ? 'Checking access' : busy ? 'Signing in' : 'Log In'}
+ </button>
+ <p className="login-note">Forecasts, uploads, and edit routes stay behind this private gate.</p>
+ </div>
+ </form>
+ </section>
+ </div>
+ );
+}
+
+function Shell({ page, setPage, children, onSignOut }: { page: Page; setPage: (page: Page) => void; children: any; onSignOut?: () => void }) {
  const [open, setOpen] = useState(false);
  const [theme, toggleTheme] = useTheme();
  return (
@@ -1050,6 +1153,11 @@ function Shell({ page, setPage, children }: { page: Page; setPage: (page: Page) 
  {theme === 'dark' ? <Moon size={27} strokeWidth={1.8} /> : <Sun size={27} strokeWidth={1.8} />}
  </span>
  </button>
+ {onSignOut && (
+ <button type="button" className="sidebar-logout" onClick={onSignOut}>
+ <LogOut size={16} /><span>Sign out</span>
+ </button>
+ )}
  </div>
  </aside>
  {open && <button className="scrim" aria-label="Close navigation" onClick={() => setOpen(false)} />}
@@ -5731,6 +5839,7 @@ function OptimizationPage() {
  const [filter, setFilter] = useState<string | null>(null);
  const [expanded, setExpanded] = useState<string | null>(null);
  const [showAll, setShowAll] = useState(false);
+ const [exporting, setExporting] = useState(false);
 
  useEffect(() => {
   let cancelled = false;
@@ -5767,6 +5876,16 @@ function OptimizationPage() {
  };
 
  const toggle = (id: string) => setExpanded((current) => (current === id ? null : id));
+ const exportDecisions = async () => {
+  setExporting(true);
+  try {
+   await downloadApiFile(`/dashboard/ad-decisions.csv?window_days=${windowDays}`, 'ad-decisions.csv');
+  } catch (downloadError: any) {
+   setError(downloadError.message || 'Could not export decisions');
+  } finally {
+   setExporting(false);
+  }
+ };
  const metrics = [
   { label: 'Benchmark CPL', value: cplMoney(summary.benchmark_cpl), spark: SPARKS[0] },
   { label: 'Spent', value: money(summary.spend), spark: SPARKS[1] },
@@ -5795,10 +5914,7 @@ function OptimizationPage() {
        >{days}d</button>
       ))}
      </div>
-     <a
-      className="ghost-button"
-      href={`${API}/dashboard/ad-decisions.csv?window_days=${windowDays}`}
-     >Export</a>
+     <button type="button" className="ghost-button" disabled={exporting} onClick={exportDecisions}>{exporting ? 'Exporting' : 'Export'}</button>
     </div>
    </div>
 
@@ -6035,8 +6151,56 @@ function SettingsPage() {
 
 export function App() {
  const [page, setPage] = useState<Page>('Forecast');
+ const [auth, setAuth] = useState({ checking: true, required: false, signedIn: false, user: '' });
+
+ useEffect(() => {
+  let cancelled = false;
+  const stored = sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
+  if (stored) setApiAuthHeader(stored);
+  api('/auth/status')
+   .then(async (status: any) => {
+    if (cancelled) return;
+    if (!status.required) {
+     setAuth({ checking: false, required: false, signedIn: true, user: '' });
+     return;
+    }
+    if (!stored) {
+     setAuth({ checking: false, required: true, signedIn: false, user: '' });
+     return;
+    }
+    try {
+     const me = await api('/auth/me');
+     if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: me.user || '' });
+    } catch {
+     sessionStorage.removeItem(AUTH_STORAGE_KEY);
+     setApiAuthHeader('');
+     if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '' });
+    }
+   })
+   .catch(() => {
+    if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '' });
+   });
+  return () => { cancelled = true; };
+ }, []);
+
+ const signedIn = (token: string, user: string) => {
+  setApiAuthHeader(token);
+  sessionStorage.setItem(AUTH_STORAGE_KEY, token);
+  setAuth({ checking: false, required: true, signedIn: true, user });
+ };
+
+ const signOut = () => {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  setApiAuthHeader('');
+  setPage('Forecast');
+  setAuth((current) => ({ ...current, signedIn: false, user: '' }));
+ };
+
+ if (auth.checking) return <LoginPage checking onSignedIn={signedIn} />;
+ if (auth.required && !auth.signedIn) return <LoginPage onSignedIn={signedIn} />;
+
  return (
- <Shell page={page} setPage={setPage}>
+ <Shell page={page} setPage={setPage} onSignOut={auth.required ? signOut : undefined}>
  {page === 'Forecast' ? <ForecastPage /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Upload Data' ? <UploadPage /> : page === 'Data History' ? <HistoryPage /> : page === 'Dataset' ? <DatasetPage /> : <SettingsPage />}
  </Shell>
  );

@@ -68,7 +68,7 @@ log = logging.getLogger("leadlens.auth")
 _ALGORITHMS = ["RS256"]
 
 # Uptime checks and container healthchecks must not require a login.
-_EXEMPT_PATHS = frozenset({"/api/health"})
+_EXEMPT_PATHS = frozenset({"/api/health", "/api/auth/status"})
 
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -248,6 +248,25 @@ def _verify_tailscale(request) -> tuple[bool, int, str]:
 _BASIC_CHALLENGE = {"WWW-Authenticate": 'Basic realm="LeadLens", charset="UTF-8"'}
 
 
+def is_exempt_request(request) -> bool:
+    """Allow health checks and the app shell to load before Basic Auth is supplied.
+
+    Cloudflare and Tailscale deployments still gate the shell before it reaches FastAPI. Basic
+    Auth is different: the browser's built-in challenge appears before React can render, so
+    the shell is public while every `/api/*` data route stays protected.
+    """
+    path = request.url.path
+    if path in _EXEMPT_PATHS:
+        return True
+    return config.mode == "basic" and request.method in {"GET", "HEAD"} and not path.startswith("/api/")
+
+
+def _basic_challenge_for(request) -> dict[str, str]:
+    # API callers get JSON errors for the custom login screen. Top-level protected document
+    # requests may still advertise Basic Auth for non-React clients.
+    return {} if request.url.path.startswith("/api/") else _BASIC_CHALLENGE
+
+
 def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
     """Single shared credential -- see the module docstring for why this is a last resort.
 
@@ -255,18 +274,19 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
     right, same reasoning as any password check.
     """
     header = request.headers.get("Authorization", "")
+    challenge = _basic_challenge_for(request)
     if not header.startswith("Basic "):
-        return False, 401, "Not signed in.", _BASIC_CHALLENGE
+        return False, 401, "Not signed in.", challenge
     try:
         decoded = base64.b64decode(header[6:]).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError):
-        return False, 401, "Sign-in is not valid.", _BASIC_CHALLENGE
+        return False, 401, "Sign-in is not valid.", challenge
     username, _, password = decoded.partition(":")
     user_ok = secrets.compare_digest(username, config.basic_user)
     pass_ok = secrets.compare_digest(password, config.basic_pass)
     if not (user_ok and pass_ok):
         log.warning("Rejected Basic Auth attempt for user %r", username)
-        return False, 401, "Sign-in is not valid.", _BASIC_CHALLENGE
+        return False, 401, "Sign-in is not valid.", challenge
     request.state.user_email = username
     return True, 200, "", {}
 
