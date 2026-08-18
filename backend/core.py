@@ -1378,10 +1378,10 @@ def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
     has_spend = _header_key("Amount spent (USD)") in ad_keys
     if customer_score == len(SOURCE_REQUIRED_COLUMNS):
         return CUSTOMER_TRAFFIC_TYPE
-    if is_leadlens_derived_columns(columns):
-        return LEADLENS_DERIVED_TYPE
     if ad_score == 2 and has_campaign and has_spend:
         return AD_PERFORMANCE_TYPE
+    if is_leadlens_derived_columns(columns):
+        return LEADLENS_DERIVED_TYPE
     raise ValueError(
         "File type could not be detected. Upload a customer traffic export, Meta ad performance "
         "CSV with Amount spent (USD), LeadLens derived-variable CSV, or change-log workbook."
@@ -2083,6 +2083,8 @@ def preview_file(content: bytes, filename: str) -> dict:
         if file_type == AD_PERFORMANCE_TYPE:
             frame = read_ad_performance_tabular(target, extension)
             report = frame.attrs.get("cleaning_report", {})
+            derived = read_leadlens_derived_tabular(target, extension) if is_leadlens_derived_columns(source_columns) else None
+            derived_report = derived["report"] if derived is not None else {}
             preview_columns = [
                 "Campaign name", "Campaign ID", "Ad set ID", "Day", "Amount spent (USD)",
                 "Leads", "Reach", "Impressions", "Link clicks", "Cost per lead",
@@ -2092,6 +2094,14 @@ def preview_file(content: bytes, filename: str) -> dict:
                 preview_rows[column] = preview_rows[column].apply(lambda x: x.date().isoformat() if pd.notna(x) else None)
             for column in ["Amount spent (USD)", "Leads", "Reach", "Impressions", "Link clicks", "Cost per lead"]:
                 preview_rows[column] = preview_rows[column].apply(lambda x: None if pd.isna(x) else float(x))
+            if derived is not None:
+                derived_rows = derived["rows"].loc[:, [
+                    "days_since_adset_started", "ad_set_change_recency", "ad_change_recency",
+                ]].head(len(preview_rows)).reset_index(drop=True)
+                preview_rows = preview_rows.reset_index(drop=True)
+                for column in derived_rows.columns:
+                    preview_rows[column] = derived_rows[column]
+                preview_columns = [*preview_columns, *list(derived_rows.columns)]
             preview_rows = preview_rows.astype(object).where(pd.notna(preview_rows), None)
             dates = frame["Day"].dropna()
             campaign_names = (
@@ -2132,6 +2142,10 @@ def preview_file(content: bytes, filename: str) -> dict:
                 "budget_conflict_groups": report.get("budget_conflict_groups", 0),
                 "budget_periods": budget_periods,
                 "budget_conflicts": sum(1 for period in budget_periods if period["spend_conflict"]),
+                "start_dates": derived_report.get("start_dates", 0),
+                "change_events": derived_report.get("change_events", 0),
+                "change_events_by_scope": derived_report.get("change_events_by_scope", {}),
+                "ambiguous_recency_runs": derived_report.get("ambiguous_recency_runs", 0),
                 "date_min": dates.min().date().isoformat() if len(dates) else None,
                 "date_max": dates.max().date().isoformat() if len(dates) else None,
                 "missing_values": {},
@@ -2482,6 +2496,58 @@ def _import_change_log_preview(preview_path: Path, filename: str | None = None) 
     }
 
 
+def _write_derived_variable_facts(
+    db: sqlite3.Connection, upload_id: int, starts: pd.DataFrame, changes: pd.DataFrame, now: str,
+) -> dict[str, int]:
+    start_inserted = start_updated = 0
+    change_inserted = change_updated = 0
+    for row in starts.itertuples():
+        start_date = row.start_date.date().isoformat()
+        existed = db.execute(
+            "SELECT 1 FROM ad_set_start_dates WHERE ad_set_id=?",
+            (row.ad_set_id,),
+        ).fetchone()
+        db.execute(
+            """INSERT INTO ad_set_start_dates(ad_set_id, start_date, confirmed_by, notes, created_at, updated_at)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(ad_set_id) DO UPDATE SET
+               start_date=excluded.start_date,
+               confirmed_by=excluded.confirmed_by,
+               notes=excluded.notes,
+               updated_at=excluded.updated_at""",
+            (row.ad_set_id, start_date, row.confirmed_by or None, row.notes or None, now, now),
+        )
+        start_inserted += int(existed is None)
+        start_updated += int(existed is not None)
+    for row in changes.itertuples():
+        event_date = row.event_date.date().isoformat()
+        existed = db.execute(
+            "SELECT 1 FROM change_events WHERE scope=? AND event_date=? AND ad_set_id=? AND ad_id=?",
+            (row.scope, event_date, row.ad_set_id, row.ad_id),
+        ).fetchone()
+        db.execute(
+            """INSERT INTO change_events(upload_id, scope, event_date, ad_set_id, ad_id,
+               source, confirmed_by, notes, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(scope, event_date, ad_set_id, ad_id) DO UPDATE SET
+               upload_id=excluded.upload_id,
+               source=excluded.source,
+               confirmed_by=excluded.confirmed_by,
+               notes=excluded.notes,
+               updated_at=excluded.updated_at""",
+            (upload_id, row.scope, event_date, row.ad_set_id, row.ad_id,
+             row.source, row.confirmed_by or None, row.notes or None, now, now),
+        )
+        change_inserted += int(existed is None)
+        change_updated += int(existed is not None)
+    return {
+        "start_dates_inserted": start_inserted,
+        "start_dates_updated": start_updated,
+        "change_events_inserted": change_inserted,
+        "change_events_updated": change_updated,
+    }
+
+
 def _import_leadlens_derived_preview(preview_path: Path, filename: str | None = None) -> dict:
     parsed = read_leadlens_derived_tabular(preview_path, preview_path.suffix)
     rows, starts, changes, report = parsed["rows"], parsed["starts"], parsed["changes"], parsed["report"]
@@ -2490,8 +2556,6 @@ def _import_leadlens_derived_preview(preview_path: Path, filename: str | None = 
     shutil.move(str(preview_path), stored_path)
     file_hash = hashlib.sha256(stored_path.read_bytes()).hexdigest()
     now = utc_now()
-    start_inserted = start_updated = 0
-    change_inserted = change_updated = 0
     with connect() as db:
         cur = db.execute(
             """INSERT INTO raw_uploads(file_name, stored_path, file_sha256, file_type, uploaded_at,
@@ -2512,48 +2576,14 @@ def _import_leadlens_derived_preview(preview_path: Path, filename: str | None = 
             ),
         )
         upload_id = cur.lastrowid
-        for row in starts.itertuples():
-            start_date = row.start_date.date().isoformat()
-            existed = db.execute(
-                "SELECT 1 FROM ad_set_start_dates WHERE ad_set_id=?",
-                (row.ad_set_id,),
-            ).fetchone()
-            db.execute(
-                """INSERT INTO ad_set_start_dates(ad_set_id, start_date, confirmed_by, notes, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?)
-                   ON CONFLICT(ad_set_id) DO UPDATE SET
-                   start_date=excluded.start_date,
-                   confirmed_by=excluded.confirmed_by,
-                   notes=excluded.notes,
-                   updated_at=excluded.updated_at""",
-                (row.ad_set_id, start_date, row.confirmed_by or None, row.notes or None, now, now),
-            )
-            start_inserted += int(existed is None)
-            start_updated += int(existed is not None)
-        for row in changes.itertuples():
-            event_date = row.event_date.date().isoformat()
-            existed = db.execute(
-                "SELECT 1 FROM change_events WHERE scope=? AND event_date=? AND ad_set_id=? AND ad_id=?",
-                (row.scope, event_date, row.ad_set_id, row.ad_id),
-            ).fetchone()
-            db.execute(
-                """INSERT INTO change_events(upload_id, scope, event_date, ad_set_id, ad_id,
-                   source, confirmed_by, notes, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(scope, event_date, ad_set_id, ad_id) DO UPDATE SET
-                   upload_id=excluded.upload_id,
-                   source=excluded.source,
-                   confirmed_by=excluded.confirmed_by,
-                   notes=excluded.notes,
-                   updated_at=excluded.updated_at""",
-                (upload_id, row.scope, event_date, row.ad_set_id, row.ad_id,
-                 row.source, row.confirmed_by or None, row.notes or None, now, now),
-            )
-            change_inserted += int(existed is None)
-            change_updated += int(existed is not None)
+        written = _write_derived_variable_facts(db, upload_id, starts, changes, now)
         db.execute(
             "UPDATE raw_uploads SET imported_count=?, updated_count=? WHERE id=?",
-            (start_inserted + change_inserted, start_updated + change_updated, upload_id),
+            (
+                written["start_dates_inserted"] + written["change_events_inserted"],
+                written["start_dates_updated"] + written["change_events_updated"],
+                upload_id,
+            ),
         )
     _clear_change_caches()
     run = train_models()
@@ -2562,10 +2592,7 @@ def _import_leadlens_derived_preview(preview_path: Path, filename: str | None = 
         "file_type": LEADLENS_DERIVED_TYPE,
         "cleaned": len(rows),
         "excluded": report["excluded_rows"],
-        "start_dates_inserted": start_inserted,
-        "start_dates_updated": start_updated,
-        "change_events_inserted": change_inserted,
-        "change_events_updated": change_updated,
+        **written,
         "ambiguous_recency_runs": report.get("ambiguous_recency_runs", 0),
         "training_run": run,
     }
@@ -2755,6 +2782,11 @@ def _remove_superseded_ad_rows(db: sqlite3.Connection, upload_id: int, report: d
 def _import_ad_performance_preview(preview_path: Path, filename: str | None = None) -> dict:
     frame = read_ad_performance_tabular(preview_path, preview_path.suffix)
     report = frame.attrs.get("cleaning_report", {})
+    derived = (
+        read_leadlens_derived_tabular(preview_path, preview_path.suffix)
+        if is_leadlens_derived_columns(report.get("source_columns", []))
+        else None
+    )
     stored_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}{preview_path.suffix}"
     stored_path = UPLOAD_DIR / stored_name
     shutil.move(str(preview_path), stored_path)
@@ -2787,9 +2819,23 @@ def _import_ad_performance_preview(preview_path: Path, filename: str | None = No
         inserted, updated = _write_ad_performance(db, upload_id, frame, now)
         superseded = _remove_superseded_ad_rows(db, upload_id, report)
         ad_level_written = _store_ad_level_rows(db, upload_id, frame.attrs.get("ad_level_rows"))
+        derived_written = {
+            "start_dates_inserted": 0,
+            "start_dates_updated": 0,
+            "change_events_inserted": 0,
+            "change_events_updated": 0,
+        }
+        if derived is not None:
+            derived_written = _write_derived_variable_facts(
+                db, upload_id, derived["starts"], derived["changes"], now,
+            )
         db.execute(
             "UPDATE raw_uploads SET imported_count=?, updated_count=? WHERE id=?",
-            (inserted, updated, upload_id),
+            (
+                inserted + derived_written["start_dates_inserted"] + derived_written["change_events_inserted"],
+                updated + derived_written["start_dates_updated"] + derived_written["change_events_updated"],
+                upload_id,
+            ),
         )
     _clear_change_caches()
     budget_periods = derive_budget_periods(frame)
@@ -2808,6 +2854,10 @@ def _import_ad_performance_preview(preview_path: Path, filename: str | None = No
         "ad_rows_collapsed": report.get("ad_rows_collapsed", 0),
         "ad_level_rows_stored": ad_level_written,
         "superseded_rows_removed": superseded,
+        **derived_written,
+        "ambiguous_recency_runs": (
+            derived["report"].get("ambiguous_recency_runs", 0) if derived is not None else 0
+        ),
         "budget_periods_written": budget_summary["written"],
         "budget_periods_kept_manual": budget_summary["skipped_manual"],
         "budget_conflicts": budget_summary["conflicts"],

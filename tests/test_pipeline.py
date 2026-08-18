@@ -1425,6 +1425,7 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
             "ad_set_change_recency": "15_59_days",
             "ad_change_recency": "15_59_days",
         }]
+        self.assertEqual(core.detect_upload_type_from_columns(rows[0].keys()), core.AD_PERFORMANCE_TYPE)
         frame = core.read_ad_performance_tabular(ad_export_csv(rows), ".csv")
         row = frame.iloc[0]
         self.assertAlmostEqual(row["Amount spent (USD)"], 3.87)
@@ -1433,6 +1434,43 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
         self.assertAlmostEqual(row["Impressions"], 1650.0)
         self.assertAlmostEqual(row["Ad Set Budget"], 3.5)
         self.assertEqual(row["Ad Set Budget Type"], "Daily")
+
+    def test_local_leadlens_ad_export_imports_derived_columns_too(self):
+        rows = []
+        for offset in range(8):
+            day = pd.Timestamp("2026-06-06") + pd.Timedelta(days=offset)
+            rows.append({
+                "Day": day.strftime("%Y-%m-%d"),
+                "Campaign": self.CAMPAIGN,
+                "Campaign ID": "c99",
+                "Ad set ID": self.AD_SET,
+                "Spend": "$3.87",
+                "Leads": 3,
+                "CPL": "$1.29",
+                "Reach": "1,292",
+                "Impressions": "1,650",
+                "Frequency": 1.2771,
+                "Budget": "$3.50 / Daily",
+                "days_since_adset_started": 202 + offset,
+                "ad_set_change_recency": "0_3_days" if offset < 4 else "4_7_days",
+                "ad_change_recency": "no_recent_change",
+            })
+        content = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+        preview = core.preview_file(content, "ad_performance-2026-08-18.csv")
+
+        self.assertEqual(preview["file_type"], core.AD_PERFORMANCE_TYPE)
+        self.assertIn("days_since_adset_started", preview["columns"])
+        self.assertEqual(preview["start_dates"], 1)
+        self.assertEqual(preview["change_events_by_scope"], {"ad_set": 1})
+        with mock.patch.object(core, "train_models", return_value={"status": "skipped"}):
+            result = core.import_preview(preview["token"], "ad_performance-2026-08-18.csv")
+
+        self.assertEqual(result["file_type"], core.AD_PERFORMANCE_TYPE)
+        self.assertEqual(result["inserted"], 8)
+        self.assertEqual(result["start_dates_inserted"], 1)
+        self.assertEqual(result["change_events_inserted"], 1)
+        self.assertEqual(core.list_ad_set_start_dates(self.AD_SET)[0]["start_date"], "2025-11-16")
+        self.assertEqual(core.list_change_events(scope="ad_set", ad_set_id=self.AD_SET)[0]["start_date"], "2026-06-06")
 
     def test_local_leadlens_derived_export_without_spend_is_accepted(self):
         rows = []
