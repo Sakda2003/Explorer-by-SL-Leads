@@ -4235,7 +4235,7 @@ function HistoryPage() {
 // label per variable -- these mirror the wording `_feature_label()` already produces for
 // the expanded feature-level matrix, so the two matrices read as the same vocabulary.
 const DATASET_DECLARED_SHORT_LABEL: Record<number, string> = {
- 1: 'Leads', 2: 'Spend', 3: 'Holiday proximity', 4: 'Ad set age', 5: 'Frequency',
+ 1: 'Leads', 2: 'Spend', 3: 'Holiday proximity', 4: 'days_since_ad_set_started', 5: 'Frequency',
  6: 'Ad change recency', 7: 'Ad set change recency', 8: 'Day of week',
 };
 
@@ -5443,7 +5443,7 @@ function DatasetPage() {
    { number: 1, name: 'Leads' },
    { number: 2, name: 'Spent' },
    { number: 3, name: 'Holiday_Proximity' },
-   { number: 4, name: 'days_since_adset_started' },
+   { number: 4, name: 'days_since_ad_set_started' },
    { number: 5, name: 'frequency' },
    { number: 6, name: 'ad_change_recency' },
    { number: 7, name: 'ad_set_change_recency' },

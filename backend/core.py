@@ -5151,7 +5151,7 @@ def _feature_label(feature: str) -> str:
         "time_index": "time trend",
         "is_weekend": "weekend",
         "frequency": "frequency",
-        "days_since_adset_started": "ad set age",
+        "days_since_adset_started": "days_since_ad_set_started",
         "ad_set_change_recency": "ad set change recency",
         "ad_change_recency": "ad change recency",
         "holiday_during_holiday": "during holiday",
@@ -5424,7 +5424,7 @@ DECLARED_OLS_GROUPS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
     (2, "Spent", ("spend",)),
     (3, "Holiday_Proximity", ("holiday_during_holiday", "holiday_0_14_days",
                               "holiday_15_30_days", "holiday_31_60_days")),
-    (4, "days_since_adset_started", ("days_since_adset_started",)),
+    (4, "days_since_ad_set_started", ("days_since_adset_started",)),
     (5, "frequency", ("frequency",)),
     (6, "ad_change_recency", ("ad_change_recency",)),
     (7, "ad_set_change_recency", ("ad_set_change_recency",)),
@@ -5965,7 +5965,7 @@ DECLARED_VARIABLES: tuple[dict[str, object], ...] = (
     {"number": 2, "name": "Spent", "features": ("spend",)},
     {"number": 3, "name": "Holiday_Proximity",
      "features": ("holiday_during_holiday", "holiday_0_14_days", "holiday_15_30_days", "holiday_31_60_days")},
-    {"number": 4, "name": "days_since_adset_started", "features": ("days_since_adset_started",),
+    {"number": 4, "name": "days_since_ad_set_started", "features": ("days_since_adset_started",),
      "note": "Confirmed start dates only, recorded via the \"Start date\" tab of the Ad set "
              "change popover. The left-censored earliest-upload-day estimate was found wrong "
              "and was removed 2026-08-06 -- zero until a real start date is recorded."},
