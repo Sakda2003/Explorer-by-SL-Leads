@@ -2972,30 +2972,32 @@ td code { color: var(--text); font-size: 11px; }
 }
 .model-gov-ols-term i {
   flex: none;
-  padding: 2px 6px;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--muted);
-  background: var(--surface-soft);
+  background: transparent;
   font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
-  font-size: 9.5px;
+  font-size: 10px;
   font-style: normal;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: .02em;
   line-height: 1;
-  text-transform: uppercase;
+  text-transform: none;
+}
+.model-gov-ols-term i::before { content: "("; }
+.model-gov-ols-term i::after { content: ")"; }
+.model-gov-ols-table-row .model-gov-ols-term i,
+.model-gov-ols-detail-table-row .model-gov-ols-term i {
+  border: 0;
 }
 .model-gov-ols-table-row.term-main .model-gov-ols-term i,
 .model-gov-ols-detail-table-row.term-main .model-gov-ols-term i {
-  border-color: color-mix(in srgb, var(--gold) 58%, var(--line));
   color: var(--gold-strong);
-  background: color-mix(in srgb, var(--gold) 13%, transparent);
 }
 .model-gov-ols-table-row.term-categorical .model-gov-ols-term i,
 .model-gov-ols-detail-table-row.term-categorical .model-gov-ols-term i {
-  border-color: color-mix(in srgb, var(--corr-cold) 44%, var(--line));
   color: color-mix(in srgb, var(--corr-cold) 42%, var(--text));
-  background: color-mix(in srgb, var(--corr-cold) 12%, transparent);
 }
 .model-gov-ols-table .num {
   text-align: right;
@@ -3296,6 +3298,8 @@ td code { color: var(--text); font-size: 11px; }
   letter-spacing: 0;
   text-transform: none;
 }
+.model-gov-ols-printout .model-gov-ols-term i::before { content: "("; }
+.model-gov-ols-printout .model-gov-ols-term i::after { content: ")"; }
 .model-gov-ols-printout .term-main .model-gov-ols-term b,
 .model-gov-ols-printout .term-main .model-gov-ols-term i {
   color: var(--ols-main);
@@ -3407,7 +3411,7 @@ td code { color: var(--text); font-size: 11px; }
     gap: 0 4px;
   }
   .model-gov-ols-printout .model-gov-ols-detail-section span,
-  .model-gov-ols-printout .model-gov-ols-term i {
+  .model-gov-ols-printout .model-gov-ols-term small {
     display: none;
   }
 }

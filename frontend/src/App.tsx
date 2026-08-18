@@ -1222,10 +1222,10 @@ const olsTermKind = (row: any): 'baseline' | 'main' | 'categorical' | 'other' =>
  return 'other';
 };
 const olsTermKindLabel = (kind: ReturnType<typeof olsTermKind>) => (
- kind === 'baseline' ? 'baseline'
- : kind === 'main' ? 'main variable'
- : kind === 'categorical' ? 'categorical'
- : 'other'
+ kind === 'baseline' ? 'Baseline'
+ : kind === 'main' ? 'Main Variable'
+ : kind === 'categorical' ? 'Categorical'
+ : 'Other'
 );
 const olsTermVariableLabel = (row: any) => {
  const feature = String(row?.feature || '');
@@ -1357,9 +1357,9 @@ function OlsDetailBlock({ summary }: { summary: any }) {
        return (
         <div className={`model-gov-ols-detail-table-row term-${kind}`} key={row.feature}>
          <span className="model-gov-ols-term">
+          <i>{olsTermKindLabel(kind)}</i>
           <b>{row.term}</b>
           <small>{olsTermVariableLabel(row)}</small>
-          <i>{olsTermKindLabel(kind)}</i>
          </span>
          <span className="num">{olsStat(row.coef, 4)}</span>
          <span className="num">{olsStat(row.std_err, 4)}</span>
@@ -1466,8 +1466,8 @@ function OlsSelectionPath({ selection, title = 'Forward Selection Path' }: { sel
          key={`${step.round}-${row.number}`}
         >
          <span className="model-gov-ols-term">
-          <b>{row.name}</b>
           <i>{olsTermKindLabel(kind)}</i>
+          <b>{row.name}</b>
          </span>
          <span className="num">{olsStat(row.r_squared, 4)}</span>
          <span className="num">{olsStat(row.adjusted_r_squared, 4)}</span>
@@ -1527,8 +1527,8 @@ function OlsResultCards(
           return (
           <div className={`model-gov-ols-table-row term-${kind}`} key={`${key}-${row.feature}`}>
            <span className="model-gov-ols-term">
-            <b>{row.term}</b>
             <i>{olsTermKindLabel(kind)}</i>
+            <b>{row.term}</b>
            </span>
            <span className="num">{olsStat(row.coef, 4)}</span>
            <span className="num">{olsStat(row.std_err, 4)}</span>
