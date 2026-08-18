@@ -1584,6 +1584,10 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
         self.assertEqual(core.list_change_events(scope="ad_set", ad_set_id=self.AD_SET)[0]["start_date"], "2026-06-06")
         board = core.get_dataset_rows("ad_performance_export", limit=1)
         row = board["rows"][0]
+        self.assertNotIn("ad_id", row)
+        self.assertNotIn("fb_ad_title", row)
+        self.assertNotIn("messaging_conversations_started", row)
+        self.assertNotIn("cost_per_messaging_conversation_started", row)
         self.assertEqual(row["days_since_adset_started"], 202)
         self.assertEqual(row["ad_set_change_recency"], "0_3_days")
         self.assertEqual(row["ad_change_recency"], "no_recent_change")

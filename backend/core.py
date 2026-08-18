@@ -6302,27 +6302,17 @@ DATASET_ROW_TABLES: dict[str, dict[str, object]] = {
         "sort_fields": _AD_PERFORMANCE_SORT_FIELDS,
         "search_columns": _AD_PERFORMANCE_SEARCH_COLUMNS,
     },
-    # Same underlying table as "ad_performance", just the column set/order of the raw
-    # Combined-Ad-Set-Dataset export the ad-performance importer accepts -- for reading the
-    # rows in the shape they arrived in, not the app's own internal layout. "Ad ID" has no
-    # DB column: the importer's ad-grain rollup (`_rollup_ad_rows_to_ad_sets`) explicitly
-    # zeroes it (`aggregated["Ad ID"] = ""`) once several per-ad rows are summed into one
-    # ad-set-day row, since a single ad-set-day can span multiple ads -- there's no real
-    # single Ad ID left to report, and picking one arbitrarily is the exact bug the rollup
-    # was written to stop (see Vault/Gotchas/Leadlens-Ad-Export-Grain-And-Budget.md). Left out
-    # of `columns` below rather than faked; the frontend renders that column as "-".
+    # Same underlying table as "ad_performance", just the column set/order of the cleaned
+    # Combined export. Placeholder-only ad identity columns and message-cost fields are left
+    # out here so the UI/export does not surface empty or attribution-noisy columns.
     "ad_performance_export": {
         "table": "daily_ad_performance p",
-        # Same leads/cost-per-message reasoning as the "ad_performance" entry above.
+        # Same leads reasoning as the "ad_performance" entry above.
         "join": "LEFT JOIN daily_ad_set_aggregates a ON a.aggregate_date = p.day AND a.utm_ad_set_id = p.ad_set_id",
         "columns": ["p.id", "p.day", "p.campaign_name", "p.campaign_id", "p.ad_set_id",
-                    "p.reach", "p.impressions", "p.frequency", "p.messaging_conversations_started",
+                    "p.reach", "p.impressions", "p.frequency",
                     "p.ad_set_budget", "p.ad_set_budget_type", "p.amount_spent_usd",
                     "a.lead_count AS leads", "p.cost_per_lead",
-                    "COALESCE(p.cost_per_messaging_conversation_started, "
-                    "CASE WHEN p.messaging_conversations_started > 0 "
-                    "THEN p.amount_spent_usd / p.messaging_conversations_started END) "
-                    "AS cost_per_messaging_conversation_started",
                     "p.days_since_adset_started_imported",
                     "p.ad_set_change_recency_imported",
                     "p.ad_change_recency_imported"],

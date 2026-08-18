@@ -4230,34 +4230,22 @@ const DATASET_ROW_COLUMNS: Record<'leads' | 'ad_performance' | 'ad_performance_e
   { key: 'ad_set_change_recency', label: 'ad_set_change_recency', width: 192, render: (row) => rawCategory(row.ad_set_change_recency) },
   { key: 'ad_change_recency', label: 'ad_change_recency', width: 168, render: (row) => rawCategory(row.ad_change_recency) },
  ],
- // Same rows as `ad_performance`, laid out in the column order/naming of the raw
- // Combined-Ad-Set-Dataset export the ad-performance importer accepts, for cross-checking
- // an upload against what actually landed. "Ad ID" and "Fb Ad Title" always render "-" --
- // the importer's ad-grain rollup discards per-ad identity once several ads' rows are
- // summed into one ad-set-day row (see Vault/Gotchas/Leadlens-Ad-Export-Grain-And-Budget.md),
- // so there's no real value to show, not a rendering gap.
+ // Same rows as `ad_performance`, laid out in the column order/naming of the cleaned
+ // Combined export. Placeholder-only ad identity and message-cost columns are intentionally
+ // omitted from this tab so the exported file contains only columns with useful data.
  ad_performance_export: [
   { key: 'day', label: 'Day', width: 116, edit: 'date', render: (row) => dateFmt(row.day) },
   { key: 'campaign_name', label: 'Campaign Name', width: 196, edit: 'text' },
   { key: 'campaign_id', label: 'Campaign ID', width: 168, edit: 'text' },
   { key: 'ad_set_id', label: 'Ad set ID', width: 168, edit: 'text' },
-  // No backend column behind either of these (the importer's ad-grain rollup discards per-ad
-  // identity), so they stay read-only placeholders rather than accepting an edit that would
-  // have nowhere to go.
-  { key: 'ad_id', label: 'Ad ID', width: 84, render: () => '-' },
-  { key: 'fb_ad_title', label: 'Fb Ad Title', width: 108, render: () => '-' },
   { key: 'reach', label: 'Reach', width: 96, align: 'num', edit: 'number', render: (row) => fmt(row.reach) },
   { key: 'impressions', label: 'Impression', width: 104, align: 'num', edit: 'number', render: (row) => fmt(row.impressions) },
   { key: 'frequency', label: 'Frequency', width: 104, align: 'num', edit: 'number', render: (row) => row.frequency == null ? '-' : Number(row.frequency).toFixed(4) },
-  { key: 'messaging_conversations_started', label: 'Messaging Conversation', width: 178, align: 'num', edit: 'number', render: (row) => fmt(row.messaging_conversations_started) },
   { key: 'ad_set_budget', label: 'Ad set budget', width: 126, align: 'num', edit: 'number', render: (row) => row.ad_set_budget == null ? '-' : money(row.ad_set_budget) },
   { key: 'ad_set_budget_type', label: 'Ad set budget type', width: 144, edit: 'text' },
   { key: 'amount_spent_usd', label: 'Amount Spent (USD)', width: 156, align: 'num', edit: 'number', render: (row) => money(row.amount_spent_usd) },
   { key: 'leads', label: 'Leads', width: 84, align: 'num', render: (row) => fmt(row.leads) },
   { key: 'cost_per_lead', label: 'Cost Per Lead', width: 126, align: 'num', edit: 'number', render: (row) => cplMoney(row.cost_per_lead) },
-  // Rendered as a COALESCE of the stored value and spend/messages, so a hand-entered figure
-  // would be silently overridden whenever the stored one is NULL. Read-only by design.
-  { key: 'cost_per_messaging_conversation_started', label: 'Cost Per Message', width: 142, align: 'num', render: (row) => row.cost_per_messaging_conversation_started == null ? '-' : cplMoney(row.cost_per_messaging_conversation_started) },
   { key: 'days_since_adset_started', label: 'days_since_adset_started', width: 210, align: 'num', render: (row) => row.days_since_adset_started ?? '-' },
   // Grouped by subject -- the two ad-set columns, then the two ad columns -- so the
   // recency/type pair for one subject reads together instead of interleaving.
@@ -4271,8 +4259,7 @@ const DATASET_ROW_COLUMNS: Record<'leads' | 'ad_performance' | 'ad_performance_e
 // Which columns the backend can ORDER BY -- mirrors DATASET_ROW_TABLES[*]["sort_fields"] in
 // backend/core.py. Columns absent here render an inert header: the declared-variable columns
 // (ad set age, change recency/type) are attached in Python *after* the query by
-// `_attach_declared_variables`, so no SQL ORDER BY can reach them, and the export tab's
-// "Ad ID"/"Fb Ad Title" are hardcoded "-" placeholders with no column behind them at all.
+// `_attach_declared_variables`, so no SQL ORDER BY can reach them.
 const DATASET_SORT_FIELDS: Record<'leads' | 'ad_performance' | 'ad_performance_export', string[]> = {
  leads: ['created_at', 'customer_name', 'status', 'utm_campaign', 'utm_campaign_id',
          'utm_ad_set_id', 'utm_ad_id', 'fb_ad_title', 'amount_spent_usd'],
