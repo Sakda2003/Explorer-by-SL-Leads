@@ -1075,18 +1075,25 @@ function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSig
  <section className="login-card" aria-label="Sign in">
  <div className="login-visual" aria-hidden="true">
  <div className="login-visual-grid" />
- <div className="login-visual-shapes"><i /><i /><i /></div>
- <div className="login-visual-copy">
+ <div className="login-brand-mark">
  <img src={explorerLogo} alt="" />
  <span>Explorer by SL</span>
+ </div>
+ <div className="login-visual-copy">
+ <p>Welcome Back</p>
+ <h2>Hey There!</h2>
+ <span>Your customer traffic command center is ready.</span>
+ </div>
+ <div className="login-visual-footer">
  <b>Customer traffic forecasting</b>
+ <small><Check size={14} /> Private access</small>
  </div>
  </div>
  <form className="login-panel" onSubmit={submit}>
  <div className="login-form-inner">
  <div className="login-title">
  <span><Lock size={15} /> Private workspace</span>
- <h1>Welcome</h1>
+ <h1>Sign In</h1>
  <p>Log in to your account to continue</p>
  </div>
  <label className="login-field">
@@ -1098,9 +1105,13 @@ function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSig
  <div><Lock size={17} /><input type="password" value={password} autoComplete="current-password" disabled={checking || busy} onChange={(event) => setPassword(event.target.value)} autoFocus /></div>
  </label>
  {error && <p className="login-error" role="alert">{error}</p>}
+ <div className="login-access-row">
+ <span><Check size={14} /> Protected session</span>
+ <span>Explorer by SL</span>
+ </div>
  <button className="login-submit" type="submit" disabled={checking || busy || !username.trim() || !password}>
  {checking || busy ? <RefreshCw className="spin" size={16} /> : <Lock size={16} />}
- {checking ? 'Checking access' : busy ? 'Signing in' : 'Log In'}
+ {checking ? 'Checking access' : busy ? 'Signing in' : 'Sign In'}
  </button>
  <p className="login-note">Forecasts, uploads, and edit routes stay behind this private gate.</p>
  </div>
