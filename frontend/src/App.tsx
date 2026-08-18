@@ -3822,6 +3822,8 @@ function UploadPage() {
  result.budget_periods_written ? `${fmt(result.budget_periods_written)} budget periods recorded.` : '',
  result.budget_periods_kept_manual ? `${fmt(result.budget_periods_kept_manual)} kept your manual entry instead.` : '',
  ].filter(Boolean).join('\n')
+ : result.file_type === 'holiday_proximity'
+ ? `Holiday proximity imported: ${fmt(result.imported)} calendar days stored, including ${fmt(result.holiday_count)} holidays. Forecasts have been retrained.`
  : 'Import complete. Forecasts have been retrained.';
 
  const previewUpload = async (file: File) => {
@@ -3869,7 +3871,9 @@ function UploadPage() {
  const isAdPerformance = preview?.file_type === 'ad_performance';
  const isChangeLog = preview?.file_type === 'change_log';
  const isModelDataset = preview?.file_type === 'model_dataset';
+ const isHolidayProximity = preview?.file_type === 'holiday_proximity';
  const changeScopes: any = preview?.by_scope || {};
+ const holidayBucketCount = preview?.bucket_counts ? Object.keys(preview.bucket_counts).length : 0;
  const budgetPeriods: any[] = preview?.budget_periods || [];
  const budgetAdSets = new Set(budgetPeriods.map((period) => period.ad_set_id)).size;
  const budgetChanges = budgetPeriods.length - budgetAdSets;
@@ -3892,7 +3896,7 @@ function UploadPage() {
  </section>
  {!preview ? (
  <>
- <div className="upload-v2-types">Model dataset <i /> Customer traffic <i /> Meta ad performance <i /> Change log</div>
+ <div className="upload-v2-types">Model dataset <i /> Customer traffic <i /> Meta ad performance <i /> Holiday proximity <i /> Change log</div>
  <section className="upload-workspace">
  <div
  className={`upload-panel upload-panel-v2 ${dragging ? 'dragging' : ''}${busy ? ' busy' : ''}`}
@@ -3947,6 +3951,13 @@ function UploadPage() {
  <div className={preview.unconfirmed_rows ? 'metric-warning' : ''}><span>Unconfirmed</span><b>{fmt(preview.unconfirmed_rows)}</b></div>
  <div className={preview.excluded_rows ? 'metric-warning' : ''}><span>Skipped</span><b>{fmt(preview.excluded_rows)}</b></div>
  </div>
+ ) : isHolidayProximity ? (
+ <div className="mini-metrics cleaning-metrics">
+ <div><span>Source rows</span><b>{fmt(preview.source_rows)}</b></div>
+ <div className="metric-ready"><span>Calendar days</span><b>{fmt(preview.clean_rows)}</b></div>
+ <div><span>Holidays</span><b>{fmt(preview.holiday_count)}</b></div>
+ <div className={preview.excluded_rows ? 'metric-warning' : ''}><span>Skipped</span><b>{fmt(preview.excluded_rows)}</b></div>
+ </div>
  ) : (
  <div className="mini-metrics cleaning-metrics">
  <div><span>Source rows</span><b>{fmt(preview.source_rows)}</b></div>
@@ -3969,6 +3980,12 @@ function UploadPage() {
  <span><strong>{fmt(changeScopes.ad_set?.confirmed || 0)}</strong> ad set changes across {plural(changeScopes.ad_set?.ad_sets || 0, 'ad set')}</span>
  <span><strong>{fmt(changeScopes.ad?.confirmed || 0)}</strong> ad changes across {plural(changeScopes.ad?.ad_sets || 0, 'ad set')}</span>
  <span className={preview.unconfirmed_rows ? 'tone-warn' : 'tone-good'}>{preview.unconfirmed_rows ? `${plural(preview.unconfirmed_rows, 'unconfirmed row')} ignored` : 'every row confirmed'}</span>
+ </p>
+ ) : isHolidayProximity ? (
+ <p className="upload-context-line">
+ <span><strong>{plural(preview.clean_rows || 0, 'calendar day')}</strong></span>
+ <span><strong>{fmt(preview.holiday_count || 0)}</strong> holidays mapped</span>
+ <span className="tone-good">{fmt(holidayBucketCount)} proximity buckets detected</span>
  </p>
  ) : (
  <p className="upload-context-line">
@@ -4009,7 +4026,7 @@ function UploadPage() {
  </section>
  )}
  <section className="table-card glass-panel">
- <div className="card-head"><div><span>CLEAN DATA PREVIEW</span><h3>{isChangeLog ? 'First 8 change events' : isAdPerformance ? 'First 8 cleaned ad performance rows' : 'First 8 model-ready leads'}</h3></div><span className="schema-count">{isChangeLog ? `${(preview.sheets_read || []).length} changelog sheets read` : isModelDataset ? `${plural(preview.ad_set_day_rows || 0, 'ad-set day')} of context` : `${preview.recognized_columns?.length || 0} source fields recognized`}</span></div>
+ <div className="card-head"><div><span>CLEAN DATA PREVIEW</span><h3>{isChangeLog ? 'First 8 change events' : isHolidayProximity ? 'First 8 holiday proximity rows' : isAdPerformance ? 'First 8 cleaned ad performance rows' : 'First 8 model-ready leads'}</h3></div><span className="schema-count">{isChangeLog ? `${(preview.sheets_read || []).length} changelog sheets read` : isModelDataset ? `${plural(preview.ad_set_day_rows || 0, 'ad-set day')} of context` : isHolidayProximity ? `${fmt(holidayBucketCount)} buckets detected` : `${preview.recognized_columns?.length || 0} source fields recognized`}</span></div>
  <div className="table-scroll"><table><thead><tr>{preview.columns.map((column: string) => <th key={column} style={UPLOAD_COLUMN_WIDTHS[column] ? { width: UPLOAD_COLUMN_WIDTHS[column] } : undefined}>{column}</th>)}</tr></thead><tbody>{preview.rows.map((row: any, rowIndex: number) => <tr key={rowIndex}>{preview.columns.map((column: string) => {
  const variant = column === 'Created At' ? 'time' : column === 'Customer Name' ? 'name' : column === 'Status' ? 'status' : /id$/i.test(column) ? 'id' : 'default';
  const value = row[column] ?? '-';
@@ -4022,16 +4039,16 @@ function UploadPage() {
      on the page sat below the fold on a laptop -- and the budget list's own scrollbar
      swallows the wheel, so the page looked like it had nothing more to show. The note stays
      here where its context is; the action moved to the sticky bar below. */}
- <div className="confirm-bar"><div><Info /><p><b>Ready to import {fmt(preview.clean_rows)} {isModelDataset ? 'leads with their ad set context' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'}</b><span>{isModelDataset ? 'Leads and ad-set-day context land from this one file. Leads are matched by content, so re-uploading an overlapping week adds nothing twice.' : isChangeLog ? 'An ad set with confirmed events stops using detected ones entirely; ad sets you have not recorded keep the detector. Re-uploading a corrected file updates events in place.' : isAdPerformance ? 'Only rows with Amount spent (USD) are stored. Optional metrics can be blank and filled later by analytics.' : 'The raw export stays preserved. Existing lead IDs are skipped and forecasts retrain after import.'}</span></p></div></div>
+ <div className="confirm-bar"><div><Info /><p><b>Ready to import {fmt(preview.clean_rows)} {isModelDataset ? 'leads with their ad set context' : isChangeLog ? 'change events' : isHolidayProximity ? 'calendar days' : isAdPerformance ? 'ad spend rows' : 'leads'}</b><span>{isModelDataset ? 'Leads and ad-set-day context land from this one file. Leads are matched by content, so re-uploading an overlapping week adds nothing twice.' : isChangeLog ? 'An ad set with confirmed events stops using detected ones entirely; ad sets you have not recorded keep the detector. Re-uploading a corrected file updates events in place.' : isHolidayProximity ? 'This replaces the forecast holiday calendar and retrains the models with the new proximity buckets.' : isAdPerformance ? 'Only rows with Amount spent (USD) are stored. Optional metrics can be blank and filled later by analytics.' : 'The raw export stays preserved. Existing lead IDs are skipped and forecasts retrain after import.'}</span></p></div></div>
  </section>
  <div className="upload-commit-bar">
  <div className="upload-commit-facts">
- <b>{queuedCount > 1 ? `${fmt(filesToImportCount)} files queued` : `${fmt(preview.clean_rows)} ${isModelDataset ? 'leads' : isChangeLog ? 'change events' : isAdPerformance ? 'ad spend rows' : 'leads'} ready`}</b>
+ <b>{queuedCount > 1 ? `${fmt(filesToImportCount)} files queued` : `${fmt(preview.clean_rows)} ${isModelDataset ? 'leads' : isChangeLog ? 'change events' : isHolidayProximity ? 'calendar days' : isAdPerformance ? 'ad spend rows' : 'leads'} ready`}</b>
  <span>{queuedCount > 1 ? `Previewing ${fmt(queuePosition)} of ${fmt(queuedCount)} · ${preview.file_name}` : `${preview.date_min} → ${preview.date_max}${isAdPerformance && preview.total_spend != null ? ` · ${cplMoney(preview.total_spend)}` : ''}${preview.rejected_rows ? ` · ${fmt(preview.rejected_rows)} rejected` : ''}`}</span>
  </div>
  <div className="upload-commit-actions">
  <button className="button secondary" disabled={busy} onClick={resetPreview}>{queuedCount > 1 && remainingCount ? 'Skip file' : 'Discard'}</button>
- <button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : queuedCount > 1 ? `Import ${fmt(filesToImportCount)} files` : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
+ <button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : queuedCount > 1 ? `Import ${fmt(filesToImportCount)} files` : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isHolidayProximity ? 'Import holiday calendar' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
  </div>
  </div>
  </>
@@ -4079,7 +4096,7 @@ function HistoryPage() {
  </div>
  {rows.map((row) => {
   const isSpend = row.file_type === 'ad_performance';
-  const typeLabel = { ad_performance: 'Ad spend', change_log: 'Change log', model_dataset: 'Model dataset' }[row.file_type as string] || 'Traffic';
+  const typeLabel = { ad_performance: 'Ad spend', change_log: 'Change log', model_dataset: 'Model dataset', holiday_proximity: 'Holiday proximity' }[row.file_type as string] || 'Traffic';
   return (
   <div className="imports-row" role="row" key={row.id}>
   <span className="imports-file" title={row.file_name}>{row.file_name}</span>

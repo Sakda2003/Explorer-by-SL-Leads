@@ -47,6 +47,7 @@ AD_PERFORMANCE_TYPE = "ad_performance"
 CHANGE_LOG_TYPE = "change_log"
 MODEL_DATASET_TYPE = "model_dataset"
 LEADLENS_DERIVED_TYPE = "leadlens_derived_variables"
+HOLIDAY_PROXIMITY_TYPE = "holiday_proximity"
 
 AD_PERFORMANCE_COLUMNS = [
     "Campaign name", "Campaign ID", "Ad set ID", "Ad ID", "Day", "Delivery status", "Delivery level",
@@ -110,6 +111,10 @@ AD_INTERNAL_COLUMNS = {
     "Reporting starts": "reporting_starts",
     "Reporting ends": "reporting_ends",
 }
+
+HOLIDAY_PROXIMITY_COLUMNS = ["date", "day", "is_holiday", "holiday_name", "holiday_proximity"]
+HOLIDAY_PROXIMITY_REQUIRED = ["date", "holiday_proximity"]
+HOLIDAY_PROXIMITY_BASELINE_BUCKET = "60_plus_or_none"
 
 DEFAULT_FORECAST_PARAMETERS = {
     "historical_signal_share": 0.65,
@@ -242,6 +247,7 @@ def init_db() -> None:
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
     # Pointing at a different database invalidates every cached read of the old one.
     _clear_change_caches()
+    _holiday_proximity_map.cache_clear()
     with connect() as db:
         db.executescript("""
         CREATE TABLE IF NOT EXISTS raw_uploads (
@@ -1371,6 +1377,68 @@ def _model_dataset_change_events(raw: pd.DataFrame, column, day: pd.Series) -> p
     return pd.concat(frames, ignore_index=True)
 
 
+def is_holiday_proximity_columns(columns: Iterable[object]) -> bool:
+    keys = {_header_key(column) for column in columns}
+    return all(_header_key(column) in keys for column in HOLIDAY_PROXIMITY_REQUIRED)
+
+
+def read_holiday_proximity_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
+    frame, source_columns = _read_raw_frame(path_or_buffer, extension)
+    renamed: dict[object, str] = {}
+    for column in frame.columns:
+        key = _header_key(column)
+        canonical = next((name for name in HOLIDAY_PROXIMITY_COLUMNS if _header_key(name) == key), None)
+        if canonical:
+            renamed[column] = canonical
+    frame = frame.rename(columns=renamed)
+    frame.columns = [str(column).strip() for column in frame.columns]
+    missing = [column for column in HOLIDAY_PROXIMITY_REQUIRED if column not in frame.columns]
+    if missing:
+        raise ValueError("Missing required holiday proximity columns: " + ", ".join(missing))
+
+    source_rows = len(frame)
+    cleaned = pd.DataFrame()
+    cleaned["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
+    cleaned["holiday_proximity"] = frame["holiday_proximity"].fillna("").astype(str).str.strip()
+    allowed = {HOLIDAY_PROXIMITY_BASELINE_BUCKET, *HOLIDAY_PROXIMITY_BUCKETS}
+    invalid_bucket = cleaned["holiday_proximity"].ne("") & ~cleaned["holiday_proximity"].isin(allowed)
+    if invalid_bucket.any():
+        examples = sorted(cleaned.loc[invalid_bucket, "holiday_proximity"].dropna().astype(str).unique())[:5]
+        raise ValueError("Unknown holiday_proximity bucket(s): " + ", ".join(examples))
+
+    if "day" in frame.columns:
+        cleaned["day"] = frame["day"].fillna("").astype(str).str.strip()
+    else:
+        cleaned["day"] = cleaned["date"].dt.day_name()
+    if "is_holiday" in frame.columns:
+        holiday_flag = pd.to_numeric(frame["is_holiday"], errors="coerce")
+        cleaned["is_holiday"] = holiday_flag.fillna(0).astype(int).clip(lower=0, upper=1)
+    else:
+        cleaned["is_holiday"] = cleaned["holiday_proximity"].eq("during_holiday").astype(int)
+    if "holiday_name" in frame.columns:
+        cleaned["holiday_name"] = frame["holiday_name"].fillna("").astype(str).str.strip()
+    else:
+        cleaned["holiday_name"] = ""
+
+    valid = cleaned["date"].notna() & cleaned["holiday_proximity"].ne("")
+    cleaned = cleaned.loc[valid, HOLIDAY_PROXIMITY_COLUMNS].copy()
+    cleaned = cleaned.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
+    cleaned.attrs["cleaning_report"] = {
+        "source_rows": source_rows,
+        "clean_rows": int(len(cleaned)),
+        "excluded_rows": int(source_rows - int(valid.sum())),
+        "duplicate_dates": int(valid.sum() - len(cleaned)),
+        "source_columns": source_columns,
+        "recognized_columns": [column for column in HOLIDAY_PROXIMITY_COLUMNS if column in frame.columns],
+        "ignored_columns": [column for column in frame.columns if column not in HOLIDAY_PROXIMITY_COLUMNS],
+        "holiday_count": int(cleaned["is_holiday"].sum()) if len(cleaned) else 0,
+        "bucket_counts": cleaned["holiday_proximity"].value_counts().to_dict(),
+        "date_min": cleaned["date"].min().date().isoformat() if len(cleaned) else None,
+        "date_max": cleaned["date"].max().date().isoformat() if len(cleaned) else None,
+    }
+    return cleaned
+
+
 def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
     # Canonicalize through KNOWN_HEADERS first so aliased headers (e.g. "Created" for
     # "Created At") count toward detection the same way they do once read_tabular renames them --
@@ -1392,9 +1460,12 @@ def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
         return AD_PERFORMANCE_TYPE
     if is_leadlens_derived_columns(columns):
         return LEADLENS_DERIVED_TYPE
+    if is_holiday_proximity_columns(columns):
+        return HOLIDAY_PROXIMITY_TYPE
     raise ValueError(
         "File type could not be detected. Upload a customer traffic export, Meta ad performance "
-        "CSV with Amount spent (USD), LeadLens derived-variable CSV, or change-log workbook."
+        "CSV with Amount spent (USD), LeadLens derived-variable CSV, holiday proximity workbook, "
+        "or change-log workbook."
     )
 
 
@@ -2160,6 +2231,8 @@ def preview_file(content: bytes, filename: str) -> dict:
             return _preview_change_log(target, token, filename)
         _, source_columns = _read_raw_frame(target, extension)
         file_type = detect_upload_type_from_columns(source_columns)
+        if file_type == HOLIDAY_PROXIMITY_TYPE:
+            return _preview_holiday_proximity(target, token, filename)
         if file_type == AD_PERFORMANCE_TYPE:
             frame = read_ad_performance_tabular(target, extension)
             report = frame.attrs.get("cleaning_report", {})
@@ -2271,6 +2344,37 @@ def preview_file(content: bytes, filename: str) -> dict:
         "missing_values": missing_values,
         "columns": preview_columns,
         "rows": preview_rows.to_dict(orient="records"),
+    }
+
+
+def _preview_holiday_proximity(target: Path, token: str, filename: str) -> dict:
+    frame = read_holiday_proximity_tabular(target, target.suffix)
+    report = frame.attrs.get("cleaning_report", {})
+    rows = frame.loc[:, HOLIDAY_PROXIMITY_COLUMNS].head(8).copy()
+    rows["date"] = rows["date"].apply(lambda v: v.date().isoformat() if pd.notna(v) else None)
+    rows = rows.astype(object).where(pd.notna(rows), None)
+    return {
+        "token": token,
+        "file_name": filename,
+        "file_type": HOLIDAY_PROXIMITY_TYPE,
+        "file_type_label": "Holiday proximity",
+        "total_leads": 0,
+        "source_rows": report.get("source_rows", len(frame)),
+        "clean_rows": report.get("clean_rows", len(frame)),
+        "excluded_rows": report.get("excluded_rows", 0),
+        "rejected_rows": report.get("excluded_rows", 0),
+        "duplicates_removed": report.get("duplicate_dates", 0),
+        "duplicate_dates": report.get("duplicate_dates", 0),
+        "holiday_count": report.get("holiday_count", 0),
+        "bucket_counts": report.get("bucket_counts", {}),
+        "date_min": report.get("date_min"),
+        "date_max": report.get("date_max"),
+        "source_columns": report.get("source_columns", []),
+        "recognized_columns": report.get("recognized_columns", []),
+        "ignored_columns": report.get("ignored_columns", []),
+        "missing_values": {},
+        "columns": HOLIDAY_PROXIMITY_COLUMNS,
+        "rows": rows.to_dict(orient="records"),
     }
 
 
@@ -2678,6 +2782,57 @@ def _import_leadlens_derived_preview(preview_path: Path, filename: str | None = 
     }
 
 
+def _import_holiday_proximity_preview(preview_path: Path, filename: str | None = None) -> dict:
+    frame = read_holiday_proximity_tabular(preview_path, preview_path.suffix)
+    report = frame.attrs.get("cleaning_report", {})
+    stored_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}{preview_path.suffix}"
+    stored_path = UPLOAD_DIR / stored_name
+    shutil.move(str(preview_path), stored_path)
+    file_hash = hashlib.sha256(stored_path.read_bytes()).hexdigest()
+    now = utc_now()
+
+    out = frame.copy()
+    out["date"] = out["date"].dt.date.astype(str)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out.to_csv(DATA_DIR / "holiday_proximity.csv", index=False)
+    _holiday_proximity_map.cache_clear()
+
+    with connect() as db:
+        cur = db.execute(
+            """INSERT INTO raw_uploads(file_name, stored_path, file_sha256, file_type, uploaded_at,
+               row_count, cleaned_count, excluded_count, duplicate_count, date_min, date_max)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                filename or stored_path.name,
+                str(stored_path),
+                file_hash,
+                HOLIDAY_PROXIMITY_TYPE,
+                now,
+                report.get("source_rows", len(frame)),
+                len(frame),
+                report.get("excluded_rows", 0),
+                report.get("duplicate_dates", 0),
+                report.get("date_min"),
+                report.get("date_max"),
+            ),
+        )
+        upload_id = cur.lastrowid
+        db.execute("UPDATE raw_uploads SET imported_count=?, updated_count=? WHERE id=?", (len(frame), 0, upload_id))
+
+    run = train_models()
+    return {
+        "upload_id": upload_id,
+        "file_type": HOLIDAY_PROXIMITY_TYPE,
+        "imported": len(frame),
+        "updated": 0,
+        "cleaned": len(frame),
+        "excluded": report.get("excluded_rows", 0),
+        "duplicates": report.get("duplicate_dates", 0),
+        "holiday_count": report.get("holiday_count", 0),
+        "training_run": run,
+    }
+
+
 def _event_hash(row: pd.Series, row_number: int) -> str:
     return _lead_identity_hash(
         row["Created At"],
@@ -3056,6 +3211,8 @@ def import_preview(token: str, filename: str | None = None) -> dict:
         return _import_change_log_preview(preview_path, filename)
     _, source_columns = _read_raw_frame(preview_path, preview_path.suffix)
     file_type = detect_upload_type_from_columns(source_columns)
+    if file_type == HOLIDAY_PROXIMITY_TYPE:
+        return _import_holiday_proximity_preview(preview_path, filename)
     if file_type == AD_PERFORMANCE_TYPE:
         return _import_ad_performance_preview(preview_path, filename)
     if file_type == LEADLENS_DERIVED_TYPE:
@@ -9265,6 +9422,8 @@ def delete_upload(upload_id: int) -> dict:
     path.unlink(missing_ok=True)
     if file_type in (CHANGE_LOG_TYPE, MODEL_DATASET_TYPE, LEADLENS_DERIVED_TYPE):
         _clear_change_caches()
+    if file_type == HOLIDAY_PROXIMITY_TYPE:
+        _holiday_proximity_map.cache_clear()
     if brought_leads:
         rebuild_aggregates()
     run = train_models()

@@ -78,6 +78,49 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing required columns"):
             core.read_tabular(io.BytesIO(b"Platform,Status\nmessenger,New\n"), ".csv")
 
+    def test_holiday_proximity_workbook_import_updates_calendar_features(self):
+        workbook = io.BytesIO()
+        pd.DataFrame([
+            {
+                "date": "2026-01-01",
+                "day": "Thursday",
+                "is_holiday": 1,
+                "holiday_name": "New Year's Day",
+                "holiday_proximity": "during_holiday",
+            },
+            {
+                "date": "2026-01-02",
+                "day": "Friday",
+                "is_holiday": 0,
+                "holiday_name": "",
+                "holiday_proximity": "60_plus_or_none",
+            },
+            {
+                "date": "2026-01-10",
+                "day": "Saturday",
+                "is_holiday": 0,
+                "holiday_name": "",
+                "holiday_proximity": "0_14_days",
+            },
+        ]).to_excel(workbook, index=False)
+
+        preview = core.preview_file(workbook.getvalue(), "holiday_proximity.xlsx")
+
+        self.assertEqual(preview["file_type"], core.HOLIDAY_PROXIMITY_TYPE)
+        self.assertEqual(preview["clean_rows"], 3)
+        self.assertEqual(preview["holiday_count"], 1)
+        self.assertEqual(preview["date_min"], "2026-01-01")
+        self.assertIn("holiday_proximity", preview["columns"])
+        with mock.patch.object(core, "train_models", return_value={"status": "skipped"}):
+            result = core.import_preview(preview["token"], "holiday_proximity.xlsx")
+
+        self.assertEqual(result["file_type"], core.HOLIDAY_PROXIMITY_TYPE)
+        self.assertEqual(result["imported"], 3)
+        self.assertEqual((core.DATA_DIR / "holiday_proximity.csv").exists(), True)
+        self.assertEqual(core._holiday_proximity_map()["2026-01-01"], "during_holiday")
+        features = core._holiday_proximity_features(pd.Timestamp("2026-01-10"))
+        self.assertEqual(features["holiday_0_14_days"], 1.0)
+
     def test_forecast_ledger_schema_has_realization_columns(self):
         with core.connect() as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(forecast_daily_predictions)")}
