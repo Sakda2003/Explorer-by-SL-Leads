@@ -1619,6 +1619,13 @@ class BudgetPeriodTests(unittest.TestCase):
         self.assertAlmostEqual(periods[1]["recent_mean_daily_spend"], 5.5)
         self.assertFalse(periods[1]["spend_conflict"])
 
+    def test_frame_attrs_with_dataframe_do_not_break_grouping(self):
+        frame = self.budget_frame([(20, 5.0, 4.8)])
+        frame.attrs["ad_level_rows"] = pd.DataFrame({"ad_id": ["ad1"]})
+        periods = core.derive_budget_periods(frame)
+        self.assertEqual(len(periods), 1)
+        self.assertEqual(periods[0]["daily_budget"], 5.0)
+
     def test_reimport_is_idempotent(self):
         periods = core.derive_budget_periods(self.budget_frame([(15, 2.0, 1.9), (15, 5.0, 4.8)]))
         core.store_derived_budget_periods(periods)

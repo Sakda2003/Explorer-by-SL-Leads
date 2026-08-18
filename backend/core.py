@@ -7288,6 +7288,10 @@ def derive_budget_periods(frame: pd.DataFrame) -> list[dict]:
     if "Ad Set Budget Type" in frame.columns:
         columns.append("Ad Set Budget Type")
     working = frame.loc[:, columns].copy()
+    # Ad-grain imports attach a DataFrame to frame.attrs for later persistence. Pandas
+    # propagates attrs into grouped Series and may compare them during groupby internals.
+    # Budget period derivation only needs column values, so drop that metadata here.
+    working.attrs.clear()
     if "Ad Set Budget Type" not in working.columns:
         working["Ad Set Budget Type"] = ""
     working = working[
@@ -7301,7 +7305,9 @@ def derive_budget_periods(frame: pd.DataFrame) -> list[dict]:
     periods: list[dict] = []
     for ad_set_id, group in working.sort_values(["Ad set ID", "Day"]).groupby("Ad set ID", sort=True):
         budgets = group["Ad Set Budget"].round(4)
+        budgets.attrs.clear()
         runs = (budgets != budgets.shift()).cumsum()
+        runs.attrs.clear()
         for _, run in group.groupby(runs, sort=True):
             budget = float(run["Ad Set Budget"].iloc[0])
             spend = run["Amount spent (USD)"].fillna(0.0)
