@@ -1471,6 +1471,11 @@ class CampaignNameOnlyExportTests(IsolatedDbTestCase):
         self.assertEqual(result["change_events_inserted"], 1)
         self.assertEqual(core.list_ad_set_start_dates(self.AD_SET)[0]["start_date"], "2025-11-16")
         self.assertEqual(core.list_change_events(scope="ad_set", ad_set_id=self.AD_SET)[0]["start_date"], "2026-06-06")
+        board = core.get_dataset_rows("ad_performance_export", limit=1)
+        row = board["rows"][0]
+        self.assertEqual(row["days_since_adset_started"], 202)
+        self.assertEqual(row["ad_set_change_recency"], "0_3_days")
+        self.assertEqual(row["ad_change_recency"], "no_recent_change")
 
     def test_local_leadlens_derived_export_without_spend_is_accepted(self):
         rows = []

@@ -56,6 +56,9 @@ AD_PERFORMANCE_COLUMNS = [
     "Ad Set Budget", "Ad Set Budget Type", "Reporting starts", "Reporting ends",
 ]
 AD_PERFORMANCE_REQUIRED = ["Campaign ID", "Ad set ID", "Day", "Amount spent (USD)"]
+AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS = [
+    "days_since_adset_started", "ad_set_change_recency", "ad_change_recency",
+]
 AD_ID_COLUMNS = ["Campaign ID", "Ad set ID"]
 AD_TEXT_COLUMNS = ["Campaign name", "Delivery status", "Delivery level", "Ad Set Budget Type"]
 AD_DATE_COLUMNS = ["Day", "Reporting starts", "Reporting ends"]
@@ -303,6 +306,9 @@ def init_db() -> None:
           cpc REAL,
           unique_link_clicks REAL,
           cost_per_unique_link_click REAL,
+          days_since_adset_started_imported REAL,
+          ad_set_change_recency_imported TEXT,
+          ad_change_recency_imported TEXT,
           reporting_starts TEXT,
           reporting_ends TEXT,
           raw_json TEXT NOT NULL,
@@ -469,6 +475,9 @@ def init_db() -> None:
         for name, definition in (
             ("ad_set_budget", "REAL"),
             ("ad_set_budget_type", "TEXT"),
+            ("days_since_adset_started_imported", "REAL"),
+            ("ad_set_change_recency_imported", "TEXT"),
+            ("ad_change_recency_imported", "TEXT"),
         ):
             if name not in existing_ad_columns:
                 db.execute(f"ALTER TABLE daily_ad_performance ADD COLUMN {name} {definition}")
@@ -1932,6 +1941,9 @@ def _rollup_ad_rows_to_ad_sets(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]
     specification: dict[str, object] = {column: _sum for column in AD_ADDITIVE_COLUMNS}
     specification["Ad Set Budget"] = "max"
     specification["Ad Set Budget Type"] = _first_text
+    specification["days_since_adset_started"] = "max"
+    specification["ad_set_change_recency"] = _first_text
+    specification["ad_change_recency"] = _first_text
     specification["Delivery status"] = _best_status
     specification["Reporting starts"] = "min"
     specification["Reporting ends"] = "max"
@@ -1955,7 +1967,9 @@ def _rollup_ad_rows_to_ad_sets(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]
     report["ad_grain_input"] = True
     report["ad_rows_collapsed"] = int(len(working) - len(aggregated))
     report["ad_set_day_rows"] = int(len(aggregated))
-    return aggregated.loc[:, [*AD_PERFORMANCE_COLUMNS, "_source_row"]].copy(), report
+    return aggregated.loc[:, [
+        *AD_PERFORMANCE_COLUMNS, "_source_row", *AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS,
+    ]].copy(), report
 
 
 def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
@@ -1988,6 +2002,9 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
     for column in AD_PERFORMANCE_COLUMNS:
         if column not in frame.columns:
             frame[column] = np.nan if column in [*AD_NUMERIC_COLUMNS, *AD_DATE_COLUMNS] else ""
+    for column in AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = np.nan if column == "days_since_adset_started" else ""
     for column in [*AD_TEXT_COLUMNS, *AD_ID_COLUMNS]:
         frame[column] = frame[column].fillna("").astype(str).str.strip()
     if "Ad Set Budget" in frame.columns:
@@ -2010,6 +2027,10 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
         frame[column] = pd.to_datetime(frame[column], format="mixed", errors="coerce")
     for column in AD_NUMERIC_COLUMNS:
         frame[column] = frame[column].map(_safe_number).astype(float)
+    frame["days_since_adset_started"] = pd.to_numeric(frame["days_since_adset_started"], errors="coerce")
+    for column in ("ad_set_change_recency", "ad_change_recency"):
+        frame[column] = frame[column].fillna("").astype(str).str.strip()
+        frame.loc[~frame[column].isin(RECENCY_BUCKETS), column] = ""
     frame["Ad ID"] = frame["Ad ID"].fillna("").astype(str).str.strip()
     # Snapshot the per-ad rows before the rollup collapses them away. Ad-level identity is the
     # only source for ad_added / ad_paused / ad_swapped, and it cannot be recovered afterwards.
@@ -2025,7 +2046,9 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
     for column in AD_NUMERIC_COLUMNS:
         negative_metrics = negative_metrics | frame[column].lt(0).fillna(False)
     keep = ~(missing_required | negative_metrics)
-    cleaned = frame.loc[keep, [*AD_PERFORMANCE_COLUMNS, "_source_row"]].copy().reset_index(drop=True)
+    cleaned = frame.loc[keep, [
+        *AD_PERFORMANCE_COLUMNS, "_source_row", *AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS,
+    ]].copy().reset_index(drop=True)
     if cleaned.empty:
         raise ValueError("No valid ad performance rows remain after cleaning. Check Day, Campaign ID, Ad set ID, and Amount spent (USD).")
 
@@ -2046,7 +2069,11 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
         "recognized_columns": list(dict.fromkeys(
             AD_KNOWN_HEADERS[_header_key(column)] for column in source_columns if _header_key(column) in AD_KNOWN_HEADERS
         )),
-        "ignored_columns": [column for column in source_columns if _header_key(column) not in AD_KNOWN_HEADERS],
+        "ignored_columns": [
+            column for column in source_columns
+            if _header_key(column) not in AD_KNOWN_HEADERS
+            and _header_key(column) not in {_header_key(name) for name in AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS}
+        ],
         "unique_campaigns": int(cleaned["Campaign ID"].nunique()),
         "unique_ad_sets": int(cleaned["Ad set ID"].nunique()),
         "total_spend": float(cleaned["Amount spent (USD)"].fillna(0).sum()),
@@ -2880,7 +2907,12 @@ def _write_ad_performance(
             "SELECT 1 FROM daily_ad_performance WHERE day=? AND campaign_id=? AND ad_set_id=?",
             (day, campaign_id, ad_set_id),
         ).fetchone()
-        raw = {column: _json_ready(row[column]) for column in AD_PERFORMANCE_COLUMNS}
+        raw = {column: _json_ready(row[column]) for column in [
+            *AD_PERFORMANCE_COLUMNS, *AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS,
+        ]}
+        imported_days = _float_ready(row.get("days_since_adset_started"))
+        imported_ad_set_recency = str(row.get("ad_set_change_recency") or "").strip() or None
+        imported_ad_recency = str(row.get("ad_change_recency") or "").strip() or None
         params = (
             upload_id,
             day,
@@ -2901,6 +2933,9 @@ def _write_ad_performance(
             _float_ready(values["cpc"]),
             _float_ready(values["unique_link_clicks"]),
             _float_ready(values["cost_per_unique_link_click"]),
+            imported_days,
+            imported_ad_set_recency,
+            imported_ad_recency,
             _float_ready(values["ad_set_budget"]),
             str(values["ad_set_budget_type"] or "").strip() or None,
             _date_ready(values["reporting_starts"]),
@@ -2914,10 +2949,12 @@ def _write_ad_performance(
                upload_id, day, campaign_id, campaign_name, ad_set_id, delivery_status, delivery_level,
                amount_spent_usd, messaging_conversations_started, cost_per_messaging_conversation_started,
                reach, impressions, frequency, leads, cost_per_lead, link_clicks, cpc,
-               unique_link_clicks, cost_per_unique_link_click, ad_set_budget, ad_set_budget_type,
+               unique_link_clicks, cost_per_unique_link_click,
+               days_since_adset_started_imported, ad_set_change_recency_imported, ad_change_recency_imported,
+               ad_set_budget, ad_set_budget_type,
                reporting_starts, reporting_ends,
                raw_json, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(day, campaign_id, ad_set_id) DO UPDATE SET
                upload_id=excluded.upload_id,
                campaign_name=excluded.campaign_name,
@@ -2935,6 +2972,9 @@ def _write_ad_performance(
                cpc=excluded.cpc,
                unique_link_clicks=excluded.unique_link_clicks,
                cost_per_unique_link_click=excluded.cost_per_unique_link_click,
+               days_since_adset_started_imported=excluded.days_since_adset_started_imported,
+               ad_set_change_recency_imported=excluded.ad_set_change_recency_imported,
+               ad_change_recency_imported=excluded.ad_change_recency_imported,
                ad_set_budget=excluded.ad_set_budget,
                ad_set_budget_type=excluded.ad_set_budget_type,
                reporting_starts=excluded.reporting_starts,
@@ -6030,7 +6070,10 @@ DATASET_ROW_TABLES: dict[str, dict[str, object]] = {
                     "CASE WHEN p.messaging_conversations_started > 0 "
                     "THEN p.amount_spent_usd / p.messaging_conversations_started END) "
                     "AS cost_per_messaging_conversation_started",
-                    "p.ad_set_budget", "p.ad_set_budget_type"],
+                    "p.ad_set_budget", "p.ad_set_budget_type",
+                    "p.days_since_adset_started_imported",
+                    "p.ad_set_change_recency_imported",
+                    "p.ad_change_recency_imported"],
         "order_by": "p.day ASC",
         "campaign_column": "p.campaign_id",
         "ad_set_column": "p.ad_set_id",
@@ -6058,7 +6101,10 @@ DATASET_ROW_TABLES: dict[str, dict[str, object]] = {
                     "COALESCE(p.cost_per_messaging_conversation_started, "
                     "CASE WHEN p.messaging_conversations_started > 0 "
                     "THEN p.amount_spent_usd / p.messaging_conversations_started END) "
-                    "AS cost_per_messaging_conversation_started"],
+                    "AS cost_per_messaging_conversation_started",
+                    "p.days_since_adset_started_imported",
+                    "p.ad_set_change_recency_imported",
+                    "p.ad_change_recency_imported"],
         "order_by": "p.day ASC",
         "campaign_column": "p.campaign_id",
         "ad_set_column": "p.ad_set_id",
@@ -6217,15 +6263,22 @@ def _attach_declared_variables(rows: list[dict]) -> None:
         ad_set = str(row.get("ad_set_id") or "")
         day = pd.to_datetime(row.get("day"), errors="coerce")
         start = starts.get(ad_set)
-        row["days_since_adset_started"] = (
+        imported_days = row.get("days_since_adset_started_imported")
+        computed_days = (
             None if start is None or pd.isna(day) or day.normalize() < start
             else int((day.normalize() - start).days)
+        )
+        row["days_since_adset_started"] = (
+            int(imported_days) if imported_days is not None and not pd.isna(imported_days)
+            else computed_days
         )
         for scope, recency_key in (
             ("ad_set", "ad_set_change_recency"),
             ("ad", "ad_change_recency"),
         ):
-            row[recency_key] = _change_state_as_of(events_by_scope[scope].get(ad_set, ()), day)
+            imported = str(row.get(f"{recency_key}_imported") or "").strip()
+            computed = _change_state_as_of(events_by_scope[scope].get(ad_set, ()), day)
+            row[recency_key] = imported or computed
 
 
 def _dataset_where(
