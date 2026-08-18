@@ -1863,6 +1863,11 @@ RECENCY_BUCKET_DAY_RANGES = {
     "8_14_days": (8, 14),
     "15_59_days": (15, 59),
 }
+RECENCY_BUCKET_FEATURE_VALUES = {
+    name: (low + high) / 2.0
+    for name, (low, high) in RECENCY_BUCKET_DAY_RANGES.items()
+}
+RECENCY_BUCKET_FEATURE_VALUES[NO_RECENT_CHANGE_BUCKET] = 60.0
 
 
 def recency_bucket(days: object) -> str:
@@ -1948,7 +1953,8 @@ def _resolve_change_state(
 
 
 def _ad_change_features(
-    dates: pd.DatetimeIndex, *, ad_set: str | None = None, ad_sets: tuple[str, ...] | None = None,
+    dates: pd.DatetimeIndex, *, spend_frame: pd.DataFrame | None = None,
+    ad_set: str | None = None, ad_sets: tuple[str, ...] | None = None,
 ) -> dict[str, np.ndarray]:
     """Declared variable 6 (ad_change_recency).
 
@@ -1963,6 +1969,11 @@ def _ad_change_features(
     `ad_sets` narrows to a group (a campaign) while keeping the pooled-event encoding the
     whole-portfolio call already uses, so campaign and portfolio scopes stay comparable.
     """
+    imported = _imported_recency_feature_values(
+        spend_frame, dates, "ad_change_recency_imported", ad_set=ad_set,
+    )
+    if imported is not None:
+        return {"ad_change_recency": imported}
     if ad_sets is not None:
         recorded: set[pd.Timestamp] = set()
         for set_id in ad_sets:
@@ -5882,11 +5893,11 @@ def _load_scope_feature_rows(
     }
     ad_set_changes = _ad_set_change_features(spend_frame, dates, ad_set=ad_set_id)
     if ad_set_id:
-        ad_changes = _ad_change_features(dates, ad_set=ad_set_id)
+        ad_changes = _ad_change_features(dates, spend_frame=spend_frame, ad_set=ad_set_id)
     elif campaign_id:
-        ad_changes = _ad_change_features(dates, ad_sets=scoped_sets)
+        ad_changes = _ad_change_features(dates, spend_frame=spend_frame, ad_sets=scoped_sets)
     else:
-        ad_changes = _ad_change_features(dates)
+        ad_changes = _ad_change_features(dates, spend_frame=spend_frame)
     context["ad_set_change_recency_values"] = ad_set_changes["ad_set_change_recency"]
     context["ad_change_recency_values"] = ad_changes["ad_change_recency"]
     feature_rows, _ = _ols_feature_frame(values, dates, context, 14)
@@ -6847,6 +6858,14 @@ def _days_since_start_values(
         frame = frame[frame["ad_set_id"].astype(str) == str(ad_set)]
     if frame.empty:
         return np.zeros(len(dates), dtype=float)
+    if "days_since_adset_started_imported" in frame.columns:
+        imported = frame.dropna(subset=["days_since_adset_started_imported"]).copy()
+        if not imported.empty:
+            imported["_age"] = pd.to_numeric(imported["days_since_adset_started_imported"], errors="coerce")
+            imported = imported.dropna(subset=["_age"])
+            if not imported.empty:
+                daily = imported.groupby("day")["_age"].mean()
+                return daily.reindex(dates, fill_value=0).astype(float).to_numpy()
     confirmed = dict(_confirmed_ad_set_starts())
     if ad_set is None:
         # portfolio grain: mean age across the ad sets live that day with a confirmed start
@@ -6861,6 +6880,27 @@ def _days_since_start_values(
     if first_day is None:
         return np.zeros(len(dates), dtype=float)
     return np.clip((dates - first_day).days.to_numpy().astype(float), 0.0, None)
+
+
+def _imported_recency_feature_values(
+    spend_frame: pd.DataFrame | None, dates: pd.DatetimeIndex, column: str, *, ad_set: str | None = None,
+) -> np.ndarray | None:
+    if spend_frame is None or spend_frame.empty or column not in spend_frame.columns:
+        return None
+    frame = spend_frame
+    if ad_set is not None:
+        frame = frame[frame["ad_set_id"].astype(str) == str(ad_set)]
+    if frame.empty:
+        return None
+    imported = frame.loc[frame[column].fillna("").astype(str).str.strip().ne(""), ["day", column]].copy()
+    if imported.empty:
+        return None
+    imported["_recency"] = imported[column].fillna("").astype(str).str.strip().map(RECENCY_BUCKET_FEATURE_VALUES)
+    imported = imported.dropna(subset=["_recency"])
+    if imported.empty:
+        return None
+    daily = imported.groupby("day")["_recency"].mean()
+    return daily.reindex(dates, fill_value=0).astype(float).to_numpy()
 
 
 def _ad_set_change_recency_values(
@@ -6890,6 +6930,11 @@ def _ad_set_change_features(
     empty = {name: np.zeros(len(dates), dtype=float) for name in names}
     if spend_frame is None or spend_frame.empty or "amount_spent_usd" not in spend_frame.columns:
         return empty
+    imported = _imported_recency_feature_values(
+        spend_frame, dates, "ad_set_change_recency_imported", ad_set=ad_set,
+    )
+    if imported is not None:
+        return {"ad_set_change_recency": imported}
     frame = spend_frame
     if ad_set is not None:
         frame = frame[frame["ad_set_id"].astype(str) == str(ad_set)]
@@ -7775,7 +7820,7 @@ def _forecast_for_series(
         "parameters": parameters or DEFAULT_FORECAST_PARAMETERS,
     }
     _ad_set_changes = _ad_set_change_features(spend_frame, dates, ad_set=ad_set)
-    _ad_changes = _ad_change_features(dates, ad_set=ad_set)
+    _ad_changes = _ad_change_features(dates, spend_frame=spend_frame, ad_set=ad_set)
     context["ad_set_change_recency_values"] = _ad_set_changes["ad_set_change_recency"]
     context["ad_change_recency_values"] = _ad_changes["ad_change_recency"]
     if future_spend_daily is not None:
@@ -7946,7 +7991,10 @@ def _load_spend_frame(db: sqlite3.Connection | None = None) -> pd.DataFrame:
                       COALESCE(link_clicks, 0) link_clicks,
                       COALESCE(impressions, 0) impressions,
                       COALESCE(frequency, 0) frequency,
-                      ad_set_budget
+                      ad_set_budget,
+                      days_since_adset_started_imported,
+                      ad_set_change_recency_imported,
+                      ad_change_recency_imported
                FROM daily_ad_performance
                ORDER BY date(day), campaign_id, ad_set_id"""
         ).fetchall()
@@ -7957,7 +8005,8 @@ def _load_spend_frame(db: sqlite3.Connection | None = None) -> pd.DataFrame:
         return pd.DataFrame(columns=[
             "day", "campaign_id", "campaign_name", "ad_set_id", "amount_spent_usd",
             "messaging_conversations_started", "platform_leads", "link_clicks", "impressions",
-            "frequency", "ad_set_budget",
+            "frequency", "ad_set_budget", "days_since_adset_started_imported",
+            "ad_set_change_recency_imported", "ad_change_recency_imported",
         ])
     frame = pd.DataFrame([dict(row) for row in rows])
     frame["day"] = pd.to_datetime(frame["day"])
@@ -7972,6 +8021,11 @@ def _load_spend_frame(db: sqlite3.Connection | None = None) -> pd.DataFrame:
     # left as NaN, not 0: a missing budget is unknown, and coercing it to 0 would fabricate
     # a budget change on either side of the gap
     frame["ad_set_budget"] = pd.to_numeric(frame["ad_set_budget"], errors="coerce")
+    frame["days_since_adset_started_imported"] = pd.to_numeric(
+        frame["days_since_adset_started_imported"], errors="coerce"
+    )
+    for column in ("ad_set_change_recency_imported", "ad_change_recency_imported"):
+        frame[column] = frame[column].fillna("").astype(str).str.strip()
     return frame
 
 

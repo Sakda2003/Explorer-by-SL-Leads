@@ -5337,26 +5337,48 @@ function DatasetPage() {
  };
 
  const declaredVariables: any[] = ols?.declared_variables || [];
+ const declaredVariableList = declaredVariables.length
+  ? declaredVariables
+  : [
+   { number: 1, name: 'Leads' },
+   { number: 2, name: 'Spent' },
+   { number: 3, name: 'Holiday_Proximity' },
+   { number: 4, name: 'days_since_adset_started' },
+   { number: 5, name: 'frequency' },
+   { number: 6, name: 'ad_change_recency' },
+   { number: 7, name: 'ad_set_change_recency' },
+   { number: 8, name: 'Days of the week' },
+  ];
 
  // Collapses the feature-level matrix (some declared variables expand into several dummy
  // columns -- e.g. Holiday_Proximity, Days of the week) down to one row/column per declared
- // variable, so it reads as "the 10 things", not "the ~22 columns they expand into". A
+ // variable, so it reads as "the eight things", not "the ~22 columns they expand into". A
  // variable-pair's collapsed value is its strongest sub-feature relationship (max |r|, sign
  // kept) rather than an average, since an average would wash out a single dominant pairing --
  // e.g. holiday proximity vs day of week is dominated by one sub-feature pair, not
- // a blend of all of them. Derived entirely client-side from the existing matrix -- no
- // backend change needed.
+ // a blend of all of them. The backend decides which feature columns have defined
+ // coefficients; this view keeps the declared variable inventory visible around them.
  const declaredCorrelation = (() => {
-  if (!correlation?.variables?.length) return null;
-  const groups = new Map<number, { number: number; name: string; indices: number[] }>();
-  correlation.variables.forEach((v: any, idx: number) => {
-   const group = groups.get(v.variable_number) || { number: v.variable_number, name: v.variable_name, indices: [] as number[] };
+  if (!correlation?.variables?.length && !declaredVariableList.length) return null;
+  const groups = new Map<number, { number: number; name: string; indices: number[]; status?: string; detail?: string }>();
+  (correlation?.variables || []).forEach((v: any, idx: number) => {
+   const group: { number: number; name: string; indices: number[]; status?: string; detail?: string } =
+    groups.get(v.variable_number) || { number: v.variable_number, name: v.variable_name, indices: [] };
    group.indices.push(idx);
    groups.set(v.variable_number, group);
+  });
+  declaredVariableList.forEach((v: any) => {
+   const group: { number: number; name: string; indices: number[]; status?: string; detail?: string } =
+    groups.get(v.number) || { number: v.number, name: v.name, indices: [] };
+   group.name = group.name || v.name;
+   group.status = v.status;
+   group.detail = v.detail;
+   groups.set(v.number, group);
   });
   const ordered = Array.from(groups.values()).sort((a, b) => a.number - b.number);
   const matrix = ordered.map((rowGroup) => ordered.map((colGroup) => {
    if (rowGroup.number === colGroup.number) return 1;
+   if (!rowGroup.indices.length || !colGroup.indices.length) return null;
    let strongest = 0;
    for (const ri of rowGroup.indices) {
     for (const ci of colGroup.indices) {
@@ -5369,15 +5391,11 @@ function DatasetPage() {
   return { variables: ordered, matrix };
  })();
 
- // A declared variable that's constant (backend status "flat") drops out of the matrix above
- // with no trace -- correct (a zero-variance column has no defined correlation), but silent.
- // Only surface the "flat_recorded" status (backend `_declared_variable_coverage`): something
- // WAS recorded for this variable and it's still constant (e.g. a change recorded on every
- // observed day), which is the non-obvious, actionable case. Plain "flat" -- nothing recorded
- // for this variable at all yet -- is the expected default and not worth a callout; per
- // feedback, showing it read as noise ("I already know it's empty").
- const missingDeclaredVariables = declaredVariables.filter(
-  (v) => v.status === 'flat_recorded' && !declaredCorrelation?.variables?.some((present) => present.number === v.number)
+ // Zero-variance variables now remain visible in the declared matrix, but their correlations
+ // are undefined. Surface a compact note so "-" reads as "flat over this window", not missing
+ // data or a render bug.
+ const undefinedDeclaredVariables = declaredVariableList.filter(
+  (v) => declaredCorrelation?.variables?.some((present) => present.number === v.number && !present.indices?.length)
  );
 
  const rowStart = rowsData.total ? rowsOffset + 1 : 0;
@@ -5508,7 +5526,7 @@ function DatasetPage() {
            // Explicit calc() width, same reasoning as the expanded matrix's own columns just
            // below: the row-header column is a fixed 120px (see .dataset-correlation-table
            // CSS), so each data column gets an even share of what's left, however many
-           // declared variables are actually present (5 here, up to 10 with everything
+           // declared variables are actually present (up to eight with everything
            // recorded) -- a bare 74px-per-column floor (the old default) doesn't shrink
            // below itself, so 5 short columns left the row-header looking like it was
            // eating the section while the other 4/5 of the table sat empty to the right.
@@ -5524,8 +5542,12 @@ function DatasetPage() {
             const value = declaredCorrelation.matrix[ri][ci];
             const rowLabel = DATASET_DECLARED_SHORT_LABEL[rowVar.number] || rowVar.name;
             const colLabel = DATASET_DECLARED_SHORT_LABEL[colVar.number] || colVar.name;
+            const hasValue = typeof value === 'number' && Number.isFinite(value);
+            const title = hasValue
+             ? `${rowLabel} vs ${colLabel}: ${value.toFixed(2)}`
+             : `${rowLabel} vs ${colLabel}: undefined because one variable is constant over this window`;
             return (
-             <td key={colVar.number} className={ri === declaredHoverIdx || ci === declaredHoverIdx ? 'is-hover' : ''} style={correlationCellStyle(value)} title={`${rowLabel} vs ${colLabel}: ${value.toFixed(2)}`}>{value.toFixed(2)}</td>
+             <td key={colVar.number} className={`${ri === declaredHoverIdx || ci === declaredHoverIdx ? 'is-hover ' : ''}${hasValue ? '' : 'is-undefined'}`} style={hasValue ? correlationCellStyle(value) : undefined} title={title}>{hasValue ? value.toFixed(2) : '-'}</td>
             );
            })}
           </tr>
@@ -5535,13 +5557,13 @@ function DatasetPage() {
       </div>
      )
     ) : null}
-    {correlationView === 'declared' && !!missingDeclaredVariables.length && (
-     <div className="dataset-correlation-missing" aria-label="Declared variables not in the matrix">
-      <span className="dataset-correlation-missing-head"><Info size={13} /> Not shown above ({missingDeclaredVariables.length} of the ten):</span>
-      {missingDeclaredVariables.map((v) => (
+    {correlationView === 'declared' && !!undefinedDeclaredVariables.length && (
+     <div className="dataset-correlation-missing" aria-label="Declared variables with undefined correlations">
+      <span className="dataset-correlation-missing-head"><Info size={13} /> Undefined correlations ({undefinedDeclaredVariables.length} of the eight):</span>
+      {undefinedDeclaredVariables.map((v) => (
        <div className="dataset-correlation-missing-row" key={v.number}>
         <b>#{v.number} {DATASET_DECLARED_SHORT_LABEL[v.number] || v.name}</b>
-        <span>{v.detail}</span>
+        <span>{v.detail || 'Collected, but constant over this window'}</span>
        </div>
       ))}
      </div>

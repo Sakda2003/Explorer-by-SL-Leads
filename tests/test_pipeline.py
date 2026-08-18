@@ -121,6 +121,74 @@ class PipelineTests(unittest.TestCase):
         features = core._holiday_proximity_features(pd.Timestamp("2026-01-10"))
         self.assertEqual(features["holiday_0_14_days"], 1.0)
 
+    def test_imported_declared_variables_feed_correlation_matrix(self):
+        dates = pd.date_range("2026-06-06", periods=8, freq="D")
+        ad_rows = []
+        with core.connect() as db:
+            db.execute(
+                """INSERT INTO raw_uploads(
+                   file_name, stored_path, file_sha256, file_type, uploaded_at,
+                   row_count, imported_count, duplicate_count, cleaned_count, excluded_count)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "ad_performance.csv", "ad_performance.csv", "hash",
+                    core.AD_PERFORMANCE_TYPE, core.utc_now(), 8, 0, 0, 8, 0,
+                ),
+            )
+            upload_id = db.execute("SELECT id FROM raw_uploads").fetchone()["id"]
+            for offset, day in enumerate(dates):
+                db.execute(
+                    """INSERT INTO daily_ad_set_aggregates(
+                       aggregate_date, utm_ad_set_id, utm_campaign_id, lead_count,
+                       ad_id_count, new_count, existing_count, status_mix_json, spend_context_usd)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (
+                        day.date().isoformat(),
+                        "adset-1",
+                        "campaign-1",
+                        [1, 3, 2, 5, 1, 4, 2, 6][offset],
+                        1,
+                        [1, 3, 2, 5, 1, 4, 2, 6][offset],
+                        0,
+                        "{}",
+                        10 + offset,
+                    ),
+                )
+                ad_rows.append({
+                    "Campaign name": "Campaign",
+                    "Campaign ID": "campaign-1",
+                    "Ad set ID": "adset-1",
+                    "Ad ID": "",
+                    "Day": day,
+                    "Delivery status": "active",
+                    "Delivery level": "adset",
+                    "Amount spent (USD)": 10 + offset,
+                    "Messaging conversations started": 0,
+                    "Cost per messaging conversation started": np.nan,
+                    "Reach": 100 + offset,
+                    "Impressions": 150 + offset,
+                    "Frequency": 1 + offset / 10,
+                    "Leads": 0,
+                    "Cost per lead": np.nan,
+                    "Link clicks": 0,
+                    "CPC (cost per link click)": np.nan,
+                    "Unique link clicks": 0,
+                    "Cost per unique link click": np.nan,
+                    "Ad Set Budget": np.nan,
+                    "Ad Set Budget Type": "",
+                    "Reporting starts": pd.NaT,
+                    "Reporting ends": pd.NaT,
+                    "days_since_adset_started": 200 + offset,
+                    "ad_set_change_recency": "0_3_days" if offset < 3 else "4_7_days",
+                    "ad_change_recency": "15_59_days" if offset < 4 else "8_14_days",
+                })
+            frame = pd.DataFrame(ad_rows)
+            core._write_ad_performance(db, upload_id, frame, core.utc_now())
+
+        correlation = core.get_dataset_correlation(ad_set_id="adset-1")
+        numbers = {item["variable_number"] for item in correlation["variables"]}
+        self.assertTrue({4, 6, 7}.issubset(numbers))
+
     def test_forecast_ledger_schema_has_realization_columns(self):
         with core.connect() as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(forecast_daily_predictions)")}
