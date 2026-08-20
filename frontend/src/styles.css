@@ -3405,7 +3405,7 @@ td code { color: var(--text); font-size: 11px; }
 }
 .model-gov-ols-printout .model-gov-ols-detail-table-head,
 .model-gov-ols-printout .model-gov-ols-detail-table-row {
-  grid-template-columns: minmax(146px, 1.65fr) repeat(6, minmax(52px, .58fr));
+  grid-template-columns: minmax(0, 2.05fr) repeat(6, minmax(48px, .54fr));
   gap: 0 6px;
   min-width: 0;
 }
@@ -3427,12 +3427,19 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-printout .model-gov-ols-detail-table-head span,
 .model-gov-ols-printout .model-gov-ols-detail-table-row span {
   padding: 2px 0;
+  overflow: visible;
+  text-overflow: clip;
 }
 .model-gov-ols-printout .model-gov-ols-detail-table-row span:first-child {
   color: var(--ols-ink);
   font-family: var(--font-mono);
   font-size: 11.5px;
   font-weight: 500;
+  white-space: normal;
+}
+.model-gov-ols-printout .model-gov-ols-detail-table-head .num,
+.model-gov-ols-printout .model-gov-ols-detail-table-row .num {
+  white-space: nowrap;
 }
 .model-gov-ols-printout .model-gov-ols-detail-section {
   min-width: 0;
@@ -3452,10 +3459,16 @@ td code { color: var(--text); font-size: 11px; }
   font-size: 11.5px;
 }
 .model-gov-ols-printout .model-gov-ols-term {
+  flex-wrap: wrap;
   gap: 5px;
+  line-height: 1.22;
 }
 .model-gov-ols-printout .model-gov-ols-term b {
+  overflow: visible;
   color: inherit;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .model-gov-ols-printout .model-gov-ols-term small {
   display: none;
@@ -3598,8 +3611,8 @@ td code { color: var(--text); font-size: 11px; }
   }
   .model-gov-ols-printout .model-gov-ols-detail-table-head,
   .model-gov-ols-printout .model-gov-ols-detail-table-row {
-    grid-template-columns: minmax(118px, 1.55fr) repeat(6, minmax(45px, .55fr));
-    gap: 0 4px;
+    grid-template-columns: minmax(0, 1.85fr) repeat(6, minmax(39px, .48fr));
+    gap: 0 3px;
   }
   .model-gov-ols-selection-table .model-gov-ols-detail-table-head,
   .model-gov-ols-selection-table .model-gov-ols-detail-table-row {
