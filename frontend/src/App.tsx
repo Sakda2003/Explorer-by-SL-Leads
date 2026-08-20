@@ -6500,6 +6500,17 @@ const LEAD_MANAGEMENT_SORT_FIELDS = LEAD_MANAGEMENT_COLUMNS.map((column) => colu
 const LEAD_QUALIFIED_STAGES = ['Qualified', 'Converted', 'Awaiting Document and Payment'];
 const LEAD_DROPPED_STAGES = ['Not Qualified', 'Lost'];
 
+// Campaign names and ad titles are not unique. This account already has two campaigns called
+// "Engagement | VISA | ALL | KHM", and the lead count used to be the only thing telling those
+// two rows apart in the picker. With the counts gone, a colliding label carries its id so the
+// menu can never show two identical, unpickable options. Names that don't collide -- 22 of 23
+// campaigns and all 30 ad sets today -- stay clean.
+const labelDisambiguator = (names: string[]) => {
+ const counts = new Map<string, number>();
+ names.forEach((name) => counts.set(name, (counts.get(name) || 0) + 1));
+ return (name: string, id: string) => ((counts.get(name) || 0) > 1 ? `${name} \u00b7 ${id}` : name);
+};
+
 const EMPTY_LEAD_SUMMARY = {
  total: 0, stages: [] as any[], statuses: {} as Record<string, number>, intake: 0, rated: 0,
  rated_share: 0, qualified: 0, dropped: 0, converted: 0, qualification_rate: null,
@@ -6694,6 +6705,14 @@ function LeadManagementPage() {
  const adSetChoices = useMemo(
   () => (campaignId ? options.ad_sets.filter((item: any) => String(item.campaign_id) === String(campaignId)) : options.ad_sets),
   [options.ad_sets, campaignId],
+ );
+ const campaignLabelFor = useMemo(
+  () => labelDisambiguator(options.campaigns.map((item: any) => String(item.campaign || item.campaign_id))),
+  [options.campaigns],
+ );
+ const adSetLabelFor = useMemo(
+  () => labelDisambiguator(adSetChoices.map((item: any) => String(item.ad_title || item.ad_set_id))),
+  [adSetChoices],
  );
  const pickCampaign = (value: string) => {
   setCampaignId(value);
@@ -6986,12 +7005,17 @@ function LeadManagementPage() {
        onChange={pickCampaign}
        options={[
         { value: '', label: 'All campaigns', icon: Megaphone },
-        ...options.campaigns.map((item: any) => ({
-         value: String(item.campaign_id),
-         label: `${item.campaign || item.campaign_id} (${fmt(item.leads)})`,
-         short: String(item.campaign || item.campaign_id),
-         icon: Megaphone,
-        })),
+        ...options.campaigns.map((item: any) => {
+         const name = String(item.campaign || item.campaign_id);
+         return {
+          value: String(item.campaign_id),
+          label: campaignLabelFor(name, String(item.campaign_id)),
+          // The trigger stays the bare name even for a disambiguated row: it is already the
+          // selected one, so the id it needed to be told apart by adds nothing there.
+          short: name,
+          icon: Megaphone,
+         };
+        }),
        ]}
       />
       <MenuSelect
@@ -7001,12 +7025,15 @@ function LeadManagementPage() {
        onChange={pickAdSet}
        options={[
         { value: '', label: campaignId ? 'All ad sets in campaign' : 'All ad sets', icon: Layers3 },
-        ...adSetChoices.map((item: any) => ({
-         value: String(item.ad_set_id),
-         label: `${item.ad_set_id}${item.ad_title ? ` - ${item.ad_title}` : ''} (${fmt(item.leads)})`,
-         short: String(item.ad_title || item.ad_set_id),
-         icon: Layers3,
-        })),
+        ...adSetChoices.map((item: any) => {
+         const name = String(item.ad_title || item.ad_set_id);
+         return {
+          value: String(item.ad_set_id),
+          label: adSetLabelFor(name, String(item.ad_set_id)),
+          short: name,
+          icon: Layers3,
+         };
+        }),
        ]}
       />
       {/* Drives the same `qualityFilter` the pipeline cell's stage rows do, rather than

@@ -129,6 +129,13 @@ data surfaces are operated the same way:
   filters. There is no status filter on this page any more — `statusFilter` and its filter row
   were removed rather than left as dead state. Status is still editable per row on the board,
   and still filterable on the Dataset page's Leads tab.
+- **The pickers list names only, no lead counts** (changed on request). Removing the counts
+  exposed a collision: this account has two campaigns both called "Engagement | VISA | ALL |
+  KHM", and the count had been the only thing telling those two rows apart. `labelDisambiguator`
+  appends the id to a label only when its name is not unique — 22 of 23 campaigns and all 30
+  ad sets stay clean, and the menu can never show two identical, unpickable options. The closed
+  trigger shows the bare name even for a disambiguated row, since the id it needed to be told
+  apart by adds nothing once it is the selected one.
 - **The quality pill and the stage cards are one control, two surfaces.** Both read and write
   `qualityFilter`, so picking a stage in the dropdown lights its card and toggling a card
   updates the trigger. `MenuSelect` is single-select, so choosing a stage *replaces* the
