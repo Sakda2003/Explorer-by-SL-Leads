@@ -5874,6 +5874,26 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panel .recharts-symbols {
   cursor: pointer;
 }
+.scatter-click-point {
+  cursor: pointer;
+}
+.scatter-click-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+.scatter-click-dot {
+  fill: var(--scatter-point);
+  stroke: var(--canvas);
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--scatter-point) 44%, transparent));
+  transition: r .12s ease, fill .12s ease, stroke-width .12s ease;
+}
+.scatter-click-point:hover .scatter-click-dot,
+.scatter-click-point.is-selected .scatter-click-dot {
+  fill: var(--cyan-strong);
+  stroke: var(--yellow-strong);
+  stroke-width: 2.2;
+}
 .scatter-form-tooltip {
   display: grid;
   gap: 4px;

@@ -1642,6 +1642,7 @@ function SpendFormMiniChart(
  const [selectedPoint, setSelectedPoint] = useState<any>(null);
  const selectPoint = (kind: 'fit' | 'residual', point: any) => {
   if (!point) return;
+  onSelect(panel.key);
   setSelectedPoint({
    kind,
    spend: Number(point.spend),
@@ -1659,6 +1660,28 @@ function SpendFormMiniChart(
     {point.actual_leads != null && <span>Leads <strong>{olsStat(point.actual_leads, 1)}</strong></span>}
     {point.residual != null && <span>Residual <strong>{olsStat(point.residual, 2)}</strong></span>}
    </div>
+  );
+ };
+ const pointShape = (kind: 'fit' | 'residual') => (props: any) => {
+  const { cx, cy, payload } = props;
+  if (cx == null || cy == null) return null;
+  const selected = selectedPoint
+   && selectedPoint.kind === kind
+   && Number(selectedPoint.spend) === Number(payload?.spend)
+   && (kind === 'fit'
+    ? Number(selectedPoint.leads) === Number(payload?.actual_leads)
+    : Number(selectedPoint.residual) === Number(payload?.residual));
+  return (
+   <g
+    className={`scatter-click-point${selected ? ' is-selected' : ''}`}
+    onClick={(event) => {
+     event.stopPropagation();
+     selectPoint(kind, payload);
+    }}
+   >
+    <circle className="scatter-click-hit" cx={cx} cy={cy} r={16} />
+    <circle className="scatter-click-dot" cx={cx} cy={cy} r={selected ? 8.5 : 6.8} />
+   </g>
   );
  };
  return (
@@ -1714,6 +1737,7 @@ function SpendFormMiniChart(
        fillOpacity={0.9}
        stroke="var(--canvas)"
        strokeWidth={1.5}
+       shape={pointShape('fit')}
        isAnimationActive={false}
        onClick={(point: any) => selectPoint('fit', point?.payload || point)}
       />
@@ -1774,6 +1798,7 @@ function SpendFormMiniChart(
          fillOpacity={0.9}
          stroke="var(--canvas)"
          strokeWidth={1.5}
+         shape={pointShape('residual')}
          isAnimationActive={false}
          onClick={(point: any) => selectPoint('residual', point?.payload || point)}
         />
