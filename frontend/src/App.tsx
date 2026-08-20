@@ -1829,6 +1829,7 @@ function SpendFormMiniChart(
 // the extra term it spends. A single R-squared column would hand the win to quadratic every
 // time, since adding a term can never lower R-squared.
 function OlsFormComparison({ univariateForms }: { univariateForms: any }) {
+ const [open, setOpen] = useState(false);
  const forms = univariateForms?.forms;
  if (!forms) return null;
  const rows = UNIVARIATE_FORM_LABELS
@@ -1837,33 +1838,43 @@ function OlsFormComparison({ univariateForms }: { univariateForms: any }) {
  // Nothing to compare against: one lone form is the fit already shown above it.
  if (rows.length < 2) return null;
  const best = univariateForms.best;
+ const bestLabel = UNIVARIATE_FORM_LABELS.find((item) => item.key === best)?.label;
  return (
   <div className="model-gov-ols-forms">
-   <div className="model-gov-ols-forms-head">
-    <span>Functional form</span>
-    <span className="num">R2</span>
-    <span className="num">Adj R2</span>
-    <span className="num">AIC</span>
-    <span className="num">P&gt;F</span>
-   </div>
-   {rows.map((item) => (
-    <div
-     className={`model-gov-ols-forms-row${item.key === best ? ' is-best' : ''}`}
-     key={item.key}
-    >
-     <span className="model-gov-ols-form-name">
-      <b>{item.label}</b>
-      <i>{item.formula}</i>
-     </span>
-     <span className="num">{olsStat(item.summary.r_squared, 3)}</span>
-     <span className="num">{olsStat(item.summary.adjusted_r_squared, 3)}</span>
-     <span className="num">{olsStat(item.summary.aic, 1)}</span>
-     <span className="num">{olsPValue(item.summary.f_p_value)}</span>
+   <button className="model-gov-ols-forms-toggle" type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+    <span>{open ? 'Hide functional forms' : 'Show functional forms'}</span>
+    <b>{bestLabel ? `Best: ${bestLabel}` : 'Comparison'}</b>
+    <ChevronDown size={15} className={open ? 'is-open' : ''} />
+   </button>
+   {open && (
+    <div className="model-gov-ols-forms-table">
+     <div className="model-gov-ols-forms-head">
+      <span>Functional form</span>
+      <span className="num">R2</span>
+      <span className="num">Adj R2</span>
+      <span className="num">AIC</span>
+      <span className="num">P&gt;F</span>
+     </div>
+     {rows.map((item) => (
+      <div
+       className={`model-gov-ols-forms-row${item.key === best ? ' is-best' : ''}`}
+       key={item.key}
+      >
+       <span className="model-gov-ols-form-name">
+        <b>{item.label}</b>
+        <i>{item.formula}</i>
+       </span>
+       <span className="num">{olsStat(item.summary.r_squared, 3)}</span>
+       <span className="num">{olsStat(item.summary.adjusted_r_squared, 3)}</span>
+       <span className="num">{olsStat(item.summary.aic, 1)}</span>
+       <span className="num">{olsPValue(item.summary.f_p_value)}</span>
+      </div>
+     ))}
     </div>
-   ))}
+   )}
    <p className="model-gov-ols-forms-note">
     {best
-     ? <>Best fit by AIC: <b>{UNIVARIATE_FORM_LABELS.find((item) => item.key === best)?.label}</b>{univariateForms.best_caveat ? ` - ${univariateForms.best_caveat}` : '.'}</>
+     ? <>Best fit by AIC: <b>{bestLabel}</b>{univariateForms.best_caveat ? ` - ${univariateForms.best_caveat}` : '.'}</>
      : 'No form could be fitted on this scope.'}
     {univariateForms.spend_days
      ? ` Fitted on ${plural(univariateForms.spend_days, 'day')} with spend.`
