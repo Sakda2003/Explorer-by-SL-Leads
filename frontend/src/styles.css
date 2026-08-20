@@ -3513,8 +3513,30 @@ td code { color: var(--text); font-size: 11px; }
 .model-gov-ols-selection-table { margin-top: 8px; }
 .model-gov-ols-selection-table .model-gov-ols-detail-table-head,
 .model-gov-ols-selection-table .model-gov-ols-detail-table-row {
-  grid-template-columns: minmax(152px, 1.45fr) repeat(4, minmax(56px, .58fr)) minmax(78px, .72fr);
+  grid-template-columns: minmax(0, 2.05fr) repeat(4, minmax(54px, .54fr)) minmax(86px, .7fr);
+  gap: 0 6px;
   min-width: 0;
+}
+.model-gov-ols-selection-table .model-gov-ols-detail-table-head span,
+.model-gov-ols-selection-table .model-gov-ols-detail-table-row span {
+  overflow: visible;
+  text-overflow: clip;
+}
+.model-gov-ols-selection-table .model-gov-ols-detail-table-head .num,
+.model-gov-ols-selection-table .model-gov-ols-detail-table-row .num,
+.model-gov-ols-selection-table .model-gov-ols-selection-outcome {
+  white-space: nowrap;
+}
+.model-gov-ols-selection-table .model-gov-ols-term {
+  flex-wrap: wrap;
+  gap: 2px 5px;
+  line-height: 1.22;
+}
+.model-gov-ols-selection-table .model-gov-ols-term b {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .model-gov-ols-selection-printout .model-gov-ols-selection-step {
   margin-top: 12px;
@@ -3581,8 +3603,12 @@ td code { color: var(--text); font-size: 11px; }
   }
   .model-gov-ols-selection-table .model-gov-ols-detail-table-head,
   .model-gov-ols-selection-table .model-gov-ols-detail-table-row {
-    grid-template-columns: minmax(122px, 1.35fr) repeat(4, minmax(45px, .52fr)) minmax(66px, .7fr);
-    gap: 0 4px;
+    grid-template-columns: minmax(0, 1.75fr) repeat(4, minmax(42px, .48fr)) minmax(62px, .62fr);
+    gap: 0 3px;
+  }
+  .model-gov-ols-selection-table .model-gov-ols-selection-outcome {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .model-gov-ols-printout .model-gov-ols-detail-section span,
   .model-gov-ols-printout .model-gov-ols-term small {
