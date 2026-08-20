@@ -37,9 +37,15 @@ requested and preserved all of these.)
 was no version control at all, so anything older than that commit has no history to
 revert to. Remote: <https://github.com/Sakda101/Explorer-by-SL-Leads> — **private**, and it
 must stay that way: the code and this vault describe Explorer by SL's ad spend, lead
-pipeline and modelling decisions in detail, even though the data itself is excluded. Pre-redesign copies of `styles.css`, `App.tsx` and `index.html` are still in
-`.backups/` (suffix `.pre-redesign-2026-08-12`); they predate the repo, which is why
-they are kept rather than deleted, though they are gitignored.
+pipeline and modelling decisions in detail, even though the data itself is excluded.
+
+**Pre-redesign copies of `styles.css`, `App.tsx` and `index.html` (`.backups/`,
+suffix `.pre-redesign-2026-08-12`) were permanently deleted 2026-08-19** during a
+cache-cleanup pass — they were gitignored and predated the repo, so there is no
+git history to recover them from and no other known copy exists. They can no
+longer be treated as a fallback for pre-redesign state. Before deleting any
+gitignored directory as "cache," check whether a vault note documents a reason
+it's being kept on purpose.
 
 **Customer data is excluded from version control and must stay that way.** `.gitignore`
 holds back `data/` (the 147 MB SQLite DB) and `Dataset/` (Meta exports plus
