@@ -128,3 +128,26 @@ call sites of `OlsResultCards`, so it picked up the new "Show detail" button and
 statsmodels-style expanded printout (summary block, coefficient table with split CI columns,
 residual diagnostics) automatically — no change needed here beyond what already existed.
 Full details in [[OLS-Declared-Ten-Variables]].
+
+## Four functional forms, not one (2026-08-19)
+
+The Spend-only card no longer reports a single linear fit. `OlsFormComparison` renders under
+its four fit stats: one row per functional form (linear / quadratic / log / sqrt), with R²,
+adjusted R², AIC and P>F, and the AIC winner marked. Full reasoning, including why all four
+share one row set and why the winner carries a significance caveat, is in
+[[Univariate-Spend-Functional-Forms]].
+
+Two consequences for this note:
+
+- **`ols.univariate` is still the linear fit**, so nothing that reads it broke — but it is now
+  fitted on the scope's *positive-spend* days rather than every day in the scope. For three
+  ad sets that lowers `no_observations`. That is the price of making the AIC column beside it
+  mean anything.
+- **The "Measured values" table above is stale** for that reason: those spend-only R² figures
+  were measured on the old all-days row set, on 2026-08-05 data.
+
+`scope.spend_days` was added alongside `observations`, because "days in this scope" and "days
+this regression could use" are now different numbers. The empty-state copy branches on it: an
+ad set with 48 days of leads and no spend at all now reads "No spend recorded against this
+selection, so there is nothing for a spend regression to fit" instead of the old, misleading
+"Upload ad performance data". Twelve of thirty ad sets are in exactly that position.

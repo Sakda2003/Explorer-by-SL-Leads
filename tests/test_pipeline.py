@@ -499,6 +499,101 @@ class PipelineTests(unittest.TestCase):
         self.assertAlmostEqual(terms["spent"]["coef"], 0.5, places=6)
         self.assertLess(terms["spent"]["p_value"], 0.001)
 
+    def test_univariate_spend_forms_fit_all_four_shapes(self):
+        """Linear, quadratic, log and sqrt, all fitted on the same rows.
+
+        Data is generated on a sqrt curve, so the sqrt form should not merely fit -- it should
+        win on AIC over the straight line it was built to beat.
+        """
+        dates = pd.date_range("2026-06-01", periods=40, freq="D")
+        spend = pd.Series([2.0 + (i % 17) * 0.75 for i in range(40)], dtype=float).to_numpy()
+        values = 4.0 * np.sqrt(spend)
+        feature_rows, _ = core._ols_feature_frame(values, dates, {"spend_values": spend}, 7)
+        result = core._fit_univariate_spend_forms(values, feature_rows)
+        self.assertEqual(sorted(result["forms"]), ["linear", "log", "quadratic", "sqrt"])
+        for key in ("linear", "quadratic", "log", "sqrt"):
+            self.assertIsNotNone(result["forms"][key], key)
+        self.assertEqual(result["best"], "sqrt")
+        self.assertGreater(result["forms"]["sqrt"]["r_squared"], 0.999)
+        terms = {row["term"] for row in result["forms"]["quadratic"]["coefficients"]}
+        self.assertEqual(terms, {"Intercept", "spent", "spent^2"})
+
+    def test_univariate_spend_forms_share_one_row_set(self):
+        """Every form sees the same positive-spend rows, so their AICs stay comparable.
+
+        Zero-spend days are dropped -- log(0) has no value and an AIC computed on a different
+        row count is not comparable to its siblings'. The count reported back is the fitted
+        one, not the scope's day count.
+        """
+        dates = pd.date_range("2026-06-01", periods=40, freq="D")
+        spend = np.array([0.0 if i % 4 == 0 else 5.0 + (i % 6) for i in range(40)], dtype=float)
+        values = 2.0 + 0.8 * spend
+        feature_rows, _ = core._ols_feature_frame(values, dates, {"spend_values": spend}, 7)
+        result = core._fit_univariate_spend_forms(values, feature_rows)
+        expected = int((spend > 0).sum())
+        self.assertEqual(result["spend_days"], expected)
+        for key, summary in result["forms"].items():
+            self.assertIsNotNone(summary, key)
+            self.assertEqual(summary["no_observations"], expected, key)
+        self.assertAlmostEqual(result["spend_min"], float(spend[spend > 0].min()), places=6)
+        self.assertAlmostEqual(result["spend_max"], float(spend.max()), places=6)
+
+    def test_univariate_spend_forms_publish_residuals_against_a_shared_axis(self):
+        """Each form returns its own residual vector, all against one shared spend axis.
+
+        The residual plots pair `spend_values[i]` with `forms[key]["residuals"][i]`, so the two
+        must stay the same length and the axis must be shared -- a per-form axis would let a
+        length mismatch pass silently and pair each residual with the wrong day, which draws
+        as a pattern rather than as an error.
+        """
+        dates = pd.date_range("2026-06-01", periods=40, freq="D")
+        spend = np.array([0.0 if i % 5 == 0 else 3.0 + (i % 9) for i in range(40)], dtype=float)
+        values = 1.0 + 0.6 * spend
+        feature_rows, _ = core._ols_feature_frame(values, dates, {"spend_values": spend}, 7)
+        result = core._fit_univariate_spend_forms(values, feature_rows)
+        axis = result["spend_values"]
+        self.assertEqual(len(axis), result["spend_days"])
+        self.assertTrue(all(value > 0 for value in axis))
+        for key, summary in result["forms"].items():
+            self.assertEqual(len(summary["residuals"]), len(axis), key)
+            # OLS residuals sum to zero whenever an intercept is in the design.
+            self.assertAlmostEqual(sum(summary["residuals"]), 0.0, places=3, msg=key)
+
+    def test_univariate_spend_forms_flag_an_unsupported_winner(self):
+        """A form can take the lowest AIC while its own terms are insignificant.
+
+        That is the quadratic trap the per-campaign notebooks kept hitting, so the winner
+        carries a caveat rather than reading as a recommendation.
+        """
+        rng = np.random.default_rng(11)
+        dates = pd.date_range("2026-06-01", periods=45, freq="D")
+        spend = np.full(45, 6.0) + rng.normal(0.0, 1.2, 45)
+        values = np.clip(rng.normal(5.0, 2.5, 45), 0.0, None)
+        feature_rows, _ = core._ols_feature_frame(values, dates, {"spend_values": spend}, 7)
+        result = core._fit_univariate_spend_forms(values, feature_rows)
+        self.assertIsNotNone(result["best"])
+        winner = result["forms"][result["best"]]
+        weak = [row for row in winner["coefficients"]
+                if row["feature"] != "Intercept" and row["p_value"] > 0.05]
+        self.assertTrue(weak, "expected pure noise to leave the winner unsupported")
+        self.assertIsNotNone(result["best_caveat"])
+        self.assertIn("not significant", result["best_caveat"])
+
+    def test_univariate_spend_forms_refuse_a_scope_with_no_spend(self):
+        """An ad set with leads but no spend gets no form -- not even the linear one.
+
+        Twelve of thirty real ad sets are in exactly this position. No functional form can
+        rescue them, so the empty answer has to be explicit rather than a silent linear fit.
+        """
+        dates = pd.date_range("2026-06-01", periods=40, freq="D")
+        spend = np.zeros(40, dtype=float)
+        values = np.array([float(i % 3) for i in range(40)])
+        feature_rows, _ = core._ols_feature_frame(values, dates, {"spend_values": spend}, 7)
+        result = core._fit_univariate_spend_forms(values, feature_rows)
+        self.assertEqual(result["spend_days"], 0)
+        self.assertIsNone(result["best"])
+        self.assertTrue(all(summary is None for summary in result["forms"].values()))
+
     def test_multivariate_ols_uses_available_performance_predictors(self):
         dates = pd.date_range("2026-06-01", periods=42, freq="D")
         spend = pd.Series([12.0 + (i % 5) for i in range(42)], dtype=float).to_numpy()

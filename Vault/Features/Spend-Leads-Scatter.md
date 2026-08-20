@@ -138,3 +138,88 @@ asked for again.
 
 Related: [[Ad-Decision-Engine]], [[CPL-Trend-Chart]] (same `spendDaily` source, now
 shared three ways), [[Stack-and-Build]].
+
+## Fitted-curve picker (2026-08-19)
+
+The overlay line is no longer always LOESS. A pill row above the plot picks which curve is
+drawn — Linear, Quadratic, Logarithmic, Square root, or LOESS — defaulting to the AIC winner
+from the spend-only regression, which the ★ marks. See
+[[Univariate-Spend-Functional-Forms]] for how the four forms are fitted and ranked.
+
+The four parametric curves are evaluated in the browser (`spendFormCurve`) from the
+coefficients already present in the `/api/ols-summary` payload the OLS card above reads. No
+second fit and no extra request, which is what stops the drawn line and the quoted R² from
+ever describing different models.
+
+LOESS stays on the list rather than being replaced: it is the only option that can bend where
+none of the four closed forms can.
+
+**Two things to keep in mind:**
+
+- Curves are sampled between the observed min and max spend only, never extrapolated. The
+  quadratic form in particular goes wild a few dollars past the data, and a *drawn* line reads
+  as a claim in a way a coefficient table does not.
+- The OLS fit spans the scope's own active dates, while the dots also honour the page's
+  date-range filter. Narrow the range hard and the curve is fitted on more days than are
+  plotted — the shape is still the honest one for the ad set, it is just not re-estimated per
+  date window.
+
+## All four graphs at once (2026-08-19, same day)
+
+The picker alone meant clicking through the forms one at a time, which is the wrong shape for
+the question — "which curve fits this cloud" is a *comparison*, and a comparison you have to
+hold in your head across four clicks is not one. So the four forms also render as small
+multiples under the main plot: one mini scatter per form (`SpendFormMiniChart`), each with the
+same dots and its own fitted curve.
+
+**Every panel shares the parent plot's x and y domains.** That is the whole point of the
+layout — shapes are only comparable if the axes are, and a panel auto-scaled to its own curve
+would make a flat fit and a steep one look identical.
+
+Each panel is also a button: clicking it selects that form for the large chart above. The pill
+picker and the panels read and write the same `spendCurveForm` state, so they are one control
+in two shapes rather than two controls that can disagree. The pills keep LOESS, which has no
+panel of its own (it is not one of the four fitted forms).
+
+Panels are deliberately bare — no tooltip, no axis titles, four ticks at most. At 291x132 the
+chrome would cost more room than it explains, and the big plot above already answers "what
+exactly is this point". The AIC winner's curve is drawn in `--yellow-strong` and its header
+carries the ★, matching the comparison table in the OLS card.
+
+Grid is 4 columns, dropping to 2 below 1180px and 1 below 620px.
+
+Verified by curve geometry rather than by eye: sampling each panel's SVG path at start /
+middle / end gives linear rising evenly (Δ22.9, Δ23.0 in device pixels), quadratic bending
+hardest (Δ39.5, Δ7.0), log next (Δ37.0, Δ16.6) and sqrt mildest (Δ29.5, Δ19.9) — the expected
+ordering of curvature, and all four paths distinct.
+
+## Residual plots, one per form (2026-08-19, same day)
+
+Each form panel now stacks two charts: the fit above, **residual vs spend** below. This is the
+plot every per-campaign notebook draws under each model it fits (`plt.scatter(summary['Spending'],
+model.resid)`), and it answers what R² cannot — R² says how much a form explains, the residual
+cloud says *where it goes wrong*. A cloud that fans out as spend rises, or that bends, means the
+form is misspecified however good its R² looks.
+
+Kept in the same panel as the fit rather than in a separate row of four, because a residual plot
+is only readable next to the curve that produced it.
+
+**All four residual plots share one symmetric y scale.** Per-panel auto-scaling would defeat the
+comparison outright: a form with twice the error would draw an identical-looking cloud. Symmetric
+about zero so "above the line" and "below it" are the same distance.
+
+Ticks are handed to Recharts explicitly (`[-bound, 0, bound]`) instead of letting it pick. Left to
+itself it chose a middle tick near but not at zero, which rendered as a label reading "1" sitting
+directly beside the zero reference line — the one line in a residual plot that has to be trusted.
+Verified fixed: labels are now −24 / 0 / 24 and the "0" label sits at y=41, exactly where the
+reference line is drawn, in all four panels.
+
+Panel stats gained **Skew** alongside R² and AIC, since residual asymmetry is the thing the plot
+is being scanned for and the number belongs next to it.
+
+Verified via the DOM: 70 fit dots and 70 residual dots per panel, x positions identical across all
+four (the shared row set doing its job) and y positions distinct (each form leaving its own
+errors).
+
+**Pre-existing, not caused by this:** `.scatter-plot` (the large chart) overflows its card by
+~12px. The panel grid itself fits exactly and the page does not scroll horizontally.

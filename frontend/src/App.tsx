@@ -1497,6 +1497,236 @@ function OlsSelectionPath({ selection, title = 'Forward Selection Path' }: { sel
  );
 }
 
+// The four functional forms the spend-only regression is fitted in, in the order the model
+// comparison reads best: straight line first, then the three shapes that can bend.
+const UNIVARIATE_FORM_LABELS: { key: string; label: string; formula: string }[] = [
+ { key: 'linear', label: 'Linear', formula: 'Leads ~ Spend' },
+ { key: 'quadratic', label: 'Quadratic', formula: 'Leads ~ Spend + Spend^2' },
+ { key: 'log', label: 'Logarithmic', formula: 'Leads ~ log(Spend)' },
+ { key: 'sqrt', label: 'Square root', formula: 'Leads ~ sqrt(Spend)' },
+];
+
+// Evaluate a fitted form across the observed spend range, for drawing. Reads the coefficients
+// straight off the summary the backend already returns, so there is no second source of truth
+// for the curve and no extra request to draw it.
+// Sampled between the observed min and max spend only -- never extrapolated. The quadratic
+// form especially will happily shoot to the moon a few dollars past the data, and a drawn
+// line reads as a claim in a way a table of coefficients does not.
+function spendFormCurve(
+ summary: any, formKey: string, minX: number, maxX: number, steps = 60,
+): { spend: number; actual_leads: number }[] {
+ if (!summary || !(maxX > minX)) return [];
+ const coefficient = (feature: string) => {
+  const row = (summary.coefficients || []).find((item: any) => item.feature === feature);
+  return row ? Number(row.coef) : null;
+ };
+ const intercept = coefficient('Intercept');
+ if (intercept == null || !Number.isFinite(intercept)) return [];
+ const evaluate = (x: number): number | null => {
+  if (formKey === 'linear') {
+   const b = coefficient('spend');
+   return b == null ? null : intercept + b * x;
+  }
+  if (formKey === 'quadratic') {
+   const b = coefficient('spend');
+   const c = coefficient('spend_sq');
+   return b == null || c == null ? null : intercept + b * x + c * x * x;
+  }
+  if (formKey === 'log') {
+   const b = coefficient('spend_log');
+   return b == null || x <= 0 ? null : intercept + b * Math.log(x);
+  }
+  if (formKey === 'sqrt') {
+   const b = coefficient('spend_sqrt');
+   return b == null || x < 0 ? null : intercept + b * Math.sqrt(x);
+  }
+  return null;
+ };
+ const out: { spend: number; actual_leads: number }[] = [];
+ for (let i = 0; i <= steps; i++) {
+  const x = minX + ((maxX - minX) * i) / steps;
+  const y = evaluate(x);
+  // Same floor the LOESS curve uses: a fit dipping below zero is an artifact of the form,
+  // not a claim that a day could return negative leads.
+  if (y != null && Number.isFinite(y)) out.push({ spend: x, actual_leads: Math.max(0, y) });
+ }
+ return out;
+}
+
+// One small chart per functional form, drawn side by side so the four shapes can be compared
+// at a glance instead of one at a time through the picker. Same dots in every panel -- only the
+// fitted curve changes -- and every panel shares the parent's x/y domains, which is the whole
+// point: shapes are only comparable if the axes are.
+//
+// Deliberately stripped down. No axis labels, no tooltip, four ticks at most: at this size the
+// chrome would cost more room than it explains, and the big plot above answers "what exactly is
+// this point" already. These panels answer one question only -- which curve fits the cloud.
+function SpendFormMiniChart(
+ { panel, points, maxSpend, maxLeads, residualScale, active, onSelect }:
+ {
+  panel: {
+   key: string; label: string; formula: string; curve: any[]; summary: any; isBest: boolean;
+   residualPoints: { spend: number; residual: number }[];
+  };
+  points: any[]; maxSpend: number; maxLeads: number;
+  residualScale: { domain: number[]; ticks: number[] };
+  active: boolean; onSelect: (key: string) => void;
+ },
+) {
+ return (
+  <button
+   type="button"
+   className={`scatter-form-panel${active ? ' is-active' : ''}${panel.isBest ? ' is-best' : ''}`}
+   onClick={() => onSelect(panel.key)}
+   aria-pressed={active}
+   title={`${panel.formula} - show this fit on the chart above`}
+  >
+   <span className="scatter-form-panel-head">
+    <b>{panel.label}{panel.isBest && <i aria-label="best fit by AIC"> ★</i>}</b>
+    <span className="scatter-form-panel-formula">{panel.formula}</span>
+   </span>
+   <span className="scatter-form-panel-plot">
+    <ResponsiveContainer width="100%" height="100%">
+     <ScatterChart margin={{ top: 6, right: 8, left: 2, bottom: 2 }}>
+      <CartesianGrid strokeDasharray="3 5" stroke="var(--grid-line)" />
+      <XAxis
+       type="number"
+       dataKey="spend"
+       domain={[0, Math.ceil(maxSpend * 1.08)]}
+       tickFormatter={(value) => `$${fmt(Math.round(value))}`}
+       tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
+       axisLine={{ stroke: 'var(--axis-line)' }}
+       tickLine={false}
+       tickCount={4}
+       height={16}
+      />
+      <YAxis
+       type="number"
+       dataKey="actual_leads"
+       domain={[0, Math.ceil(maxLeads * 1.12)]}
+       allowDecimals={false}
+       tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
+       axisLine={false}
+       tickLine={false}
+       tickCount={4}
+       width={22}
+      />
+      <ZAxis range={[16, 16]} />
+      <Scatter data={points} fill="var(--scatter-spend)" fillOpacity={0.42} isAnimationActive={false} />
+      {panel.curve.length > 1 && (
+       <Line
+        data={panel.curve}
+        dataKey="actual_leads"
+        stroke={panel.isBest ? 'var(--yellow-strong)' : 'var(--series-median)'}
+        strokeWidth={1.7}
+        dot={false}
+        activeDot={false}
+        isAnimationActive={false}
+        type="monotone"
+        legendType="none"
+       />
+      )}
+     </ScatterChart>
+    </ResponsiveContainer>
+   </span>
+   {panel.residualPoints.length > 0 && (
+    <>
+     {/* Residual vs spend, the plot each notebook draws under every model it fits. Read for
+         shape, not position: a cloud that fans out as spend rises, or bends, says the form is
+         wrong in a way R2 alone will not. The zero line is the whole reference -- residuals
+         scattered evenly either side of it is what a well-specified form looks like. */}
+     <span className="scatter-form-panel-resid-label">Residuals vs spend</span>
+     <span className="scatter-form-panel-resid">
+      <ResponsiveContainer width="100%" height="100%">
+       <ScatterChart margin={{ top: 4, right: 8, left: 2, bottom: 2 }}>
+        <CartesianGrid strokeDasharray="3 5" stroke="var(--grid-line)" />
+        <XAxis
+         type="number"
+         dataKey="spend"
+         domain={[0, Math.ceil(maxSpend * 1.08)]}
+         tickFormatter={(value) => `$${fmt(Math.round(value))}`}
+         tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
+         axisLine={{ stroke: 'var(--axis-line)' }}
+         tickLine={false}
+         tickCount={4}
+         height={16}
+        />
+        <YAxis
+         type="number"
+         dataKey="residual"
+         domain={residualScale.domain}
+         ticks={residualScale.ticks}
+         tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
+         axisLine={false}
+         tickLine={false}
+         width={22}
+        />
+        <ZAxis range={[16, 16]} />
+        <ReferenceLine y={0} stroke="var(--axis-line)" strokeWidth={1.2} />
+        <Scatter data={panel.residualPoints} fill="var(--scatter-spend)" fillOpacity={0.42} isAnimationActive={false} />
+       </ScatterChart>
+      </ResponsiveContainer>
+     </span>
+    </>
+   )}
+   <span className="scatter-form-panel-stats">
+    <span>R2 <b>{olsStat(panel.summary?.r_squared, 3)}</b></span>
+    <span>AIC <b>{olsStat(panel.summary?.aic, 1)}</b></span>
+    <span>Skew <b>{olsStat(panel.summary?.skew, 2)}</b></span>
+   </span>
+  </button>
+ );
+}
+
+// Model comparison for the spend-only card: one row per functional form, ranked the way the
+// per-campaign analysis notebooks rank them -- by AIC, which charges the quadratic form for
+// the extra term it spends. A single R-squared column would hand the win to quadratic every
+// time, since adding a term can never lower R-squared.
+function OlsFormComparison({ univariateForms }: { univariateForms: any }) {
+ const forms = univariateForms?.forms;
+ if (!forms) return null;
+ const rows = UNIVARIATE_FORM_LABELS
+  .map((item) => ({ ...item, summary: forms[item.key] }))
+  .filter((item) => item.summary);
+ // Nothing to compare against: one lone form is the fit already shown above it.
+ if (rows.length < 2) return null;
+ const best = univariateForms.best;
+ return (
+  <div className="model-gov-ols-forms">
+   <div className="model-gov-ols-forms-head">
+    <span>Functional form</span>
+    <span className="num">R2</span>
+    <span className="num">Adj R2</span>
+    <span className="num">AIC</span>
+    <span className="num">P&gt;F</span>
+   </div>
+   {rows.map((item) => (
+    <div
+     className={`model-gov-ols-forms-row${item.key === best ? ' is-best' : ''}`}
+     key={item.key}
+    >
+     <span className="model-gov-ols-form-name">
+      <b>{item.label}</b>
+      <i>{item.formula}</i>
+     </span>
+     <span className="num">{olsStat(item.summary.r_squared, 3)}</span>
+     <span className="num">{olsStat(item.summary.adjusted_r_squared, 3)}</span>
+     <span className="num">{olsStat(item.summary.aic, 1)}</span>
+     <span className="num">{olsPValue(item.summary.f_p_value)}</span>
+    </div>
+   ))}
+   <p className="model-gov-ols-forms-note">
+    {best
+     ? <>Best fit by AIC: <b>{UNIVARIATE_FORM_LABELS.find((item) => item.key === best)?.label}</b>{univariateForms.best_caveat ? ` - ${univariateForms.best_caveat}` : '.'}</>
+     : 'No form could be fitted on this scope.'}
+    {univariateForms.spend_days
+     ? ` Fitted on ${plural(univariateForms.spend_days, 'day')} with spend.`
+     : ''}
+   </p>
+  </div>
+ );
+}
+
 function OlsResultCards(
  { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle }:
  { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string },
@@ -1530,6 +1760,7 @@ function OlsResultCards(
       <div className={`model-gov-ols-fit${coefficients ? '' : ' is-only'}`}>
        {fitRows(summary).map((item) => <div key={`${key}-${item.label}`}><span>{item.label}</span><b className={item.warm ? 'warm' : ''}>{item.value}</b></div>)}
       </div>
+      {key === 'univariate' && <OlsFormComparison univariateForms={ols?.univariate_forms} />}
       {coefficients && (
        <>
         <div className="model-gov-ols-table">
@@ -2437,6 +2668,13 @@ function ForecastPage() {
  ? 'No leads recorded for this selection yet.'
  : olsDays < (olsScope.univariate_days_needed || 12)
  ? `Only ${plural(olsDays, 'day')} of data in this scope - a regression needs at least ${olsScope.univariate_days_needed || 12}. Pick a wider scope.`
+ // Twelve of thirty ad sets have leads but never spent a cent. "Upload ad performance
+ // data" is the wrong explanation for those -- the data is uploaded, this ad set simply has
+ // no spend for a spend model to regress on, and no functional form can rescue that.
+ : olsScope.spend_days === 0
+ ? 'No spend recorded against this selection, so there is nothing for a spend regression to fit.'
+ : olsScope.spend_days && olsScope.spend_days < (olsScope.univariate_days_needed || 12)
+ ? `Only ${plural(olsScope.spend_days, 'day')} with spend in this scope - the spend regression needs at least ${olsScope.univariate_days_needed || 12}. Pick a wider scope.`
  : 'Upload ad performance data with spend before OLS regression results are available.';
  // A multivariate card can vanish on its own while spend-only still fits, for two unrelated
  // reasons: the scope is too short for the terms it wants, or (since forward selection drives
@@ -2874,6 +3112,86 @@ function ForecastPage() {
  .map((point) => ({ spend: point.x, actual_leads: point.y }));
  return { points, maxSpend, maxLeads, curve };
  }, [spendDaily]);
+
+ // Fitted-curve overlay for the scatter. The four parametric forms are read straight off the
+ // same /api/ols-summary payload the Spend-only card above renders, so the line drawn here and
+ // the R2 quoted there can never describe different models. LOESS stays on the list because it
+ // is the only option that can bend where none of the four closed forms can.
+ //
+ // One caveat worth knowing: the OLS fit spans the scope's own active dates, while these dots
+ // also honour the page's date-range filter. Narrow the range hard and the curve is fitted on
+ // more days than are plotted. The shape stays the honest one for the ad set; it just is not
+ // re-estimated per date window.
+ const spendCurveOptions = useMemo(() => {
+ const forms = ols?.univariate_forms?.forms || {};
+ return [
+ ...UNIVARIATE_FORM_LABELS.filter((item) => forms[item.key]),
+ { key: 'loess', label: 'LOESS', formula: 'Local regression' },
+ ];
+ }, [ols]);
+ // Empty means "follow the AIC winner" -- the default has to keep moving as the scope changes,
+ // so it cannot be frozen into a concrete key the moment the component mounts.
+ const [spendCurveForm, setSpendCurveForm] = useState<string>('');
+ const activeSpendCurveForm = useMemo(() => {
+ const keys = spendCurveOptions.map((item) => item.key);
+ if (spendCurveForm && keys.includes(spendCurveForm)) return spendCurveForm;
+ const best = ols?.univariate_forms?.best;
+ return best && keys.includes(best) ? best : (keys[0] || '');
+ }, [spendCurveOptions, spendCurveForm, ols]);
+ const spendFittedCurve = useMemo(() => {
+ if (activeSpendCurveForm === 'loess') return dailySpendLeadsScatter.curve;
+ const summary = ols?.univariate_forms?.forms?.[activeSpendCurveForm];
+ const points = dailySpendLeadsScatter.points;
+ if (!summary || !points.length) return [];
+ const xs = points.map((item: any) => Number(item.spend));
+ return spendFormCurve(summary, activeSpendCurveForm, Math.min(...xs), Math.max(...xs));
+ }, [activeSpendCurveForm, ols, dailySpendLeadsScatter]);
+
+ // The four forms as small multiples, each with its own fitted curve over the same dots. Built
+ // from the same coefficients the big chart and the comparison table read, so all three views
+ // of a form are the one fit.
+ const spendFormPanels = useMemo(() => {
+ const forms = ols?.univariate_forms?.forms || {};
+ const best = ols?.univariate_forms?.best;
+ const points = dailySpendLeadsScatter.points;
+ if (!points.length) return [];
+ const xs = points.map((item: any) => Number(item.spend));
+ const minX = Math.min(...xs);
+ const maxX = Math.max(...xs);
+ // The x axis for every residual plot. One array for all four forms, because all four are
+ // fitted on the same rows -- which is what lets the residual clouds be read against each
+ // other point for point.
+ const spendAxis: number[] = ols?.univariate_forms?.spend_values || [];
+ return UNIVARIATE_FORM_LABELS
+ .filter((item) => forms[item.key])
+ .map((item) => {
+ const residuals: number[] = forms[item.key].residuals || [];
+ return {
+ ...item,
+ summary: forms[item.key],
+ isBest: item.key === best,
+ curve: spendFormCurve(forms[item.key], item.key, minX, maxX),
+ // Zipped against the shared spend axis. Guarded on equal length: a mismatch would
+ // silently pair each residual with the wrong day, which looks like a real pattern.
+ residualPoints: residuals.length === spendAxis.length
+ ? residuals.map((residual, index) => ({ spend: spendAxis[index], residual }))
+ : [],
+ };
+ });
+ }, [ols, dailySpendLeadsScatter]);
+
+ // One symmetric residual scale shared by all four panels. Per-panel auto-scaling would hide
+ // the comparison being made -- a form with twice the error would draw an identical-looking
+ // cloud. Symmetric about zero so "above the line" and "below it" are the same distance.
+ //
+ // Ticks are handed over explicitly rather than left to Recharts' own tick picker. Left to
+ // itself it chose a middle tick near but not at zero, which rounded to a label of "1" sitting
+ // beside the zero reference line -- the one line in a residual plot that has to be trusted.
+ const spendResidualScale = useMemo(() => {
+ const all = spendFormPanels.flatMap((panel: any) => panel.residualPoints.map((point: any) => Math.abs(Number(point.residual))));
+ const bound = Math.max(1, Math.ceil((all.length ? Math.max(...all) : 0) * 1.1));
+ return { domain: [-bound, bound], ticks: [-bound, 0, bound] };
+ }, [spendFormPanels]);
 
  const budgetPacing = useMemo(() => {
  const daily = (adSpend.daily || []).slice().sort((a: any, b: any) => String(a.day).localeCompare(String(b.day)));
@@ -3672,6 +3990,24 @@ function ForecastPage() {
  trend line, and dots fade/rise back in together as one moment, and Scatter's own
  entrance animation replays for the new point set, instead of dots silently jumping
  to new positions mid-frame. */}
+ {spendCurveOptions.length > 1 && (
+ <div className="scatter-form-picker" role="group" aria-label="Fitted curve form">
+ <span>Fit</span>
+ {spendCurveOptions.map((item) => (
+ <button
+ type="button"
+ key={item.key}
+ title={item.formula}
+ className={item.key === activeSpendCurveForm ? 'is-active' : ''}
+ aria-pressed={item.key === activeSpendCurveForm}
+ onClick={() => setSpendCurveForm(item.key)}
+ >
+ {item.label}
+ {item.key === ols?.univariate_forms?.best && <i aria-label="best fit by AIC">★</i>}
+ </button>
+ ))}
+ </div>
+ )}
  <div className="scatter-plot" key={spendScopeLabel}>
  <ResponsiveContainer width="100%" height="100%">
  <ScatterChart margin={{ top: 20, right: 26, left: 6, bottom: 26 }}>
@@ -3705,9 +4041,9 @@ function ForecastPage() {
  />
  <ZAxis range={[80, 80]} />
  <Tooltip content={<SpendLeadsScatterTooltip />} cursor={{ stroke: 'var(--cursor-line)', strokeDasharray: '4 4', strokeWidth: 1 }} />
- {dailySpendLeadsScatter.curve.length > 1 && (
+ {spendFittedCurve.length > 1 && (
  <Line
- data={dailySpendLeadsScatter.curve}
+ data={spendFittedCurve}
  dataKey="actual_leads"
  stroke="var(--series-median)"
  strokeWidth={1.6}
@@ -3728,6 +4064,22 @@ function ForecastPage() {
  </ScatterChart>
  </ResponsiveContainer>
  </div>
+ {spendFormPanels.length > 1 && (
+ <div className="scatter-form-panels" aria-label="Fitted curve by functional form">
+ {spendFormPanels.map((panel: any) => (
+ <SpendFormMiniChart
+ key={panel.key}
+ panel={panel}
+ points={dailySpendLeadsScatter.points}
+ maxSpend={dailySpendLeadsScatter.maxSpend}
+ maxLeads={dailySpendLeadsScatter.maxLeads}
+ residualScale={spendResidualScale}
+ active={panel.key === activeSpendCurveForm}
+ onSelect={setSpendCurveForm}
+ />
+ ))}
+ </div>
+ )}
  </>
  ) : (
  <div className="card-empty-state scatter-empty">

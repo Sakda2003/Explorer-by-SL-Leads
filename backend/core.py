@@ -5179,6 +5179,11 @@ def _feature_label(feature: str) -> str:
         "days_since_adset_started": "days_since_ad_set_started",
         "ad_set_change_recency": "ad set change recency",
         "ad_change_recency": "ad change recency",
+        # Univariate spend forms (see _fit_univariate_spend_forms). Labelled to read like the
+        # notebook formulas they reproduce -- I(Spending**2), np.log(Spending), np.sqrt(...).
+        "spend_sq": "spent^2",
+        "spend_log": "log(spent)",
+        "spend_sqrt": "sqrt(spent)",
         "holiday_during_holiday": "during holiday",
         "holiday_0_14_days": "holiday <15d",
         "holiday_15_30_days": "holiday 15-30d",
@@ -5427,6 +5432,13 @@ def _fit_ols_summary(values: np.ndarray, feature_rows: list[dict[str, float]], f
         "aic": float(2 * parameter_count - 2 * log_likelihood),
         "bic": float(math.log(len(y)) * parameter_count - 2 * log_likelihood),
         "rmse": float(rmse),
+        # The residual vector itself, for the per-form residual-vs-spend plots. The scalar
+        # diagnostics below (skew / kurtosis / Durbin-Watson / Jarque-Bera) summarise these,
+        # but a summary statistic cannot show *where* a fit goes wrong -- a residual cloud
+        # that fans out with spend, or curves, is the thing those numbers are a shadow of.
+        # Rounded because four decimals is already past the precision of a daily lead count,
+        # and this rides on every OLS response.
+        "residuals": [round(float(value), 4) for value in residuals],
         "features": [_feature_label(feature) for feature in kept_features],
         "coefficients": coefficient_rows,
         "durbin_watson": durbin_watson,
@@ -5929,6 +5941,101 @@ def _load_scope_feature_rows(
     return values, feature_rows, scope
 
 
+# The four functional forms the spend-only regression is fitted in, reproducing the model
+# comparison the per-campaign analysis notebooks run by hand (Leads ~ Spending, ~ Spending +
+# Spending**2, ~ log(Spending), ~ sqrt(Spending)). One straight line could never show whether
+# spend is hitting diminishing returns; that shape question is the whole reason a budget
+# decision reads this card, so all four are fitted and ranked rather than only the linear one.
+UNIVARIATE_SPEND_FORMS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("linear", "OLS", ("spend",)),
+    ("quadratic", "Quadratic OLS", ("spend", "spend_sq")),
+    ("log", "Log OLS", ("spend_log",)),
+    ("sqrt", "Sqrt OLS", ("spend_sqrt",)),
+)
+
+
+def _spend_form_rows(
+    values: np.ndarray, feature_rows: list[dict[str, float]],
+) -> tuple[np.ndarray, list[dict[str, float]]]:
+    """The positive-spend subset of the scope, carrying the three spend transforms.
+
+    Days with no spend are dropped, for two reasons that happen to point the same way:
+
+    * log(0) is undefined and sqrt(0) pins the transform at its boundary, so those forms
+      cannot be fitted on them at all.
+    * AIC is only comparable across models fitted on the *same* observations. Fitting the
+      linear form on every day and the log form on the spending subset, then ranking the two
+      by AIC, would be a silently invalid comparison -- exactly the kind of thing this panel
+      exists to avoid. Every form therefore sees one identical row set.
+
+    Measured cost of the drop (2026-08-19, 30 ad sets): none. Eighteen ad sets have >= 12
+    spending days and eighteen get cards, before and after. The other twelve have *zero*
+    spend across their whole span, so no model of spend -- linear included -- was ever going
+    to fit them; they return no card today for the same reason. Only three ad sets change n
+    at all, and what they lose is a tail of zero-spend days carrying 1-5 leads between them.
+    """
+    kept_values: list[float] = []
+    rows: list[dict[str, float]] = []
+    for value, row in zip(values, feature_rows):
+        spend = float(row.get("spend", 0.0) or 0.0)
+        if not math.isfinite(spend) or spend <= 0.0:
+            continue
+        kept_values.append(float(value))
+        rows.append({
+            "spend": spend,
+            "spend_sq": spend * spend,
+            "spend_log": math.log(spend),
+            "spend_sqrt": math.sqrt(spend),
+        })
+    return np.asarray(kept_values, dtype=float), rows
+
+
+def _fit_univariate_spend_forms(
+    values: np.ndarray, feature_rows: list[dict[str, float]],
+) -> dict:
+    """Fit all four spend forms on one common row set and rank them by AIC.
+
+    Returns every form that could be fitted (a thin scope simply has fewer, since
+    _fit_ols_summary refuses below max(12, terms + 6) observations), plus which one won.
+
+    `best_caveat` carries the objection the notebooks kept running into: the quadratic form
+    can take the lowest AIC while neither of its own terms is individually significant, which
+    means the curvature it is drawing is not actually supported. Publishing the winner
+    without that flag would turn a coin-flip into a recommendation.
+    """
+    y, rows = _spend_form_rows(values, feature_rows)
+    forms: dict[str, dict | None] = {}
+    for key, model_name, features in UNIVARIATE_SPEND_FORMS:
+        forms[key] = _fit_ols_summary(y, rows, list(features), model_name) if len(rows) else None
+    fitted = {key: summary for key, summary in forms.items()
+              if summary and summary.get("aic") is not None}
+    best = min(fitted, key=lambda key: fitted[key]["aic"]) if fitted else None
+    caveat = None
+    if best:
+        weak = [row["term"] for row in forms[best].get("coefficients", [])
+                if row.get("feature") != "Intercept"
+                and (row.get("p_value") is None or float(row["p_value"]) > 0.05)]
+        if weak:
+            caveat = (f"Lowest AIC, but {' and '.join(weak)} "
+                      f"{'is' if len(weak) == 1 else 'are'} not significant at p < 0.05 -- "
+                      "treat the shape as unconfirmed.")
+    return {
+        "forms": forms,
+        "best": best,
+        "best_caveat": caveat,
+        "spend_days": int(len(y)),
+        # The x axis every form's residual plot is drawn against. One array, not one per form:
+        # all four are fitted on the same rows, which is exactly what makes their residuals
+        # comparable point for point.
+        "spend_values": [round(float(row["spend"]), 4) for row in rows],
+        # The x range the fitted curves are honest over. The UI draws each form across this
+        # span only: a curve has no business claiming a shape at spend levels never observed,
+        # and the quadratic form in particular goes wild the moment it is extrapolated.
+        "spend_min": float(np.min([row["spend"] for row in rows])) if rows else None,
+        "spend_max": float(np.max([row["spend"] for row in rows])) if rows else None,
+    }
+
+
 def get_ols_model_summaries(
     ad_set_id: str | None = None, campaign_id: str | None = None,
 ) -> dict:
@@ -5944,7 +6051,12 @@ def get_ols_model_summaries(
     empty = {"univariate": None, "multivariate": None, "declared_variables": [], "scope": scope}
     if values is None or feature_rows is None:
         return empty
-    univariate = _fit_ols_summary(values, feature_rows, ["spend"], "OLS")
+    # All four functional forms, fitted on one common positive-spend row set so their AICs
+    # are comparable. `univariate` stays the linear fit -- it is what every existing caller
+    # reads -- but it now comes from the same subset as its three siblings rather than from
+    # every day in the scope, which is what makes the comparison beside it valid.
+    spend_forms = _fit_univariate_spend_forms(values, feature_rows)
+    univariate = spend_forms["forms"].get("linear")
     # Forward selection, not every declared variable that happens to vary -- see
     # _forward_select_declared_features. The forecast path deliberately does not (it fits all
     # of them under ridge, which backtests better -- OLS_FORECAST_USES_FORWARD_SELECTION).
@@ -5956,10 +6068,17 @@ def get_ols_model_summaries(
     scope["multivariate_terms_wanted"] = len(selected)
     scope["multivariate_days_needed"] = max(12, len(selected) + 6) if selected else 12
     scope["univariate_days_needed"] = 12
+    # Days with spend, not days in the scope. An ad set can have 70 days of leads and no
+    # spend at all (twelve of thirty do), in which case no spend model fits and the UI has
+    # to say why -- "not enough days" would be the wrong explanation.
+    scope["spend_days"] = spend_forms["spend_days"]
     scope["multivariate_selection"] = "forward"
     scope["multivariate_selection_order"] = selection["order"]
     return {
         "univariate": univariate,
+        # The form comparison: every fit that succeeded, which one won on AIC, and the
+        # significance caveat when the winner's own terms do not support its shape.
+        "univariate_forms": spend_forms,
         "multivariate": multivariate,
         "declared_variables": _declared_variable_coverage(
             feature_rows, selected, multivariate, selection=selection,

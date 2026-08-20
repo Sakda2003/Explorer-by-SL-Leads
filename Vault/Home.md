@@ -21,6 +21,7 @@ codebase.
 
 ## Modeling
 - [[OLS-Declared-Ten-Variables]] — the multivariate OLS panel on the 10 declared variables
+- [[Univariate-Spend-Functional-Forms]] — the spend-only regression fitted four ways (linear / quadratic / log / sqrt), ranked by AIC on one shared row set; 18 of 30 ad sets get all four, the other 12 never spent
 - [[Change-History-Hand-Recording]] — the 29-ad-set manual change backfill; directional budget types, and recency becoming a 5-bucket categorical
 - [[Forward-Selection-In-The-App]] — what picks the Multivariate OLS card's variables: greedy search, two entry gates (adjusted R² gain + block F p < 0.10), the per-round "Selection path" trace, and the backtest that kept it out of the forecast path
 - [[Forward-Selection-Notebook]] — two notebooks: `forward_selection_all_variables.ipynb` (current, every variable, whole-block categoricals, forward + backward) and the superseded `forward_selection.ipynb`

@@ -5720,3 +5720,192 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .upload-commit-actions { justify-content: stretch; }
   .upload-commit-actions .button { flex: 1; }
 }
+
+/* ---- Univariate functional-form comparison (Spend-only OLS card) ------------------------
+   One row per fitted form (linear / quadratic / log / sqrt), ranked by AIC. Sits directly
+   under the four fit stats, which on the Forecast page carry `.is-only` and therefore have
+   no bottom border of their own -- so the separation between the two is owned here. Uses the
+   same mono/tabular treatment as the coefficient table so the numbers line up by column. */
+.model-gov-ols-forms {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.model-gov-ols-forms-head,
+.model-gov-ols-forms-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.7fr) repeat(4, minmax(56px, .8fr));
+  align-items: center;
+  gap: 8px 10px;
+  padding: 6px 0;
+}
+.model-gov-ols-forms-head {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+.model-gov-ols-forms-row {
+  border-bottom: 1px solid var(--surface-tint);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.model-gov-ols-forms-row:last-of-type { border-bottom: 0; }
+.model-gov-ols-forms-row .num { text-align: right; }
+/* The AIC winner. Marked with weight and a leading rule rather than a fill, so the row still
+   reads as part of the same table and the numbers stay comparable down the column. */
+.model-gov-ols-forms-row.is-best {
+  box-shadow: inset 2px 0 0 var(--yellow-strong);
+  padding-left: 8px;
+}
+.model-gov-ols-forms-row.is-best .num,
+.model-gov-ols-forms-row.is-best .model-gov-ols-form-name b { color: var(--yellow-strong); }
+.model-gov-ols-form-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.model-gov-ols-form-name b { font-weight: 600; }
+.model-gov-ols-form-name i {
+  color: var(--dim);
+  font-size: 10.5px;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-gov-ols-forms-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.model-gov-ols-forms-note b { color: var(--text); font-weight: 600; }
+
+/* ---- Fitted-curve picker on the spend/leads scatter ------------------------------------
+   Chooses which fitted form the overlay line draws. Defaults to the AIC winner, which the
+   star marks, so the chart opens on the same shape the comparison table recommends. */
+.scatter-form-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 2px;
+}
+.scatter-form-picker > span {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.scatter-form-picker button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11.5px;
+  line-height: 1.2;
+  transition: color .16s ease, border-color .16s ease, background-color .16s ease;
+}
+.scatter-form-picker button:hover { color: var(--text); border-color: var(--line-strong); }
+.scatter-form-picker button.is-active {
+  border-color: var(--yellow-strong);
+  background: var(--surface-tint);
+  color: var(--text);
+}
+.scatter-form-picker button i { color: var(--yellow-strong); font-style: normal; font-size: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .scatter-form-picker button { transition: none; }
+}
+
+/* ---- Four-up functional-form panels under the spend/leads scatter ----------------------
+   One small chart per form (linear / quadratic / log / sqrt), all sharing the parent plot's
+   x and y domains so the four shapes are actually comparable. Each panel is a button: it
+   also selects that form for the large chart above, which is why the picker pills and these
+   panels stay in sync off the same state. */
+.scatter-form-panels {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.scatter-form-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px 9px 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .16s ease, background-color .16s ease;
+}
+.scatter-form-panel:hover { border-color: var(--line-strong); background: var(--surface-tint); }
+.scatter-form-panel.is-active {
+  border-color: var(--yellow-strong);
+  background: var(--surface-tint);
+}
+.scatter-form-panel-head { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.scatter-form-panel-head b {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scatter-form-panel.is-best .scatter-form-panel-head b { color: var(--yellow-strong); }
+.scatter-form-panel-head b i { font-style: normal; }
+.scatter-form-panel-formula {
+  color: var(--dim);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Explicit height: ResponsiveContainer measures its parent, and a flex child with only a
+   percentage height collapses to zero here. */
+.scatter-form-panel-plot { display: block; height: 132px; width: 100%; }
+.scatter-form-panel-stats {
+  display: flex;
+  gap: 12px;
+  color: var(--muted);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.scatter-form-panel-stats b { color: var(--text); font-weight: 600; }
+.scatter-form-panel.is-best .scatter-form-panel-stats b { color: var(--yellow-strong); }
+@media (max-width: 1180px) {
+  .scatter-form-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .scatter-form-panels { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scatter-form-panel { transition: none; }
+}
+
+/* Residual-vs-spend plot stacked under each form's fit plot, so a form's shape and the errors
+   it leaves behind are read together rather than in two separate places. Shorter than the fit
+   plot above it: residuals are scanned for pattern, not for value. */
+.scatter-form-panel-resid-label {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.scatter-form-panel-resid { display: block; height: 96px; width: 100%; }
