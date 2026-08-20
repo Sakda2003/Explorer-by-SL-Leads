@@ -1094,19 +1094,12 @@ function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSig
  <div><Lock size={17} /><input type="password" value={password} placeholder="Password" autoComplete="current-password" disabled={checking || busy} onChange={(event) => setPassword(event.target.value)} autoFocus /></div>
  </label>
  {error && <p className="login-error" role="alert">{error}</p>}
- <div className="login-access-row">
- <span><Check size={14} /> Protected session</span>
- <span>Explorer by SL</span>
- </div>
  <button className="login-submit" type="submit" disabled={checking || busy || !username.trim() || !password}>
  {checking || busy ? <RefreshCw className="spin" size={16} /> : <Lock size={16} />}
  {checking ? 'Checking access' : busy ? 'Signing in' : 'Sign In'}
  </button>
- <p className="login-note">Contact your administrator to get access.</p>
- <p className="login-create-password">First time? Ask an administrator to create your password.</p>
  </div>
  </form>
- <footer className="login-footer">Explorer by SL . Customer traffic forecasting . Internal workspace</footer>
  </main>
  </div>
  );
