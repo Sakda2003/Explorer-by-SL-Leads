@@ -5839,6 +5839,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
   transition: border-color .16s ease, background-color .16s ease;
 }
 .scatter-form-panel:hover { border-color: var(--line-strong); background-color: color-mix(in srgb, var(--surface) 48%, var(--canvas)); }
+.scatter-form-panel:focus-visible {
+  outline: 2px solid var(--yellow-strong);
+  outline-offset: 4px;
+}
 .scatter-form-panel.is-active {
   border-color: var(--yellow-strong);
   background-color: color-mix(in srgb, var(--surface) 74%, var(--canvas));
@@ -5866,6 +5870,42 @@ tr:hover .benchmark-bar span { opacity: 1; }
 /* Explicit height: ResponsiveContainer measures its parent, and a flex child with only a
    percentage height collapses to zero here. */
 .scatter-form-panel-plot { display: block; height: 330px; width: 100%; }
+.scatter-form-panel .recharts-scatter-symbol,
+.scatter-form-panel .recharts-symbols {
+  cursor: pointer;
+}
+.scatter-form-tooltip {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--yellow-strong) 42%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--canvas));
+  box-shadow: 0 16px 36px rgb(var(--shadow-ink) / .28);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.scatter-form-tooltip b {
+  color: var(--yellow-strong);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 800;
+}
+.scatter-form-tooltip span,
+.scatter-form-selected span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.scatter-form-tooltip strong,
+.scatter-form-selected strong {
+  color: var(--text);
+  font-weight: 800;
+}
 .scatter-form-panel-stats {
   display: flex;
   gap: 18px;
@@ -5877,6 +5917,26 @@ tr:hover .benchmark-bar span { opacity: 1; }
 }
 .scatter-form-panel-stats b { color: var(--text); font-weight: 800; }
 .scatter-form-panel.is-best .scatter-form-panel-stats b { color: var(--yellow-strong); }
+.scatter-form-selected {
+  display: flex;
+  align-items: center;
+  gap: 12px 18px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--cyan-strong) 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cyan-soft) 12%, transparent);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.scatter-form-selected b {
+  color: var(--cyan-strong);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 800;
+}
 @media (max-width: 1180px) {
   .scatter-form-panel-plot { height: 280px; }
 }

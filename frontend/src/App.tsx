@@ -1639,11 +1639,40 @@ function SpendFormMiniChart(
   active: boolean; onSelect: (key: string) => void;
  },
 ) {
+ const [selectedPoint, setSelectedPoint] = useState<any>(null);
+ const selectPoint = (kind: 'fit' | 'residual', point: any) => {
+  if (!point) return;
+  setSelectedPoint({
+   kind,
+   spend: Number(point.spend),
+   leads: Number(point.actual_leads),
+   residual: Number(point.residual),
+  });
+ };
+ const tooltipContent = ({ active: tooltipActive, payload }: any) => {
+  const point = payload?.[0]?.payload;
+  if (!tooltipActive || !point) return null;
+  return (
+   <div className="scatter-form-tooltip">
+    <b>{point.residual == null ? 'Observed day' : 'Residual point'}</b>
+    <span>Spend <strong>${olsStat(point.spend, 2)}</strong></span>
+    {point.actual_leads != null && <span>Leads <strong>{olsStat(point.actual_leads, 1)}</strong></span>}
+    {point.residual != null && <span>Residual <strong>{olsStat(point.residual, 2)}</strong></span>}
+   </div>
+  );
+ };
  return (
-  <button
-   type="button"
+  <div
+   role="button"
+   tabIndex={0}
    className={`scatter-form-panel${active ? ' is-active' : ''}${panel.isBest ? ' is-best' : ''}`}
    onClick={() => onSelect(panel.key)}
+   onKeyDown={(event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+     event.preventDefault();
+     onSelect(panel.key);
+    }
+   }}
    aria-pressed={active}
    title={`${panel.formula} - show this fit on the chart above`}
   >
@@ -1655,6 +1684,7 @@ function SpendFormMiniChart(
     <ResponsiveContainer width="100%" height="100%">
     <ScatterChart margin={{ top: 12, right: 16, left: 6, bottom: 8 }}>
       <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
+      <Tooltip cursor={{ stroke: 'var(--scatter-fit)', strokeOpacity: 0.28, strokeWidth: 1.4 }} content={tooltipContent} wrapperStyle={{ outline: 'none' }} />
       <XAxis
        type="number"
        dataKey="spend"
@@ -1677,8 +1707,16 @@ function SpendFormMiniChart(
        tickCount={4}
        width={32}
       />
-      <ZAxis range={[48, 48]} />
-      <Scatter data={points} fill="var(--scatter-point)" fillOpacity={0.88} stroke="var(--canvas)" strokeWidth={1.1} isAnimationActive={false} />
+      <ZAxis range={[150, 150]} />
+      <Scatter
+       data={points}
+       fill="var(--scatter-point)"
+       fillOpacity={0.9}
+       stroke="var(--canvas)"
+       strokeWidth={1.5}
+       isAnimationActive={false}
+       onClick={(point: any) => selectPoint('fit', point?.payload || point)}
+      />
       {panel.curve.length > 1 && (
        <Line
         data={panel.curve}
@@ -1706,6 +1744,7 @@ function SpendFormMiniChart(
       <ResponsiveContainer width="100%" height="100%">
        <ScatterChart margin={{ top: 10, right: 16, left: 6, bottom: 8 }}>
         <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
+        <Tooltip cursor={{ stroke: 'var(--scatter-fit)', strokeOpacity: 0.28, strokeWidth: 1.4 }} content={tooltipContent} wrapperStyle={{ outline: 'none' }} />
         <XAxis
          type="number"
          dataKey="spend"
@@ -1727,20 +1766,36 @@ function SpendFormMiniChart(
          tickLine={false}
          width={32}
         />
-        <ZAxis range={[52, 52]} />
+        <ZAxis range={[160, 160]} />
         <ReferenceLine y={0} stroke="var(--scatter-fit)" strokeOpacity={0.95} strokeWidth={2.2} />
-        <Scatter data={panel.residualPoints} fill="var(--scatter-point)" fillOpacity={0.9} stroke="var(--canvas)" strokeWidth={1.1} isAnimationActive={false} />
+        <Scatter
+         data={panel.residualPoints}
+         fill="var(--scatter-point)"
+         fillOpacity={0.9}
+         stroke="var(--canvas)"
+         strokeWidth={1.5}
+         isAnimationActive={false}
+         onClick={(point: any) => selectPoint('residual', point?.payload || point)}
+        />
        </ScatterChart>
       </ResponsiveContainer>
      </span>
     </>
+   )}
+   {selectedPoint && (
+    <span className="scatter-form-selected">
+     <b>{selectedPoint.kind === 'fit' ? 'Selected observed day' : 'Selected residual'}</b>
+     <span>Spend <strong>${olsStat(selectedPoint.spend, 2)}</strong></span>
+     {Number.isFinite(selectedPoint.leads) && <span>Leads <strong>{olsStat(selectedPoint.leads, 1)}</strong></span>}
+     {Number.isFinite(selectedPoint.residual) && <span>Residual <strong>{olsStat(selectedPoint.residual, 2)}</strong></span>}
+    </span>
    )}
    <span className="scatter-form-panel-stats">
     <span>R2 <b>{olsStat(panel.summary?.r_squared, 3)}</b></span>
     <span>AIC <b>{olsStat(panel.summary?.aic, 1)}</b></span>
     <span>Skew <b>{olsStat(panel.summary?.skew, 2)}</b></span>
    </span>
-  </button>
+  </div>
  );
 }
 
