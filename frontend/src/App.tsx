@@ -52,10 +52,48 @@ import {
 const API = '/api';
 type Page = 'Forecast' | 'Optimization' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
 const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
+const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 let apiAuthHeader = '';
 
 const setApiAuthHeader = (value: string) => {
  apiAuthHeader = value;
+};
+
+const readStoredAuth = () => {
+ const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+ if (raw) {
+  try {
+   const saved = JSON.parse(raw);
+   if (typeof saved?.token === 'string' && typeof saved?.expiresAt === 'number') {
+    if (Date.now() < saved.expiresAt) return saved.token;
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+   } else {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+   }
+  } catch {
+   if (raw.startsWith('Basic ')) {
+    storeAuth(raw);
+    return raw;
+   }
+   localStorage.removeItem(AUTH_STORAGE_KEY);
+  }
+ }
+ const sessionToken = sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
+ if (sessionToken) {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: sessionToken, expiresAt: Date.now() + AUTH_TTL_MS }));
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+ }
+ return sessionToken;
+};
+
+const storeAuth = (token: string) => {
+ localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, expiresAt: Date.now() + AUTH_TTL_MS }));
+ sessionStorage.removeItem(AUTH_STORAGE_KEY);
+};
+
+const clearStoredAuth = () => {
+ localStorage.removeItem(AUTH_STORAGE_KEY);
+ sessionStorage.removeItem(AUTH_STORAGE_KEY);
 };
 
 // Mirrors CHANGE_SCOPES in backend/core.py. Change TYPE was removed from the model on
@@ -7058,7 +7096,7 @@ export function App() {
 
  useEffect(() => {
   let cancelled = false;
-  const stored = sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
+  const stored = readStoredAuth();
   if (stored) setApiAuthHeader(stored);
   api('/auth/status')
    .then(async (status: any) => {
@@ -7075,7 +7113,7 @@ export function App() {
      const me = await api('/auth/me');
      if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: me.user || '' });
     } catch {
-     sessionStorage.removeItem(AUTH_STORAGE_KEY);
+     clearStoredAuth();
      setApiAuthHeader('');
      if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '' });
     }
@@ -7088,12 +7126,12 @@ export function App() {
 
  const signedIn = (token: string, user: string) => {
   setApiAuthHeader(token);
-  sessionStorage.setItem(AUTH_STORAGE_KEY, token);
+  storeAuth(token);
   setAuth({ checking: false, required: true, signedIn: true, user });
  };
 
  const signOut = () => {
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  clearStoredAuth();
   setApiAuthHeader('');
   setPage('Forecast');
   setAuth((current) => ({ ...current, signedIn: false, user: '' }));
