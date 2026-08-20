@@ -277,8 +277,11 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   justify-self: center;
   width: min(620px, calc(100vw - 44px));
   max-width: 100%;
+  min-height: auto;
+  margin-left: 0;
   display: grid;
   justify-items: center;
+  background: transparent;
 }
 .login-hero {
   display: grid;
