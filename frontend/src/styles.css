@@ -248,7 +248,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: clamp(28px, 6vw, 58px) 22px;
+  padding: clamp(24px, 4vw, 48px) 22px;
   overflow: hidden;
   overflow-x: clip;
   background: var(--canvas);
@@ -275,7 +275,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   position: relative;
   z-index: 1;
   justify-self: center;
-  width: min(620px, calc(100vw - 44px));
+  width: min(690px, calc(100vw - 44px));
   max-width: 100%;
   min-height: auto;
   margin-left: 0;
@@ -286,12 +286,12 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .login-hero {
   display: grid;
   justify-items: center;
-  gap: 7px;
-  margin-bottom: 22px;
+  gap: 8px;
+  margin-bottom: 26px;
   text-align: center;
 }
 .login-hero img {
-  width: 54px;
+  width: 60px;
   height: auto;
   margin-bottom: 2px;
   filter: drop-shadow(0 12px 24px rgb(var(--shadow-ink) / .44));
@@ -300,7 +300,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   margin: 0;
   color: var(--text);
   font-family: var(--font-serif);
-  font-size: clamp(58px, 8vw, 82px);
+  font-size: clamp(68px, 8.8vw, 96px);
   font-weight: 700;
   line-height: .9;
   letter-spacing: 0;
@@ -322,9 +322,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   text-transform: uppercase;
 }
 .login-card {
-  width: min(488px, 100%);
+  width: min(540px, 100%);
   max-width: 100%;
-  padding: 22px;
+  padding: 26px;
   border: 1px solid color-mix(in srgb, var(--gold) 62%, transparent);
   border-radius: var(--r-lg);
   background: color-mix(in srgb, var(--surface) 72%, var(--canvas));
@@ -338,7 +338,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   z-index: 1;
   width: 100%;
   display: grid;
-  gap: 14px;
+  gap: 17px;
 }
 .login-title {
   margin: 0 0 4px;
@@ -361,7 +361,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   text-transform: uppercase;
 }
 .login-field div {
-  height: 38px;
+  height: 44px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -399,7 +399,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .login-submit {
   justify-self: stretch;
   min-width: 0;
-  height: 34px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -419,9 +419,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .login-submit:active { transform: scale(.98); }
 .login-submit:disabled { opacity: .58; cursor: not-allowed; transform: none; box-shadow: none; }
 @media (max-width: 820px) {
-  .login-screen { align-items: start; }
-  .login-hero h1 { font-size: clamp(52px, 16vw, 72px); }
-  .login-card { padding: 20px; }
+  .login-screen { place-items: center; }
+  .login-hero h1 { font-size: clamp(64px, 15vw, 82px); }
+  .login-card { padding: 24px; }
 }
 @media (max-width: 440px) {
   .login-screen { padding-inline: 16px; }
