@@ -1653,38 +1653,38 @@ function SpendFormMiniChart(
    </span>
    <span className="scatter-form-panel-plot">
     <ResponsiveContainer width="100%" height="100%">
-     <ScatterChart margin={{ top: 6, right: 8, left: 2, bottom: 2 }}>
+    <ScatterChart margin={{ top: 12, right: 16, left: 6, bottom: 8 }}>
       <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
       <XAxis
        type="number"
        dataKey="spend"
        domain={[0, Math.ceil(maxSpend * 1.08)]}
        tickFormatter={(value) => `$${fmt(Math.round(value))}`}
-       tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
-       axisLine={{ stroke: 'var(--scatter-axis-line)' }}
+       tick={{ fontSize: 12, fontWeight: 700, fill: 'var(--scatter-muted)' }}
+       axisLine={{ stroke: 'var(--scatter-axis-line)', strokeWidth: 1.4 }}
        tickLine={false}
        tickCount={4}
-       height={16}
+       height={24}
       />
       <YAxis
        type="number"
        dataKey="actual_leads"
        domain={[0, Math.ceil(maxLeads * 1.12)]}
        allowDecimals={false}
-       tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
+       tick={{ fontSize: 12, fontWeight: 700, fill: 'var(--scatter-muted)' }}
        axisLine={false}
        tickLine={false}
        tickCount={4}
-       width={22}
+       width={32}
       />
-      <ZAxis range={[16, 16]} />
-      <Scatter data={points} fill="var(--scatter-point)" fillOpacity={0.68} isAnimationActive={false} />
+      <ZAxis range={[48, 48]} />
+      <Scatter data={points} fill="var(--scatter-point)" fillOpacity={0.88} stroke="var(--canvas)" strokeWidth={1.1} isAnimationActive={false} />
       {panel.curve.length > 1 && (
        <Line
         data={panel.curve}
         dataKey="actual_leads"
         stroke={panel.isBest || active ? 'var(--scatter-fit)' : 'var(--series-median)'}
-        strokeWidth={panel.isBest || active ? 2.1 : 1.5}
+        strokeWidth={panel.isBest || active ? 3.4 : 2.2}
         dot={false}
         activeDot={false}
         isAnimationActive={false}
@@ -1704,32 +1704,32 @@ function SpendFormMiniChart(
      <span className="scatter-form-panel-resid-label">Residuals vs spend</span>
      <span className="scatter-form-panel-resid">
       <ResponsiveContainer width="100%" height="100%">
-       <ScatterChart margin={{ top: 4, right: 8, left: 2, bottom: 2 }}>
+       <ScatterChart margin={{ top: 10, right: 16, left: 6, bottom: 8 }}>
         <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
         <XAxis
          type="number"
          dataKey="spend"
          domain={[0, Math.ceil(maxSpend * 1.08)]}
          tickFormatter={(value) => `$${fmt(Math.round(value))}`}
-         tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
-         axisLine={{ stroke: 'var(--scatter-axis-line)' }}
+         tick={{ fontSize: 12, fontWeight: 700, fill: 'var(--scatter-muted)' }}
+         axisLine={{ stroke: 'var(--scatter-axis-line)', strokeWidth: 1.4 }}
          tickLine={false}
          tickCount={4}
-         height={16}
+         height={24}
         />
         <YAxis
          type="number"
          dataKey="residual"
          domain={residualScale.domain}
          ticks={residualScale.ticks}
-         tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
+         tick={{ fontSize: 12, fontWeight: 700, fill: 'var(--scatter-muted)' }}
          axisLine={false}
          tickLine={false}
-         width={22}
+         width={32}
         />
-        <ZAxis range={[16, 16]} />
-        <ReferenceLine y={0} stroke="var(--scatter-fit)" strokeOpacity={0.75} strokeWidth={1.1} />
-        <Scatter data={panel.residualPoints} fill="var(--scatter-point)" fillOpacity={0.68} isAnimationActive={false} />
+        <ZAxis range={[52, 52]} />
+        <ReferenceLine y={0} stroke="var(--scatter-fit)" strokeOpacity={0.95} strokeWidth={2.2} />
+        <Scatter data={panel.residualPoints} fill="var(--scatter-point)" fillOpacity={0.9} stroke="var(--canvas)" strokeWidth={1.1} isAnimationActive={false} />
        </ScatterChart>
       </ResponsiveContainer>
      </span>

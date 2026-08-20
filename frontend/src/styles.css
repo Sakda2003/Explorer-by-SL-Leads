@@ -5819,24 +5819,20 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panels {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 12px;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid color-mix(in srgb, var(--text) 5%, transparent);
 }
 .scatter-form-panel {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
   min-width: 0;
-  padding: 11px 10px 9px;
+  padding: 18px 18px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--text) 2%, transparent) 1px, transparent 1px),
-    linear-gradient(0deg, color-mix(in srgb, var(--text) 1.6%, transparent) 1px, transparent 1px),
-    color-mix(in srgb, var(--canvas) 34%, transparent);
-  background-size: 86px 86px, 86px 86px, auto;
+  background: color-mix(in srgb, var(--surface) 64%, var(--canvas));
   color: var(--text);
   cursor: pointer;
   text-align: left;
@@ -5845,14 +5841,14 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panel:hover { border-color: var(--line-strong); background-color: color-mix(in srgb, var(--surface) 48%, var(--canvas)); }
 .scatter-form-panel.is-active {
   border-color: var(--yellow-strong);
-  background-color: color-mix(in srgb, var(--gold) 7%, var(--canvas));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 14%, transparent);
+  background-color: color-mix(in srgb, var(--surface) 74%, var(--canvas));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 16%, transparent), 0 18px 44px rgb(var(--shadow-ink) / .18);
 }
-.scatter-form-panel-head { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.scatter-form-panel-head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .scatter-form-panel-head b {
   color: var(--text);
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 750;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5862,30 +5858,32 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panel-formula {
   color: var(--dim);
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 9.5px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 /* Explicit height: ResponsiveContainer measures its parent, and a flex child with only a
    percentage height collapses to zero here. */
-.scatter-form-panel-plot { display: block; height: 240px; width: 100%; }
+.scatter-form-panel-plot { display: block; height: 330px; width: 100%; }
 .scatter-form-panel-stats {
   display: flex;
-  gap: 10px;
+  gap: 18px;
   flex-wrap: wrap;
   color: var(--muted);
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 10px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-.scatter-form-panel-stats b { color: var(--text); font-weight: 600; }
+.scatter-form-panel-stats b { color: var(--text); font-weight: 800; }
 .scatter-form-panel.is-best .scatter-form-panel-stats b { color: var(--yellow-strong); }
 @media (max-width: 1180px) {
-  .scatter-form-panel-plot { height: 210px; }
+  .scatter-form-panel-plot { height: 280px; }
 }
 @media (max-width: 620px) {
-  .scatter-form-panel-plot { height: 180px; }
+  .scatter-form-panel { padding: 14px; }
+  .scatter-form-panel-plot { height: 220px; }
+  .scatter-form-panel-resid { height: 160px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .scatter-form-panel { transition: none; }
@@ -5896,9 +5894,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
    plot above it: residuals are scanned for pattern, not for value. */
 .scatter-form-panel-resid-label {
   margin-top: 2px;
-  color: var(--dim);
-  font-size: 9.5px;
-  letter-spacing: .05em;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: .06em;
   text-transform: uppercase;
 }
-.scatter-form-panel-resid { display: block; height: 150px; width: 100%; }
+.scatter-form-panel-resid { display: block; height: 190px; width: 100%; }
