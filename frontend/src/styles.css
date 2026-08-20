@@ -1488,9 +1488,14 @@ main:has(.upload-v2-page) {
 }
 /* ---- Daily spend against daily leads scatter ---- */
 .forecast-v2-page .spend-leads-scatter {
- /* Re-scoped for the page's fixed near-black ground: a 0.62 fill of this composites to ~5.3:1
- on var(--dim), matching the amber used for spend elsewhere on this page (SpendCplDot, budget line). */
- --scatter-spend: var(--yellow-strong);
+ --scatter-point: color-mix(in srgb, var(--cyan-strong) 72%, var(--status-info-fill));
+ --scatter-point-glow: color-mix(in srgb, var(--cyan-strong) 62%, transparent);
+ --scatter-fit: var(--yellow-strong);
+ --scatter-band: color-mix(in srgb, var(--gold) 22%, transparent);
+ --scatter-grid: color-mix(in srgb, var(--muted) 12%, transparent);
+ --scatter-axis: color-mix(in srgb, var(--text) 72%, var(--muted));
+ --scatter-muted: color-mix(in srgb, var(--muted) 86%, transparent);
+ --scatter-axis-line: color-mix(in srgb, var(--muted) 24%, transparent);
  display: block;
  margin-top: 26px;
  padding-top: 24px;
@@ -1498,10 +1503,16 @@ main:has(.upload-v2-page) {
 }
 .forecast-v2-page .scatter-card {
  min-height: 0;
- padding: 0;
- border: 0;
- background: transparent;
- overflow: visible;
+ padding: 18px;
+ border: 1px solid var(--line);
+ border-radius: 12px;
+ background:
+  linear-gradient(90deg, color-mix(in srgb, var(--text) 2.2%, transparent) 1px, transparent 1px),
+  linear-gradient(0deg, color-mix(in srgb, var(--text) 1.8%, transparent) 1px, transparent 1px),
+  color-mix(in srgb, var(--surface) 48%, var(--canvas));
+ background-size: 82px 82px, 82px 82px, auto;
+ box-shadow: inset 0 1px color-mix(in srgb, var(--text) 4%, transparent), var(--elev-1);
+ overflow: hidden;
 }
 .forecast-v2-page .scatter-scope {
  display: inline-flex;
@@ -1513,19 +1524,19 @@ main:has(.upload-v2-page) {
  font-weight: 600;
  letter-spacing: .01em;
 }
-.forecast-v2-page .scatter-scope i { width: 14px; height: 3px; border-radius: 2px; background: var(--scatter-spend); }
+.forecast-v2-page .scatter-scope i { width: 14px; height: 3px; border-radius: 2px; background: var(--scatter-fit); }
 .forecast-v2-page .scatter-kpi-row {
  display: grid;
  grid-template-columns: repeat(3, minmax(120px, 1fr));
  gap: 12px;
- margin-bottom: 20px;
+ margin-bottom: 18px;
 }
 .forecast-v2-page .scatter-kpi {
  min-width: 0;
- padding: 13px 16px;
+ padding: 11px 14px;
  border: 1px solid var(--line);
- border-radius: 10px;
- background: var(--surface-tint);
+ border-radius: 7px;
+ background: color-mix(in srgb, var(--canvas) 34%, transparent);
 }
 .forecast-v2-page .scatter-kpi span {
  display: block;
@@ -1544,9 +1555,72 @@ main:has(.upload-v2-page) {
  text-overflow: ellipsis;
  white-space: nowrap;
 }
+.forecast-v2-page .scatter-model-head {
+ display: flex;
+ align-items: flex-start;
+ justify-content: space-between;
+ gap: 18px;
+ margin: 4px 0 12px;
+ padding: 0 2px;
+}
+.forecast-v2-page .scatter-model-copy {
+ min-width: 0;
+ display: grid;
+ gap: 9px;
+}
+.forecast-v2-page .scatter-model-copy h3 {
+ margin: 0;
+ color: var(--text);
+ font-family: "JetBrains Mono", ui-monospace, monospace;
+ font-size: clamp(16px, 1.45vw, 21px);
+ font-weight: 500;
+ letter-spacing: .03em;
+ line-height: 1.1;
+}
+.forecast-v2-page .scatter-model-legend {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ gap: 8px 16px;
+ color: var(--scatter-muted);
+ font-family: "JetBrains Mono", ui-monospace, monospace;
+ font-size: 11px;
+}
+.forecast-v2-page .scatter-model-legend span {
+ min-width: 0;
+ display: inline-flex;
+ align-items: center;
+ gap: 8px;
+}
+.forecast-v2-page .scatter-model-legend i {
+ flex: none;
+ display: inline-block;
+}
+.forecast-v2-page .scatter-model-legend .band {
+ width: 32px;
+ height: 11px;
+ border-radius: 2px;
+ background: var(--scatter-band);
+}
+.forecast-v2-page .scatter-model-legend .fit {
+ width: 34px;
+ height: 2px;
+ border-radius: 999px;
+ background: var(--scatter-fit);
+ box-shadow: 0 0 10px color-mix(in srgb, var(--scatter-fit) 24%, transparent);
+}
+.forecast-v2-page .scatter-model-legend .points {
+ width: 9px;
+ height: 9px;
+ border-radius: 50%;
+ background: var(--scatter-point);
+ box-shadow: 0 0 9px color-mix(in srgb, var(--scatter-point) 34%, transparent);
+}
 .forecast-v2-page .scatter-plot {
- height: 340px;
- margin: 0 -6px;
+ height: 430px;
+ margin: 0 -4px;
+ padding: 4px 0 0;
+ border-top: 1px solid color-mix(in srgb, var(--text) 4%, transparent);
  /* Reuses the app's one card-entrance keyframe (metric cards, popovers) rather than a
  bespoke one, and replays it because this div is freshly mounted (keyed on scope) every
  time the campaign / ad set selection changes. */
@@ -1560,8 +1634,8 @@ main:has(.upload-v2-page) {
 }
 .forecast-v2-page .recharts-scatter-symbol:hover .scatter-dot,
 .forecast-v2-page .recharts-scatter-symbol:focus .scatter-dot {
- transform: scale(1.4);
- filter: drop-shadow(0 0 6px color-mix(in srgb, var(--scatter-spend) 55%, transparent));
+ transform: scale(1.32);
+ filter: drop-shadow(0 0 9px color-mix(in srgb, var(--scatter-point) 58%, transparent));
 }
 .forecast-v2-page .scatter-note {
  max-width: 72ch;
@@ -1575,7 +1649,8 @@ main:has(.upload-v2-page) {
 @media (max-width: 1180px) {
  .forecast-v2-page .scatter-kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
  .forecast-v2-page .scatter-kpi { padding: 11px 13px; }
- .forecast-v2-page .scatter-plot { height: 300px; }
+ .forecast-v2-page .scatter-model-head { flex-direction: column; }
+ .forecast-v2-page .scatter-plot { height: 360px; }
 }
 @media (prefers-reduced-motion: reduce) {
  .forecast-v2-page .scatter-plot { animation: none; }
@@ -1583,6 +1658,8 @@ main:has(.upload-v2-page) {
 }
 @media (max-width: 640px) {
  .forecast-v2-page .scatter-kpi-row { grid-template-columns: 1fr; }
+ .forecast-v2-page .scatter-card { padding: 14px; }
+ .forecast-v2-page .scatter-plot { height: 320px; }
 }
 
 .forecast-v2-page .allocation-card-v2 {
@@ -5790,7 +5867,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 4px 0 2px;
+  justify-content: flex-end;
+  margin: 0;
 }
 .scatter-form-picker > span {
   margin-right: 2px;
@@ -5803,10 +5881,11 @@ tr:hover .benchmark-bar span { opacity: 1; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 9px;
+  min-height: 28px;
+  padding: 4px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: transparent;
+  background: color-mix(in srgb, var(--canvas) 34%, transparent);
   color: var(--muted);
   cursor: pointer;
   font-size: 11.5px;
@@ -5816,8 +5895,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-picker button:hover { color: var(--text); border-color: var(--line-strong); }
 .scatter-form-picker button.is-active {
   border-color: var(--yellow-strong);
-  background: var(--surface-tint);
+  background: color-mix(in srgb, var(--gold) 11%, transparent);
   color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 18%, transparent);
 }
 .scatter-form-picker button i { color: var(--yellow-strong); font-style: normal; font-size: 10px; }
 @media (prefers-reduced-motion: reduce) {
@@ -5833,33 +5913,38 @@ tr:hover .benchmark-bar span { opacity: 1; }
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 5%, transparent);
 }
 .scatter-form-panel {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 9px 9px 7px;
+  padding: 11px 10px 9px;
   border: 1px solid var(--line);
-  border-radius: 9px;
-  background: transparent;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--text) 2%, transparent) 1px, transparent 1px),
+    linear-gradient(0deg, color-mix(in srgb, var(--text) 1.6%, transparent) 1px, transparent 1px),
+    color-mix(in srgb, var(--canvas) 34%, transparent);
+  background-size: 86px 86px, 86px 86px, auto;
   color: var(--text);
   cursor: pointer;
   text-align: left;
   transition: border-color .16s ease, background-color .16s ease;
 }
-.scatter-form-panel:hover { border-color: var(--line-strong); background: var(--surface-tint); }
+.scatter-form-panel:hover { border-color: var(--line-strong); background-color: color-mix(in srgb, var(--surface) 48%, var(--canvas)); }
 .scatter-form-panel.is-active {
   border-color: var(--yellow-strong);
-  background: var(--surface-tint);
+  background-color: color-mix(in srgb, var(--gold) 7%, var(--canvas));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 14%, transparent);
 }
 .scatter-form-panel-head { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .scatter-form-panel-head b {
   color: var(--text);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5880,7 +5965,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panel-plot { display: block; height: 132px; width: 100%; }
 .scatter-form-panel-stats {
   display: flex;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
   color: var(--muted);
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 10px;

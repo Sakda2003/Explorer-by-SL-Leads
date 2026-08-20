@@ -526,8 +526,8 @@ function SpendLeadsScatterDot({ cx, cy }: any) {
  // underneath and exposes a ring of line/grid around its edge.
  return (
  <g className="scatter-dot">
- <circle cx={cx} cy={cy} r={7} fill="#0b0c0d" />
- <circle cx={cx} cy={cy} r={7} fill="var(--scatter-spend)" fillOpacity={0.62} />
+ <circle cx={cx} cy={cy} r={7.2} fill="var(--canvas)" fillOpacity={0.82} />
+ <circle cx={cx} cy={cy} r={5.4} fill="var(--scatter-point)" fillOpacity={0.88} stroke="var(--scatter-point-glow)" strokeWidth={1.2} />
  </g>
  );
 }
@@ -1553,6 +1553,51 @@ function spendFormCurve(
  return out;
 }
 
+const spendCoefficient = (summary: any, feature: string) => {
+ const row = (summary?.coefficients || []).find((item: any) => item.feature === feature);
+ const value = row ? Number(row.coef) : null;
+ return value != null && Number.isFinite(value) ? value : null;
+};
+
+const spendEquationText = (summary: any, formKey: string) => {
+ const intercept = spendCoefficient(summary, 'Intercept');
+ if (formKey === 'loess') return 'fit: local regression';
+ if (intercept == null) return 'fit unavailable';
+ const signed = (value: number) => `${value >= 0 ? '+' : '-'} ${Math.abs(value).toFixed(3)}*`;
+ if (formKey === 'linear') {
+  const b = spendCoefficient(summary, 'spend');
+  return b == null ? 'fit unavailable' : `fit: leads = ${intercept.toFixed(2)} ${signed(b)}spent`;
+ }
+ if (formKey === 'quadratic') {
+  const b = spendCoefficient(summary, 'spend');
+  const c = spendCoefficient(summary, 'spend_sq');
+  return b == null || c == null ? 'fit unavailable' : `fit: leads = ${intercept.toFixed(2)} ${signed(b)}spent ${signed(c)}spent^2`;
+ }
+ if (formKey === 'log') {
+  const b = spendCoefficient(summary, 'spend_log');
+  return b == null ? 'fit unavailable' : `fit: leads = ${intercept.toFixed(2)} ${signed(b)}log(spent)`;
+ }
+ if (formKey === 'sqrt') {
+  const b = spendCoefficient(summary, 'spend_sqrt');
+  return b == null ? 'fit unavailable' : `fit: leads = ${intercept.toFixed(2)} ${signed(b)}sqrt(spent)`;
+ }
+ return 'fit unavailable';
+};
+
+const spendCurveWithBand = (curve: any[], summary: any, maxLeads: number) => {
+ const rmse = Number(summary?.rmse);
+ if (!curve.length || !Number.isFinite(rmse) || rmse <= 0) return [];
+ const upperCap = Math.max(1, Math.ceil(maxLeads * 1.28));
+ const halfWidth = 1.96 * rmse;
+ return curve.map((point) => {
+  const fit = Number(point.actual_leads);
+  return {
+   ...point,
+   fit_band: [Math.max(0, fit - halfWidth), Math.min(upperCap, fit + halfWidth)],
+  };
+ });
+};
+
 // One small chart per functional form, drawn side by side so the four shapes can be compared
 // at a glance instead of one at a time through the picker. Same dots in every panel -- only the
 // fitted curve changes -- and every panel shares the parent's x/y domains, which is the whole
@@ -1588,14 +1633,14 @@ function SpendFormMiniChart(
    <span className="scatter-form-panel-plot">
     <ResponsiveContainer width="100%" height="100%">
      <ScatterChart margin={{ top: 6, right: 8, left: 2, bottom: 2 }}>
-      <CartesianGrid strokeDasharray="3 5" stroke="var(--grid-line)" />
+      <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
       <XAxis
        type="number"
        dataKey="spend"
        domain={[0, Math.ceil(maxSpend * 1.08)]}
        tickFormatter={(value) => `$${fmt(Math.round(value))}`}
-       tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
-       axisLine={{ stroke: 'var(--axis-line)' }}
+       tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
+       axisLine={{ stroke: 'var(--scatter-axis-line)' }}
        tickLine={false}
        tickCount={4}
        height={16}
@@ -1605,20 +1650,20 @@ function SpendFormMiniChart(
        dataKey="actual_leads"
        domain={[0, Math.ceil(maxLeads * 1.12)]}
        allowDecimals={false}
-       tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
+       tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
        axisLine={false}
        tickLine={false}
        tickCount={4}
        width={22}
       />
       <ZAxis range={[16, 16]} />
-      <Scatter data={points} fill="var(--scatter-spend)" fillOpacity={0.42} isAnimationActive={false} />
+      <Scatter data={points} fill="var(--scatter-point)" fillOpacity={0.68} isAnimationActive={false} />
       {panel.curve.length > 1 && (
        <Line
         data={panel.curve}
         dataKey="actual_leads"
-        stroke={panel.isBest ? 'var(--yellow-strong)' : 'var(--series-median)'}
-        strokeWidth={1.7}
+        stroke={panel.isBest || active ? 'var(--scatter-fit)' : 'var(--series-median)'}
+        strokeWidth={panel.isBest || active ? 2.1 : 1.5}
         dot={false}
         activeDot={false}
         isAnimationActive={false}
@@ -1639,14 +1684,14 @@ function SpendFormMiniChart(
      <span className="scatter-form-panel-resid">
       <ResponsiveContainer width="100%" height="100%">
        <ScatterChart margin={{ top: 4, right: 8, left: 2, bottom: 2 }}>
-        <CartesianGrid strokeDasharray="3 5" stroke="var(--grid-line)" />
+        <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
         <XAxis
          type="number"
          dataKey="spend"
          domain={[0, Math.ceil(maxSpend * 1.08)]}
          tickFormatter={(value) => `$${fmt(Math.round(value))}`}
-         tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
-         axisLine={{ stroke: 'var(--axis-line)' }}
+         tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
+         axisLine={{ stroke: 'var(--scatter-axis-line)' }}
          tickLine={false}
          tickCount={4}
          height={16}
@@ -1656,14 +1701,14 @@ function SpendFormMiniChart(
          dataKey="residual"
          domain={residualScale.domain}
          ticks={residualScale.ticks}
-         tick={{ fontSize: 9.5, fill: 'var(--dim)' }}
+         tick={{ fontSize: 9.5, fill: 'var(--scatter-muted)' }}
          axisLine={false}
          tickLine={false}
          width={22}
         />
         <ZAxis range={[16, 16]} />
-        <ReferenceLine y={0} stroke="var(--axis-line)" strokeWidth={1.2} />
-        <Scatter data={panel.residualPoints} fill="var(--scatter-spend)" fillOpacity={0.42} isAnimationActive={false} />
+        <ReferenceLine y={0} stroke="var(--scatter-fit)" strokeOpacity={0.75} strokeWidth={1.1} />
+        <Scatter data={panel.residualPoints} fill="var(--scatter-point)" fillOpacity={0.68} isAnimationActive={false} />
        </ScatterChart>
       </ResponsiveContainer>
      </span>
@@ -3101,6 +3146,7 @@ function ForecastPage() {
  const actual_leads = Number(item.actual_leads || 0);
  return { day: String(item.day), spend, actual_leads, cpl: actual_leads > 0 ? spend / actual_leads : null };
  });
+ const minSpend = points.length ? Math.min(...points.map((item: any) => item.spend)) : 0;
  const maxSpend = Math.max(1, ...points.map((item: any) => item.spend));
  const maxLeads = Math.max(1, ...points.map((item: any) => item.actual_leads));
  // LOESS (locally weighted linear regression), not a single straight OLS line — a fixed
@@ -3110,7 +3156,7 @@ function ForecastPage() {
  // to $0: the curve has no business claiming a shape at spend levels never actually seen.
  const curve = loessCurve(points.map((item: any) => ({ x: item.spend, y: item.actual_leads })))
  .map((point) => ({ spend: point.x, actual_leads: point.y }));
- return { points, maxSpend, maxLeads, curve };
+ return { points, minSpend, maxSpend, maxLeads, curve };
  }, [spendDaily]);
 
  // Fitted-curve overlay for the scatter. The four parametric forms are read straight off the
@@ -3146,6 +3192,23 @@ function ForecastPage() {
  const xs = points.map((item: any) => Number(item.spend));
  return spendFormCurve(summary, activeSpendCurveForm, Math.min(...xs), Math.max(...xs));
  }, [activeSpendCurveForm, ols, dailySpendLeadsScatter]);
+ const activeSpendCurveOption = useMemo(
+ () => spendCurveOptions.find((item) => item.key === activeSpendCurveForm),
+ [spendCurveOptions, activeSpendCurveForm],
+ );
+ const activeSpendCurveSummary = activeSpendCurveForm === 'loess'
+ ? null
+ : ols?.univariate_forms?.forms?.[activeSpendCurveForm];
+ const spendFittedCurveBand = useMemo(
+ () => spendCurveWithBand(spendFittedCurve, activeSpendCurveSummary, dailySpendLeadsScatter.maxLeads),
+ [spendFittedCurve, activeSpendCurveSummary, dailySpendLeadsScatter.maxLeads],
+ );
+ const scatterModelTitle = activeSpendCurveSummary
+ ? `leads vs spent · R2 = ${olsStat(activeSpendCurveSummary.r_squared, 3)}, p ${olsPValue(activeSpendCurveSummary.f_p_value)}`
+ : `leads vs spent · ${activeSpendCurveOption?.label || 'fit'}`;
+ const scatterModelEquation = activeSpendCurveSummary
+ ? spendEquationText(activeSpendCurveSummary, activeSpendCurveForm)
+ : 'fit: local regression';
 
  // The four forms as small multiples, each with its own fitted curve over the same dots. Built
  // from the same coefficients the big chart and the comparison table read, so all three views
@@ -3990,6 +4053,15 @@ function ForecastPage() {
  trend line, and dots fade/rise back in together as one moment, and Scatter's own
  entrance animation replays for the new point set, instead of dots silently jumping
  to new positions mid-frame. */}
+ <div className="scatter-model-head">
+ <div className="scatter-model-copy">
+ <h3>{scatterModelTitle}</h3>
+ <div className="scatter-model-legend" aria-label="Chart legend">
+ {spendFittedCurveBand.length > 1 && <span><i className="band" />95% fit band</span>}
+ <span><i className="fit" />{scatterModelEquation}</span>
+ <span><i className="points" />observed days</span>
+ </div>
+ </div>
  {spendCurveOptions.length > 1 && (
  <div className="scatter-form-picker" role="group" aria-label="Fitted curve form">
  <span>Fit</span>
@@ -4008,21 +4080,22 @@ function ForecastPage() {
  ))}
  </div>
  )}
+ </div>
  <div className="scatter-plot" key={spendScopeLabel}>
  <ResponsiveContainer width="100%" height="100%">
- <ScatterChart margin={{ top: 20, right: 26, left: 6, bottom: 26 }}>
- <CartesianGrid strokeDasharray="3 5" stroke="var(--grid-line)" />
+ <ComposedChart margin={{ top: 22, right: 26, left: 6, bottom: 28 }}>
+ <CartesianGrid strokeDasharray="4 7" stroke="var(--scatter-grid)" />
  <XAxis
  type="number"
  dataKey="spend"
  name="Daily spend"
- domain={[0, Math.ceil(dailySpendLeadsScatter.maxSpend * 1.08)]}
+ domain={[Math.max(0, Math.floor(dailySpendLeadsScatter.minSpend * 0.88)), Math.ceil(dailySpendLeadsScatter.maxSpend * 1.06)]}
  tickFormatter={(value) => `$${fmt(Math.round(value))}`}
- tick={{ fontSize: 12.5, fill: '#c2beb5' }}
- axisLine={{ stroke: 'var(--axis-line)' }}
+ tick={{ fontSize: 12.5, fill: 'var(--scatter-axis)' }}
+ axisLine={{ stroke: 'var(--scatter-axis-line)' }}
  tickLine={false}
  height={42}
- label={{ value: 'Daily spend ($)', position: 'insideBottom', offset: -2, fill: '#9b978f', fontSize: 12 }}
+ label={{ value: 'Daily spend ($)', position: 'insideBottom', offset: -2, fill: 'var(--scatter-muted)', fontSize: 12 }}
  />
  <YAxis
  type="number"
@@ -4030,24 +4103,36 @@ function ForecastPage() {
  name="Daily leads"
  domain={[0, Math.ceil(dailySpendLeadsScatter.maxLeads * 1.12)]}
  allowDecimals={false}
- tick={{ fontSize: 12.5, fill: '#c2beb5' }}
+ tick={{ fontSize: 12.5, fill: 'var(--scatter-axis)' }}
  axisLine={false}
  tickLine={false}
  width={48}
  // Non-rotated, corner-pinned label instead of a rotated title running the length of
  // the axis — that previous version sat directly on top of the tick numbers at this
  // chart's width. A short corner tag can't collide with them.
- label={{ value: 'Daily leads', position: 'insideTopLeft', offset: 14, fill: '#9b978f', fontSize: 11.5, fontWeight: 600 }}
+ label={{ value: 'Daily leads', position: 'insideTopLeft', offset: 14, fill: 'var(--scatter-muted)', fontSize: 11.5, fontWeight: 600 }}
  />
- <ZAxis range={[80, 80]} />
+ <ZAxis range={[54, 54]} />
  <Tooltip content={<SpendLeadsScatterTooltip />} cursor={{ stroke: 'var(--cursor-line)', strokeDasharray: '4 4', strokeWidth: 1 }} />
+ {spendFittedCurveBand.length > 1 && (
+ <Area
+ data={spendFittedCurveBand}
+ dataKey="fit_band"
+ stroke="none"
+ fill="var(--scatter-band)"
+ fillOpacity={1}
+ isAnimationActive={false}
+ type="monotone"
+ legendType="none"
+ activeDot={false}
+ />
+ )}
  {spendFittedCurve.length > 1 && (
  <Line
- data={spendFittedCurve}
+ data={spendFittedCurveBand.length ? spendFittedCurveBand : spendFittedCurve}
  dataKey="actual_leads"
- stroke="var(--series-median)"
- strokeWidth={1.6}
- strokeDasharray="6 5"
+ stroke="var(--scatter-fit)"
+ strokeWidth={2.8}
  dot={false}
  activeDot={false}
  isAnimationActive={false}
@@ -4061,7 +4146,7 @@ function ForecastPage() {
  isAnimationActive={!window.matchMedia('(prefers-reduced-motion: reduce)').matches}
  animationDuration={620}
  />
- </ScatterChart>
+ </ComposedChart>
  </ResponsiveContainer>
  </div>
  {spendFormPanels.length > 1 && (
