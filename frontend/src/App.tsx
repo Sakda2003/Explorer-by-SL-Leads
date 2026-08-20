@@ -46,7 +46,6 @@ import {
  Upload,
  UserCheck,
  UserPlus,
- Users,
  X,
 } from 'lucide-react';
 
@@ -6555,7 +6554,6 @@ function LeadManagementPage() {
  const [campaignId, setCampaignId] = useState('');
  const [adSetId, setAdSetId] = useState('');
  const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null);
- const [statusFilter, setStatusFilter] = useState('');
  // Multi-select rather than one value: the funnel cards are the main way to filter here, and
  // "show me Qualified *and* Awaiting Document" is the natural next question after seeing the
  // two counts side by side.
@@ -6597,10 +6595,9 @@ function LeadManagementPage() {
  const boardFilters = useMemo(() => {
   const rows: { field: string; operator: string; value: any }[] = [];
   if (dateRange) rows.push({ field: 'created_at', operator: 'between', value: dateRange });
-  if (statusFilter) rows.push({ field: 'status', operator: 'is', value: [statusFilter] });
   if (qualityFilter.length) rows.push({ field: 'lead_quality', operator: 'is', value: qualityFilter });
   return rows;
- }, [dateRange, statusFilter, qualityFilter]);
+ }, [dateRange, qualityFilter]);
 
  // The scope/filter/search params every one of this page's three endpoints takes, built once
  // so the board, the funnel, and "select all matching" can never end up describing different
@@ -6715,7 +6712,7 @@ function LeadManagementPage() {
   setQualityFilter((current) => (current.includes(quality) ? current.filter((item) => item !== quality) : [...current, quality]));
  };
  const clearFilters = () => {
-  setCampaignId(''); setAdSetId(''); setDateRange(null); setStatusFilter('');
+  setCampaignId(''); setAdSetId(''); setDateRange(null);
   setQualityFilter([]); setSearchDraft(''); setSearch(''); setBoardError('');
  };
 
@@ -7012,15 +7009,28 @@ function LeadManagementPage() {
         })),
        ]}
       />
+      {/* Drives the same `qualityFilter` the pipeline cell's stage rows do, rather than
+          introducing a second filter for the same column: pick a stage here and its card
+          lights up, toggle the card and this trigger follows.
+
+          MenuSelect is single-select, so picking a stage REPLACES the selection while the
+          stage rows stay the way to build a multi-stage one. When more than one is active
+          `value` falls through to the "Any quality" option, whose `short` then reports the
+          real count -- the trigger must never read "Any quality" while two stages are
+          filtered. */}
       <MenuSelect
-       className={`lead-scope-select${statusFilter ? ' is-scoped' : ''}`}
-       ariaLabel="Filter by lead status"
-       value={statusFilter}
-       onChange={setStatusFilter}
+       className={`lead-scope-select${qualityFilter.length ? ' is-scoped' : ''}`}
+       ariaLabel="Filter by lead quality"
+       value={qualityFilter.length === 1 ? qualityFilter[0] : ''}
+       onChange={(value) => setQualityFilter(value ? [value] : [])}
        options={[
-        { value: '', label: 'Any status', icon: Users },
-        { value: 'New', label: 'New', icon: Users },
-        { value: 'Existing', label: 'Existing', icon: Users },
+        {
+         value: '',
+         label: 'Any quality',
+         short: qualityFilter.length > 1 ? `${fmt(qualityFilter.length)} stages` : 'Any quality',
+         icon: CircleCheckBig,
+        },
+        ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option, icon: CircleCheckBig })),
        ]}
       />
       <PresetDateRangePicker

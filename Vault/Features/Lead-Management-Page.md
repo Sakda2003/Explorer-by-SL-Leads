@@ -20,8 +20,8 @@ triaging a book of 3,800 leads, which is what this page exists for.
 ## Layout, top to bottom
 
 1. **Bento** — four cells for four questions (see the redesign section below).
-2. **Toolbar** — one compact row directly above the board: search, campaign, ad set, status,
-   created range, Clear, then a hairline rule, then Sort and row height.
+2. **Toolbar** — one compact row directly above the board: search, campaign, ad set, lead
+   quality, created range, Clear, then a hairline rule, then Sort and row height.
 3. **Board** — the same Monday-style `board-table` the Dataset page uses, with sort, density,
    column resize, per-page and select-all-matching selection, and a floating bulk bar.
 
@@ -111,7 +111,7 @@ stretched past 600px on a wide screen, putting each caption a hand-span from its
 Now they sit in the board toolbar, in the Dataset page's toolbar vocabulary — so the app's two
 data surfaces are operated the same way:
 
-    [ 3,801 leads in this view ]      [search] [Campaign v] [Ad set v] [Status v] [All time v] [x Clear] | [Sort v] [rows]
+    [ 3,801 leads in this view ]      [search] [Campaign v] [Ad set v] [Quality v] [All time v] [x Clear] | [Sort v] [rows]
 
 - The captions are gone because every control names itself when nothing is picked ("All
   campaigns", "Any status", "All ad sets") and carries a leading icon once something is.
@@ -124,6 +124,17 @@ data surfaces are operated the same way:
   shows a short form. Without it a picked campaign truncated to "Leads | VISA | AU | KHM (8...",
   and a cut-off count is worse than no count. Optional field, so every other caller is
   unaffected.
+- **The third pill filters lead quality, not status** (changed on request, same day). It was
+  New / Existing; the page exists to work the quality pipeline, so that is what the toolbar
+  filters. There is no status filter on this page any more — `statusFilter` and its filter row
+  were removed rather than left as dead state. Status is still editable per row on the board,
+  and still filterable on the Dataset page's Leads tab.
+- **The quality pill and the stage cards are one control, two surfaces.** Both read and write
+  `qualityFilter`, so picking a stage in the dropdown lights its card and toggling a card
+  updates the trigger. `MenuSelect` is single-select, so choosing a stage *replaces* the
+  selection while the stage rows remain the way to build a multi-stage one; when more than one
+  is active `value` falls through to the "Any quality" option, whose `short` then reports
+  "N stages". The trigger must never read "Any quality" while two stages are filtered.
 
 The toolbar now sits *below* the bento it scopes. That is deliberate — it is the board's
 toolbar, and the Dataset page puts it in the same place — and the pipeline cell prints the
