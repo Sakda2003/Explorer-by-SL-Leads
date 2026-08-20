@@ -6025,6 +6025,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panel-resid { display: block; height: 190px; width: 100%; }
 
 
+
 /* ===========================================================================================
    Lead Management page
    Appended after the board/menu base rules on purpose: the few overrides below (the heading's
@@ -6049,17 +6050,19 @@ tr:hover .benchmark-bar span { opacity: 1; }
   align-items: flex-end;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 20px;
-  padding: 14px 15px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: var(--r-lg);
   background: var(--surface-soft);
 }
 .lead-filter-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-/* Campaign and ad set carry the longest values (a campaign name, or an 18-digit ad set id
-   plus its ad title), so they get the room; the rest size to their content. */
-.lead-filter-field:nth-child(1) { flex: 1 1 230px; }
-.lead-filter-field:nth-child(2) { flex: 1 1 280px; }
+/* Capped, not greedy. These two carry the longest values (a campaign name, or an 18-digit ad
+   set id plus its ad title) so they get the most room, but `1 1 auto` let them stretch to
+   ~600px on a wide screen, which put the label a whole hand-span from its value and made a
+   two-word select look like a text area. */
+.lead-filter-field:nth-child(1) { flex: 0 1 260px; }
+.lead-filter-field:nth-child(2) { flex: 0 1 330px; }
 .lead-filter-field > label {
   color: var(--muted);
   font-size: 9.5px;
@@ -6068,10 +6071,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   text-transform: uppercase;
 }
 .lead-filter-field .menu-select { flex: 1 1 auto; }
+/* Search and Clear ride the right edge, away from the scope pickers: they act on the result,
+   not on the scope. */
+.lead-filter-search { flex: 0 0 auto; margin-left: auto; }
 /* The shared date trigger is 40px tall for the Forecast page's larger controls; here it sits
    in a 32px row with four other pickers and has to match them. */
 .lead-filter-bar .date-range-trigger { min-height: 32px; height: 32px; padding: 0 10px; font-size: 11px; }
-.lead-filter-search { flex: 0 0 auto; }
 .lead-filter-clear {
   display: inline-flex;
   align-items: center;
@@ -6080,7 +6085,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   padding: 0 11px;
   color: var(--muted);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   font-size: 11px;
   font-weight: 600;
@@ -6089,134 +6094,259 @@ tr:hover .benchmark-bar span { opacity: 1; }
   transition: color .14s ease, border-color .14s ease, background .14s ease;
 }
 .lead-filter-clear:hover { color: var(--text); border-color: var(--line-strong); background: var(--surface); }
+.lead-filter-clear:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
-/* --- Pipeline funnel ----------------------------------------------------------------------
-   Six stage cards, each a filter toggle. Auto-fit rather than a fixed six columns so the row
-   reflows to two or three per line on a narrow window instead of crushing every card. */
-.lead-funnel {
+/* --- Bento ---------------------------------------------------------------------------------
+   Named areas rather than six equal tiles. The pipeline is the one object that leads, because
+   "where is my book stuck" is the question this page answers; the review queue and outcomes
+   stack beside it, and acquisition cost runs the full width underneath. Four areas for four
+   cells -- the grid has no slot without content to put in it. */
+.lead-bento {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  grid-template-areas:
+    "pipeline queue"
+    "pipeline outcomes"
+    "cost     cost";
+  gap: 12px;
+  margin-bottom: 22px;
 }
-.lead-stage-card {
-  position: relative;
+.lead-cell-pipeline { grid-area: pipeline; }
+.lead-cell-queue { grid-area: queue; }
+.lead-cell-outcomes { grid-area: outcomes; }
+.lead-cell-cost { grid-area: cost; }
+
+.lead-cell {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  padding: 12px 13px 14px;
-  text-align: left;
+  min-width: 0;
+  padding: 16px 18px 18px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: var(--r-lg);
   background: var(--surface);
-  font-family: inherit;
-  cursor: pointer;
+  box-shadow: var(--elev-1);
+}
+.lead-cell-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.lead-cell-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.lead-cell-note {
+  min-width: 0;
   overflow: hidden;
-  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-weight: 500;
 }
-/* The stage's own colour, set per card below, tints the card rather than filling it: six
-   fully saturated tiles in a row would fight the board underneath for attention. */
-.lead-stage-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--stage-fill, var(--status-neutral-fill));
-}
-.lead-stage-card:hover { border-color: var(--line-strong); background: var(--surface-soft); transform: translateY(-1px); }
-.lead-stage-card.is-active {
-  border-color: color-mix(in srgb, var(--stage-fill, var(--status-neutral-fill)) 62%, var(--line));
-  background: color-mix(in srgb, var(--stage-fill, var(--status-neutral-fill)) 13%, var(--surface));
-}
-.lead-stage-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
-.lead-stage-name {
+.lead-cell-foot { margin: 0; padding-top: 12px; color: var(--dim); font-size: 10.5px; line-height: 1.55; }
+/* Only the cost cell's foot sinks: it qualifies the four figures above it, so it reads as a
+   footnote. The queue cell's foot explains the bar directly above it and has to stay with it,
+   or the grid row (sized by the pipeline cell beside it) opens a hole in between. */
+.lead-cell-cost .lead-cell-foot { margin-top: auto; }
+.lead-cell-empty {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 4px 0 8px;
   color: var(--muted);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  line-height: 1.35;
-  /* Two lines' worth whether or not the label needs them. "Awaiting Document and Payment" is
-     the only stage that wraps, and without this its count sat a line lower than the other
-     five, breaking the row's shared baseline. */
-  min-height: 2.7em;
+  font-size: 12px;
+  line-height: 1.6;
 }
-.lead-stage-card.is-active .lead-stage-name { color: var(--text); }
-.lead-stage-count {
+
+/* The two headline counts. Mono because they are measurements read against each other across
+   cells, and the unit is a step down so the digits own the line. */
+.lead-total, .lead-queue-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.lead-total strong, .lead-queue-figure strong {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 22px;
-  font-weight: 800;
+  font-size: 34px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
+  letter-spacing: -.03em;
+  line-height: 1;
 }
-.lead-stage-share { color: var(--dim); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.lead-stage-bar {
-  width: 100%;
-  height: 3px;
-  /* `auto` rather than a fixed gap, so the bars sit on a shared baseline across the row even
-     if a label's height ever differs from its neighbours'. The grid stretches every card to
-     the tallest, so there is always free space for this to absorb. */
-  margin-top: auto;
-  border-radius: 2px;
-  background: var(--line-2);
+.lead-total span, .lead-queue-figure span { color: var(--dim); font-size: 11.5px; font-weight: 600; }
+.lead-total-skeleton { width: 46%; height: 34px; margin-bottom: 12px; border-radius: var(--r-sm); }
+
+/* --- Pipeline bar ------------------------------------------------------------------------ */
+.lead-pipeline-bar {
+  display: flex;
+  gap: 2px;
+  height: 12px;
+  margin-bottom: 16px;
+  border-radius: var(--r-pill);
   overflow: hidden;
 }
-.lead-stage-bar > i {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
+.lead-pipeline-bar.is-empty { background: var(--line-2); }
+.lead-pipeline-seg {
+  /* A stage with a handful of leads out of thousands still gets a visible mark; without the
+     floor its segment rounds to a sub-pixel and the stage silently disappears from the bar. */
+  min-width: 3px;
   background: var(--stage-fill, var(--status-neutral-fill));
-  transition: width .3s cubic-bezier(.22,1,.36,1);
+  /* No width transition. A single rating moves these by a fraction of a percent (invisible),
+     and a filter change swaps in a different population altogether, where morphing one
+     distribution into the other would imply a continuity that isn't there. Only the muting
+     below animates, because that one really is the same bar changing emphasis. */
+  transition: opacity .16s ease;
+}
+/* Filtering to a stage dims the rest instead of hiding them, so the bar keeps showing the
+   whole book while saying which slice the board below is listing. */
+.lead-pipeline-seg.is-muted { opacity: .22; }
+
+/* --- Stage list -------------------------------------------------------------------------- */
+/* One column, in pipeline order. Two columns fit in less height but fill row-major, so
+   scanning DOWN the first column read Intake, Qualified, Lost -- three stages that are not
+   consecutive and not a sequence. A pipeline whose order only works when read boustrophedon
+   is not communicating an order at all. */
+.lead-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.lead-stage-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .14s ease;
+}
+.lead-stage-row:hover { background: var(--surface-2); }
+.lead-stage-row:focus-visible { outline: 2px solid var(--gold); outline-offset: -1px; }
+.lead-stage-row.is-active { background: color-mix(in srgb, var(--stage-fill, var(--status-neutral-fill)) 16%, var(--surface-2)); }
+.lead-stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--stage-fill, var(--status-neutral-fill));
+}
+.lead-stage-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.lead-stage-row.is-active .lead-stage-label { color: var(--text); }
+.lead-stage-n {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.lead-stage-pct {
+  min-width: 42px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* Each stage's colour, matching the pill it recolours in the board below (see the
    `.lead-quality-select.quality-*` rules) so a stage reads the same in both places. */
-.lead-stage-card.quality-intake { --stage-fill: var(--status-neutral-fill); }
-.lead-stage-card.quality-not-qualified { --stage-fill: var(--status-bad-fill); }
-.lead-stage-card.quality-qualified { --stage-fill: var(--status-info-fill); }
-.lead-stage-card.quality-converted { --stage-fill: var(--status-good-fill); }
-.lead-stage-card.quality-lost { --stage-fill: var(--status-lost-fill); }
-.lead-stage-card.quality-awaiting-document-and-payment { --stage-fill: var(--status-warn-fill); }
+.quality-intake { --stage-fill: var(--status-neutral-fill); }
+.quality-not-qualified { --stage-fill: var(--status-bad-fill); }
+.quality-qualified { --stage-fill: var(--status-info-fill); }
+.quality-converted { --stage-fill: var(--status-good-fill); }
+.quality-lost { --stage-fill: var(--status-lost-fill); }
+.quality-awaiting-document-and-payment { --stage-fill: var(--status-warn-fill); }
 
-/* --- Rate + economics strips ----------------------------------------------------------- */
-.metrics.lead-pipeline-metrics { grid-template-columns: repeat(4, minmax(170px, 1fr)); }
+/* --- Review queue ------------------------------------------------------------------------ */
+.lead-progress {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--line-2);
+  overflow: hidden;
+}
+/* Scaled, not resized: the fill is a full-width bar squashed from the left, so the one
+   animated thing on this page runs on the compositor instead of forcing a layout pass. */
+.lead-progress > i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--gold);
+  transform: scaleX(var(--fill, 0));
+  transform-origin: left center;
+  transition: transform .36s cubic-bezier(.22,1,.36,1);
+}
 
-.lead-economics {
+/* --- Outcomes ---------------------------------------------------------------------------- */
+.lead-outcome-rows { display: flex; flex-direction: column; gap: 14px; margin-top: 2px; }
+.lead-outcome {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px 22px;
-  margin-bottom: 22px;
-  padding: 13px 16px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--surface-soft);
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "label value" "sub value";
+  align-items: baseline;
+  gap: 0 12px;
+  padding-left: 11px;
+  border-left: 1px solid var(--stage-fill, var(--line));
 }
-.lead-economics > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.lead-economics span {
-  color: var(--muted);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-}
-.lead-economics b {
+.lead-outcome.is-qualified { --stage-fill: var(--status-info-fill); }
+.lead-outcome.is-converted { --stage-fill: var(--status-good-fill); }
+.lead-outcome-label { grid-area: label; color: var(--text); font-size: 12px; font-weight: 600; }
+.lead-outcome-sub { grid-area: sub; color: var(--dim); font-size: 10.5px; }
+.lead-outcome-value {
+  grid-area: value;
+  align-self: center;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 15.5px;
+  font-size: 24px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
 }
-/* The attribution caveat spans the whole strip under the figures rather than sitting beside
-   one of them -- it qualifies all four. */
-.lead-economics p {
-  grid-column: 1 / -1;
-  margin: 2px 0 0;
-  color: var(--dim);
-  font-size: 10.5px;
-  line-height: 1.5;
+
+/* --- Acquisition cost -------------------------------------------------------------------- */
+.lead-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px 26px;
+  margin: 0;
 }
+.lead-figures > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.lead-figures dt { color: var(--muted); font-size: 11px; font-weight: 600; }
+.lead-figures dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+/* Cents a step back: four dollar figures side by side read as eight numbers when the cents
+   carry the same weight as the dollars. */
+.lead-figure-cents { color: var(--dim); font-size: .72em; font-style: normal; font-weight: 600; }
+.lead-figure-none { color: var(--dim); font-weight: 600; }
 
 /* --- Board --------------------------------------------------------------------------------
    Same board as the Dataset page's, so only the count label on the left is new. */
@@ -6259,16 +6389,29 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .board-bulk-label { color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .lead-bulk-quality .menu-select-trigger { min-width: 160px; }
 
-@media (max-width: 900px) {
-  .metrics.lead-pipeline-metrics { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+/* --- Adaptation ---------------------------------------------------------------------------
+   The bento collapses by priority, not by shrinking every cell in step: the pipeline keeps a
+   full row of its own the moment the two side cells no longer fit beside it. */
+@media (max-width: 1120px) {
+  .lead-bento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "pipeline pipeline"
+      "queue    outcomes"
+      "cost     cost";
+  }
+}
+@media (max-width: 780px) {
+  .lead-bento {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "pipeline" "queue" "outcomes" "cost";
+  }
   .lead-filter-field:nth-child(1),
   .lead-filter-field:nth-child(2) { flex: 1 1 100%; }
-}
-@media (max-width: 620px) {
-  .lead-funnel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .lead-stage-count { font-size: 19px; }
+  .lead-filter-search { margin-left: 0; }
+  .lead-total strong, .lead-queue-figure strong { font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lead-stage-card, .lead-stage-bar > i { transition: none; }
-  .lead-stage-card:hover { transform: none; }
+  .lead-pipeline-seg, .lead-progress > i, .lead-stage-row { transition: none; }
+  .lead-progress > i { transform: scaleX(var(--fill, 0)); }
 }

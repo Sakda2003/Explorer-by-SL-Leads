@@ -40,14 +40,12 @@ import {
  ShieldCheck,
  SlidersHorizontal,
  Sun,
- Target,
  Trash2,
  TrendingDown,
  TrendingUp,
  Upload,
  UserCheck,
  UserPlus,
- Users,
  X,
 } from 'lucide-react';
 
@@ -6507,6 +6505,39 @@ const EMPTY_LEAD_SUMMARY = {
  cost_per_converted: null,
 };
 
+// The whole book as one segmented bar, so the shape of the pipeline is legible before a single
+// number is read. Zero-count stages contribute no segment rather than an invisible sliver -- with
+// six stages and most leads at Intake, drawing all six would produce hairlines nobody can see.
+function LeadPipelineBar({ stages, total, active }: { stages: any[]; total: number; active: string[] }) {
+ const filled = stages.filter((stage) => Number(stage.count) > 0);
+ if (!total || !filled.length) {
+  return <div className="lead-pipeline-bar is-empty" aria-hidden="true" />;
+ }
+ return (
+  // aria-hidden because the stage list below carries the same figures as real, focusable
+  // controls -- announcing both would read the pipeline twice to a screen reader.
+  <div className="lead-pipeline-bar" aria-hidden="true">
+   {filled.map((stage) => (
+    <span
+     key={stage.quality}
+     className={`lead-pipeline-seg quality-${leadQualitySlug(stage.quality)}${active.length && !active.includes(stage.quality) ? ' is-muted' : ''}`}
+     style={{ width: `${(Number(stage.count) / total) * 100}%` }}
+     title={`${stage.quality}: ${fmt(stage.count)} (${percent(stage.share)})`}
+    />
+   ))}
+  </div>
+ );
+}
+
+// Money with the cents held back a step. Four dollar figures sit side by side in the cost cell,
+// and full-weight cents make them read as eight numbers instead of four -- the dollars are what
+// gets compared, the cents only matter once you are already looking at one.
+function SplitMoney({ value }: { value: any }) {
+ if (value == null || Number.isNaN(Number(value))) return <span className="lead-figure-none">-</span>;
+ const [whole, cents] = cplMoney(value).split('.');
+ return <>{whole}{cents && <i className="lead-figure-cents">.{cents}</i>}</>;
+}
+
 function LeadManagementPage() {
  const [options, setOptions] = useState<{ campaigns: any[]; ad_sets: any[]; first_day: string | null; last_day: string | null }>(
   { campaigns: [], ad_sets: [], first_day: null, last_day: null },
@@ -6573,6 +6604,26 @@ function LeadManagementPage() {
  // row sets. An ad set wins over a campaign when both are set, matching every other scope
  // picker in the app -- and picking an ad set pins its campaign (see `pickAdSet`), so the two
  // selects can never show a contradictory pair.
+ // Two param sets, and the difference between them is the point.
+ //
+ // SCOPE is which leads are under discussion: campaign, ad set, date, status, search. The
+ // funnel describes that population.
+ //
+ // The stage toggles are a VIEW of it, not a redefinition of it -- so they narrow the board
+ // and nothing else. Sending them to the summary too made the pipeline cell a tautology: click
+ // Converted and it read "268 leads, 100% Converted", which destroys the very context that
+ // made the click worth making, and leaves the other five stages at zero so there is nothing
+ // left to compare against or add to the selection.
+ const scopeParts = useMemo(() => {
+  const parts: string[] = [];
+  if (adSetId) parts.push(`ad_set_id=${encodeURIComponent(adSetId)}`);
+  else if (campaignId) parts.push(`campaign_id=${encodeURIComponent(campaignId)}`);
+  const scopeFilters = boardFilters.filter((row) => row.field !== 'lead_quality');
+  if (scopeFilters.length) parts.push(`filters=${encodeURIComponent(JSON.stringify(scopeFilters))}`);
+  if (search) parts.push(`search=${encodeURIComponent(search)}`);
+  return parts;
+ }, [adSetId, campaignId, boardFilters, search]);
+
  const queryParts = useMemo(() => {
   const parts: string[] = [];
   if (adSetId) parts.push(`ad_set_id=${encodeURIComponent(adSetId)}`);
@@ -6583,11 +6634,14 @@ function LeadManagementPage() {
  }, [adSetId, campaignId, boardFilters, search]);
  // Appended to a URL that already has a query string, vs. one that has none.
  const appendedQuery = queryParts.map((part) => `&${part}`).join('');
- const standaloneQuery = queryParts.length ? `?${queryParts.join('&')}` : '';
+ const standaloneQuery = scopeParts.length ? `?${scopeParts.join('&')}` : '';
  const hasAnyFilter = queryParts.length > 0;
 
  // Everything that decides *which* rows are showing, apart from which page of them.
  const queryKey = [appendedQuery, rowSort?.field ?? '', rowSort?.direction ?? ''].join(' ');
+ // Separate key for the funnel: it must NOT refetch when only a stage toggle changed, or the
+ // cell would flash while returning identical numbers.
+ const scopeKey = scopeParts.join(' ');
  // Adjusted during render, not in an effect -- React's documented "adjust state when props
  // change" escape hatch. Narrowing the filter while on page 5 must not leave the pager
  // stranded past the new end of the result set, and doing this in an effect means the fetch
@@ -6627,10 +6681,11 @@ function LeadManagementPage() {
    .then((data) => { if (requestId === summaryRequestId.current) setSummary(data); })
    .catch(() => { if (requestId === summaryRequestId.current) setSummary(EMPTY_LEAD_SUMMARY); })
    .finally(() => { if (requestId === summaryRequestId.current) setSummaryBusy(false); });
-  // Deliberately not keyed on `rowsOffset`: the funnel describes the whole filtered set, not
-  // whichever page of it happens to be loaded.
+  // Keyed on `scopeKey`, not `queryKey`: not on `rowsOffset` because the funnel describes the
+  // whole population rather than a page of it, and not on the stage toggles because those
+  // change which rows the board lists, not which leads the funnel is counting.
   // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [queryKey, refreshKey]);
+ }, [scopeKey, refreshKey]);
 
  // --- Filter controls ---------------------------------------------------------------------
  // Ad sets narrow to the picked campaign; picking an ad set that belongs to another campaign
@@ -6768,6 +6823,9 @@ function LeadManagementPage() {
   }
  };
 
+ // Skeletons only on the very first load. Once a total exists, a refetch swaps numbers in
+ // place rather than blanking cells the reader is mid-sentence on.
+ const showSkeleton = summaryBusy && !summary.total;
  const stages: any[] = summary.stages?.length
   ? summary.stages
   : LEAD_QUALITY_OPTIONS.map((quality) => ({ quality, count: 0, share: 0 }));
@@ -6851,63 +6909,123 @@ function LeadManagementPage() {
      )}
     </div>
 
-    {/* The funnel. Each card is also a filter toggle, so "how many converted?" and "show me
-        the ones that converted" are one click rather than two separate controls. */}
-    <div className="lead-funnel" role="group" aria-label="Filter by pipeline stage">
-     {stages.map((stage: any) => {
-      const active = qualityFilter.includes(stage.quality);
-      const band = LEAD_QUALIFIED_STAGES.includes(stage.quality)
-       ? 'is-qualified'
-       : LEAD_DROPPED_STAGES.includes(stage.quality) ? 'is-dropped' : 'is-open';
-      return (
-       <button
-        type="button"
-        key={stage.quality}
-        className={`lead-stage-card quality-${leadQualitySlug(stage.quality)} ${band}${active ? ' is-active' : ''}`}
-        aria-pressed={active}
-        onClick={() => toggleStage(stage.quality)}
-       >
-        <span className="lead-stage-name">{stage.quality}</span>
-        <strong className="lead-stage-count">{fmt(stage.count)}</strong>
-        <span className="lead-stage-share">{percent(stage.share)}</span>
-        <span className="lead-stage-bar" aria-hidden="true">
-         <i style={{ width: `${Math.max(0, Math.min(1, Number(stage.share) || 0)) * 100}%` }} />
-        </span>
-       </button>
-      );
-     })}
-    </div>
+    {/* Bento rather than three bands of equal tiles. "Where is my book stuck" is the question
+        this page exists to answer, so the pipeline is the one object that leads; the review
+        queue and the outcome rates flank it, and acquisition cost runs underneath. Four cells
+        for four distinct questions -- no filler tile, and no metric repeated in two places
+        (the old layout printed the total twice and "nothing is rated" three times). */}
+    <div className="lead-bento">
+     <section className="lead-cell lead-cell-pipeline" aria-labelledby="lead-pipeline-heading">
+      <div className="lead-cell-head">
+       <h3 id="lead-pipeline-heading">Pipeline</h3>
+       {/* Keyed to the SCOPE, not to `hasAnyFilter`: toggling a stage does not narrow the
+           population this cell counts, so it must not relabel it either. */}
+       <span className="lead-cell-note">{scopeParts.length ? campaignLabel : 'Every lead on record'}</span>
+      </div>
+      {showSkeleton
+       ? <div className="skeleton skeleton-line lead-total-skeleton" />
+       : (
+        <p className="lead-total">
+         <strong>{fmt(summary.total)}</strong>
+         <span>{summary.total === 1 ? 'lead' : 'leads'}</span>
+        </p>
+       )}
+      <LeadPipelineBar stages={stages} total={summary.total} active={qualityFilter} />
+      {/* The stage list is the real control surface -- the bar above it is the same data at a
+          glance. Keeping the clickable rows in one place avoids two tab stops per stage. */}
+      <div className="lead-stage-list" role="group" aria-label="Filter by pipeline stage">
+       {stages.map((stage: any) => {
+        const active = qualityFilter.includes(stage.quality);
+        return (
+         <button
+          type="button"
+          key={stage.quality}
+          className={`lead-stage-row quality-${leadQualitySlug(stage.quality)}${active ? ' is-active' : ''}`}
+          aria-pressed={active}
+          onClick={() => toggleStage(stage.quality)}
+         >
+          <span className="lead-stage-dot" aria-hidden="true" />
+          <span className="lead-stage-label">{stage.quality}</span>
+          <span className="lead-stage-n">{fmt(stage.count)}</span>
+          <span className="lead-stage-pct">{percent(stage.share)}</span>
+         </button>
+        );
+       })}
+      </div>
+     </section>
 
-    <div className="metrics lead-pipeline-metrics">
-     <Metric
-      label="Leads in view" value={summary.total} index={0} icon={Users} loading={summaryBusy}
-      sub={hasAnyFilter ? `Filtered - ${campaignLabel}` : 'Every lead on record'}
-     />
-     <Metric
-      label="Rated" value={summary.rated} index={1} icon={UserCheck} loading={summaryBusy}
-      sub={`${percent(summary.rated_share)} moved off Intake`}
-     />
-     <Metric
-      label="Qualification rate" value={(Number(summary.qualification_rate) || 0) * 100} suffix="%"
-      index={2} icon={Target} loading={summaryBusy}
-      sub={summary.rated ? `${fmt(summary.qualified)} of ${fmt(summary.rated)} rated` : 'Nothing rated yet'}
-     />
-     <Metric
-      label="Conversion rate" value={(Number(summary.conversion_rate) || 0) * 100} suffix="%"
-      index={3} icon={CircleCheckBig} loading={summaryBusy}
-      sub={summary.rated ? `${fmt(summary.converted)} converted` : 'Nothing rated yet'}
-     />
-    </div>
+     <section className="lead-cell lead-cell-queue" aria-labelledby="lead-queue-heading">
+      <div className="lead-cell-head">
+       <h3 id="lead-queue-heading">Awaiting review</h3>
+      </div>
+      {/* Share reviewed, not the count still waiting. Until someone rates a lead, "leads still
+          at Intake" IS the pipeline total, and the two cells sat side by side printing the
+          same number, which reads as a bug rather than as arithmetic. A share is a different
+          kind of number from a count, so these two headlines can never echo each other. */}
+      {showSkeleton ? <div className="skeleton skeleton-line lead-total-skeleton" /> : (
+       <p className="lead-queue-figure">
+        <strong>{percent(summary.rated_share)}</strong>
+        <span>reviewed</span>
+       </p>
+      )}
+      {/* Progress against the whole book, not a decorative ring: the fill is literally the
+          share of leads someone has already put a judgement on. */}
+      <div className="lead-progress" role="img" aria-label={`${percent(summary.rated_share)} of leads rated`}>
+       <i style={{ '--fill': Math.max(0, Math.min(1, Number(summary.rated_share) || 0)) } as CSSProperties} />
+      </div>
+      <p className="lead-cell-foot">
+       {summary.total === 0
+        ? 'Nothing to review in this view.'
+        : summary.intake === 0
+         ? `All ${plural(summary.total, 'lead')} rated. Nothing waiting.`
+         : `${plural(summary.intake, 'lead')} still to review.`}
+      </p>
+     </section>
 
-    {/* Spend here is the whole day's budget for every ad set day the matched leads came from,
-        so it over-attributes whenever a filter selects only some of a day's leads. Said
-        plainly on the strip rather than left for the reader to discover. */}
-    <div className="lead-economics">
-     <div><span>Matched ad set spend</span><b>{cplMoney(summary.matched_spend_usd)}</b></div>
-     <div><span>Cost per lead</span><b>{cplMoney(summary.cost_per_lead)}</b></div>
-     <div><span>Cost per qualified</span><b>{cplMoney(summary.cost_per_qualified)}</b></div>
-     <div><span>Cost per converted</span><b>{cplMoney(summary.cost_per_converted)}</b></div>
-     <p>Spend covers every ad set day these leads came from, counted whole - an upper bound when a filter selects only part of a day.</p>
+     <section className="lead-cell lead-cell-outcomes" aria-labelledby="lead-outcomes-heading">
+      <div className="lead-cell-head">
+       <h3 id="lead-outcomes-heading">Outcomes</h3>
+       {!!summary.rated && <span className="lead-cell-note">of {fmt(summary.rated)} rated</span>}
+      </div>
+      {/* Two zero-percents would be a lie dressed as data before anyone has rated anything.
+          The empty state names the action that fills this cell instead. */}
+      {summary.rated ? (
+       <div className="lead-outcome-rows">
+        {/* "Passed qualification", not "Qualified": this counts the whole band that cleared
+            triage (Qualified + Awaiting Document and Payment + Converted), which is a bigger
+            number than the Qualified STAGE listed in the pipeline cell a few inches away.
+            Naming both "Qualified" made the page look like it contradicted itself. */}
+        <div className="lead-outcome is-qualified">
+         <span className="lead-outcome-label">Passed qualification</span>
+         <strong className="lead-outcome-value">{percent(summary.qualification_rate)}</strong>
+         <span className="lead-outcome-sub">{plural(summary.qualified, 'lead')}</span>
+        </div>
+        <div className="lead-outcome is-converted">
+         <span className="lead-outcome-label">Converted</span>
+         <strong className="lead-outcome-value">{percent(summary.conversion_rate)}</strong>
+         <span className="lead-outcome-sub">{plural(summary.converted, 'lead')}</span>
+        </div>
+       </div>
+      ) : (
+       <p className="lead-cell-empty">Rate a lead below to start measuring qualification and conversion.</p>
+      )}
+     </section>
+
+     <section className="lead-cell lead-cell-cost" aria-labelledby="lead-cost-heading">
+      <div className="lead-cell-head">
+       <h3 id="lead-cost-heading">Acquisition cost</h3>
+       <span className="lead-cell-note">Ad set days these leads came from</span>
+      </div>
+      <dl className="lead-figures">
+       <div><dt>Matched spend</dt><dd><SplitMoney value={summary.matched_spend_usd} /></dd></div>
+       <div><dt>Per lead</dt><dd><SplitMoney value={summary.cost_per_lead} /></dd></div>
+       <div><dt>Per qualified</dt><dd><SplitMoney value={summary.cost_per_qualified} /></dd></div>
+       <div><dt>Per converted</dt><dd><SplitMoney value={summary.cost_per_converted} /></dd></div>
+      </dl>
+      {/* The attribution caveat belongs next to the numbers it qualifies, not in a footnote
+          nobody scrolls to: a day's spend counts whole even when only some of its leads match. */}
+      <p className="lead-cell-foot">Each ad set day counts whole, so this reads high when a filter selects only part of a day.</p>
+     </section>
     </div>
 
     <div className="dataset-rows-controls lead-board-controls">

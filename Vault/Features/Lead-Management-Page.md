@@ -20,23 +20,22 @@ triaging a book of 3,800 leads, which is what this page exists for.
 ## Layout, top to bottom
 
 1. **Filter bar** — campaign, ad set, status, created-date range, free-text search, and a
-   Clear button that only appears once something is set.
-2. **Funnel** — one card per stage with count, share, and a share bar. Each card is *also* a
-   filter toggle (multi-select), so "how many converted?" and "show me the ones that
-   converted" are the same click.
-3. **Metrics** — Leads in view, Rated, Qualification rate, Conversion rate.
-4. **Economics strip** — matched ad set spend, cost per lead / qualified / converted.
-5. **Board** — the same Monday-style `board-table` the Dataset page uses, with sort, density,
+   Clear button that only appears once something is set. Search and Clear sit at the right
+   edge, away from the scope pickers: they act on the result, not on the scope.
+2. **Bento** — four cells for four questions (see the redesign section below).
+3. **Board** — the same Monday-style `board-table` the Dataset page uses, with sort, density,
    column resize, per-page and select-all-matching selection, and a floating bulk bar.
 
 ## Decisions worth remembering
 
 - **The funnel and the board share one filter pipeline.** `get_lead_pipeline_summary()` in
   `core.py` calls the same `_dataset_where("leads", ...)` that `get_dataset_rows()` does, and
-  `/api/lead-management/summary` takes the identical query params as
+  `/api/lead-management/summary` accepts the identical query params as
   `/api/dataset/rows?table=leads`. A separately written WHERE clause would have drifted the
-  first time either side gained a filter field. The frontend builds the params once
-  (`queryParts`) and hands the same string to all three endpoints.
+  first time either side gained a filter field. **What the frontend sends them differs by
+  design though** — the summary gets scope only, not the stage toggles. See "The funnel
+  describes the SCOPE" below; an earlier version of this note said all three endpoints got the
+  same string, which was true of the first cut and is no longer.
 - **Only Status and Lead Quality are editable here.** Every other column is imported identity
   the rater is reading *in order to* make the judgement. The Dataset board stays the place to
   correct imported values — same rows, same PATCH endpoint, different job.
@@ -49,6 +48,99 @@ triaging a book of 3,800 leads, which is what this page exists for.
   `DATASET_ROW_TABLES`), so `SUM()`ing it across leads would multiply each day's budget by
   however many leads that day produced. It is still an upper bound — a day's spend counts whole
   even when a filter matches only some of its leads — and the strip says so on screen.
+
+## The bento (redesign, 2026-08-20)
+
+The first cut of this page was three horizontal bands of equal tiles: six stage cards, four
+`Metric` cards, four cost figures. Fourteen numbers at identical visual weight, so nothing led
+and the squint test returned nothing. Reworked the same day into a four-cell bento, keeping the
+app's own dark gold / cream world and borrowing only the reference's structural habit of
+letting one object lead.
+
+```
++---------------------------+-------------+
+|                           |  Awaiting   |
+|   Pipeline  (spans 2)     |  review     |
+|                           +-------------+
+|                           |  Outcomes   |
++---------------------------+-------------+
+|   Acquisition cost (full width)         |
++-----------------------------------------+
+```
+
+- **Pipeline** leads, because "where is my book stuck" is what this page is for. One segmented
+  bar carries the whole distribution at a glance; under it the six stages are compact rows,
+  each a filter toggle.
+- **Awaiting review** shows the share reviewed and how many are left.
+- **Outcomes** carries the two rates, and an empty state before anything is rated.
+- **Acquisition cost** runs full width with the four money figures and the attribution caveat.
+
+Collapses to `pipeline / queue + outcomes / cost` under 1120px, then to a single column under
+780px.
+
+### What the redesign fixed, and why
+
+- **Redundancy.** The old layout printed the lead total twice ("Intake 4,032 / 100%" and "Leads
+  in view 4,032") and said "nothing has been rated" three different ways. The bento says each
+  thing once.
+- **The `Metric` cards had fake sparklines.** `Metric` draws one of five hardcoded decorative
+  squiggle paths picked by `index % 5` — a trend line for data that was never measured. This
+  page no longer uses that component. (The component is unchanged and still used elsewhere;
+  worth knowing what those squiggles are.)
+- **The stage list is one column, in pipeline order.** Two columns fit in less height, but CSS
+  grid fills row-major, so scanning *down* the first column read Intake, Qualified, Lost —
+  three stages that are neither consecutive nor a sequence.
+- **"Awaiting review" shows a share, not a count.** Until someone rates a lead, "leads still at
+  Intake" *is* the pipeline total, so the two headline numbers sat side by side printing the
+  same figure. A share can never echo a count.
+- **The outcome band is labelled "Passed qualification", not "Qualified".** It counts Qualified
+  + Awaiting Document and Payment + Converted, which is a bigger number than the Qualified
+  *stage* listed a few inches away in the same viewport. Both reading "Qualified" made the page
+  look like it contradicted itself.
+- **Cents are held back a step** (`.lead-figure-cents`). Four dollar figures side by side read
+  as eight numbers when the cents carry the same weight as the dollars.
+- **The campaign / ad set selects are capped** at 260px / 330px. `flex: 1 1 auto` let them
+  stretch past 600px on a wide screen, which put each label a hand-span from its value.
+
+### The funnel describes the SCOPE, not the stage selection
+
+The most important behavioural fix, and the one that is easiest to reintroduce by accident.
+`LeadManagementPage` builds two param sets:
+
+- `scopeParts` — campaign, ad set, date, status, search. **This is what
+  `/api/lead-management/summary` gets.**
+- `queryParts` — `scopeParts` plus the `lead_quality` filter. This is what the board and
+  `/api/dataset/row-ids` get.
+
+Sending the stage toggles to the summary as well made the pipeline cell a tautology: clicking
+Converted made it read "268 leads, 100% Converted", destroying the context that made the click
+worth making, and zeroing the other five stages so there was nothing left to compare against or
+add to the selection. The summary effect is keyed on `scopeKey`, deliberately *not* `queryKey`,
+so a stage toggle does not even refetch it. Selected stages stay lit in the bar; the rest drop
+to `opacity: .22`.
+
+### Motion
+
+One authored moment: the review-progress fill, animated with `transform: scaleX()` rather than
+`width`, which would force a layout pass. The pipeline segments have **no** width transition on
+purpose — a single rating moves them by a fraction of a percent, and a filter change swaps in a
+different population altogether, where morphing one distribution into the other would imply a
+continuity that does not exist.
+
+### Verified (redesign)
+
+Real Edge through Playwright, both themes: WCAG AA contrast on all ten small-text roles;
+the pipeline holding at 3,801 across a stage toggle with all six rows still populated;
+multi-select stacking (Qualified 430 + Converted 268 = a 698-row board); keyboard order matching
+pipeline order; `detect.mjs` clean over this page's code; no console errors. The 1,559 demo
+ratings used to review the populated state were restored to Intake afterwards.
+
+**Measuring contrast here needs compositing.** `--surface-soft` is `var(--surface-tint)`, an
+`rgba()` overlay. Treating it as an opaque background reports the filter labels at 2.6:1 and
+3.0:1 and looks like a real AA failure; blending the translucent layers onto the canvas first
+gives their true 6.8 and 5.2. Blend before believing a contrast number on this app's tinted
+surfaces.
+
 
 ## API
 
@@ -104,7 +196,7 @@ Browser pane wasn't compositing this session, and `getComputedStyle` there retur
 specificity bug that did not exist. See [[Screenshotting-The-App]] and
 [[Preview-Pane-Viewport-Unreliable]].
 
-## Verified
+## Verified (initial build)
 
 Through Playwright + Edge against a real backend, both themes, no console errors:
 a row walked through Lost → Not Qualified → Converted → Intake showing four distinct cell
