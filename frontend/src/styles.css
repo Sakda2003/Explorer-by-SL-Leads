@@ -5904,14 +5904,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .scatter-form-picker button { transition: none; }
 }
 
-/* ---- Four-up functional-form panels under the spend/leads scatter ----------------------
-   One small chart per form (linear / quadratic / log / sqrt), all sharing the parent plot's
-   x and y domains so the four shapes are actually comparable. Each panel is a button: it
-   also selects that form for the large chart above, which is why the picker pills and these
-   panels stay in sync off the same state. */
+/* ---- Active functional-form panel under the spend/leads scatter ------------------------
+   The top fit toggle chooses one form (linear / quadratic / log / sqrt), and this panel shows
+   only that form's fit and residual diagnostics. */
 .scatter-form-panels {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin-top: 12px;
   padding-top: 12px;
@@ -5962,7 +5960,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 }
 /* Explicit height: ResponsiveContainer measures its parent, and a flex child with only a
    percentage height collapses to zero here. */
-.scatter-form-panel-plot { display: block; height: 132px; width: 100%; }
+.scatter-form-panel-plot { display: block; height: 240px; width: 100%; }
 .scatter-form-panel-stats {
   display: flex;
   gap: 10px;
@@ -5975,10 +5973,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .scatter-form-panel-stats b { color: var(--text); font-weight: 600; }
 .scatter-form-panel.is-best .scatter-form-panel-stats b { color: var(--yellow-strong); }
 @media (max-width: 1180px) {
-  .scatter-form-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scatter-form-panel-plot { height: 210px; }
 }
 @media (max-width: 620px) {
-  .scatter-form-panels { grid-template-columns: minmax(0, 1fr); }
+  .scatter-form-panel-plot { height: 180px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .scatter-form-panel { transition: none; }
@@ -5994,4 +5992,4 @@ tr:hover .benchmark-bar span { opacity: 1; }
   letter-spacing: .05em;
   text-transform: uppercase;
 }
-.scatter-form-panel-resid { display: block; height: 96px; width: 100%; }
+.scatter-form-panel-resid { display: block; height: 150px; width: 100%; }

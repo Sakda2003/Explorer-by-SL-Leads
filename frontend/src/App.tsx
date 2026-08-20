@@ -3170,10 +3170,7 @@ function ForecastPage() {
  // re-estimated per date window.
  const spendCurveOptions = useMemo(() => {
  const forms = ols?.univariate_forms?.forms || {};
- return [
- ...UNIVARIATE_FORM_LABELS.filter((item) => forms[item.key]),
- { key: 'loess', label: 'LOESS', formula: 'Local regression' },
- ];
+ return UNIVARIATE_FORM_LABELS.filter((item) => forms[item.key]);
  }, [ols]);
  // Empty means "follow the AIC winner" -- the default has to keep moving as the scope changes,
  // so it cannot be frozen into a concrete key the moment the component mounts.
@@ -3210,9 +3207,8 @@ function ForecastPage() {
  ? spendEquationText(activeSpendCurveSummary, activeSpendCurveForm)
  : 'fit: local regression';
 
- // The four forms as small multiples, each with its own fitted curve over the same dots. Built
- // from the same coefficients the big chart and the comparison table read, so all three views
- // of a form are the one fit.
+ // The four forms share one diagnostic slot. The top fit toggle chooses which form is shown
+ // here, so the page does not ask the reader to compare four dense mini dashboards at once.
  const spendFormPanels = useMemo(() => {
  const forms = ols?.univariate_forms?.forms || {};
  const best = ols?.univariate_forms?.best;
@@ -3255,6 +3251,10 @@ function ForecastPage() {
  const bound = Math.max(1, Math.ceil((all.length ? Math.max(...all) : 0) * 1.1));
  return { domain: [-bound, bound], ticks: [-bound, 0, bound] };
  }, [spendFormPanels]);
+ const activeSpendFormPanel = useMemo(
+ () => spendFormPanels.find((panel: any) => panel.key === activeSpendCurveForm) || spendFormPanels[0] || null,
+ [spendFormPanels, activeSpendCurveForm],
+ );
 
  const budgetPacing = useMemo(() => {
  const daily = (adSpend.daily || []).slice().sort((a: any, b: any) => String(a.day).localeCompare(String(b.day)));
@@ -4149,20 +4149,18 @@ function ForecastPage() {
  </ComposedChart>
  </ResponsiveContainer>
  </div>
- {spendFormPanels.length > 1 && (
- <div className="scatter-form-panels" aria-label="Fitted curve by functional form">
- {spendFormPanels.map((panel: any) => (
+ {activeSpendFormPanel && (
+ <div className="scatter-form-panels" aria-label={`${activeSpendFormPanel.label} fit diagnostics`}>
  <SpendFormMiniChart
- key={panel.key}
- panel={panel}
+ key={activeSpendFormPanel.key}
+ panel={activeSpendFormPanel}
  points={dailySpendLeadsScatter.points}
  maxSpend={dailySpendLeadsScatter.maxSpend}
  maxLeads={dailySpendLeadsScatter.maxLeads}
  residualScale={spendResidualScale}
- active={panel.key === activeSpendCurveForm}
+ active
  onSelect={setSpendCurveForm}
  />
- ))}
  </div>
  )}
  </>
