@@ -75,14 +75,36 @@ AUTH_FAIL_LIMIT = _int_env("LEADLENS_AUTH_FAIL_LIMIT", 15)
 AUTH_FAIL_WINDOW = _int_env("LEADLENS_AUTH_FAIL_WINDOW", 900)
 
 
+# Hard ceiling on how many distinct keys (client IPs) a limiter will track at once. Without
+# it the limiter is itself a memory-exhaustion vector: every unseen IP allocates a dict entry
+# and a deque, and an attacker rotating source addresses -- or forged `X-Forwarded-For` hops,
+# before `client_ip` was tightened below -- adds one per request and never frees them. At the
+# cap the oldest-touched keys are evicted, which at worst resets the counter for a client that
+# has been idle longer than everyone else in the table.
+MAX_TRACKED_KEYS = _int_env("LEADLENS_RATE_MAX_KEYS", 20_000)
+
+
 class _SlidingWindow:
     """A per-key sliding-window counter. Thread-safe: the background retrain thread and the
-    request path can both touch it. Old timestamps are evicted lazily on each check, and empty
-    keys are dropped, so memory tracks active clients rather than growing without bound."""
+    request path can both touch it. Old timestamps are evicted lazily on each check, empty
+    keys are dropped, and the key table is capped at MAX_TRACKED_KEYS, so memory tracks active
+    clients rather than growing without bound."""
 
     def __init__(self) -> None:
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
+
+    def _sweep_locked(self, window: int) -> None:
+        """Drop keys whose newest event has already aged out. Called only when the table is at
+        the cap, so the O(n) pass is amortised across at least MAX_TRACKED_KEYS requests."""
+        cutoff = time.monotonic() - window
+        for key in [k for k, bucket in self._events.items() if not bucket or bucket[-1] < cutoff]:
+            self._events.pop(key, None)
+        # Everything still in the table is genuinely active. Evict oldest-touched first so the
+        # cap holds even under a flood of live keys.
+        while len(self._events) >= MAX_TRACKED_KEYS:
+            oldest = min(self._events, key=lambda k: self._events[k][-1] if self._events[k] else 0.0)
+            self._events.pop(oldest, None)
 
     def hit(self, key: str, limit: int, window: int) -> bool:
         """Record one event for `key`; return True if it is within `limit` over `window`."""
@@ -91,14 +113,18 @@ class _SlidingWindow:
         now = time.monotonic()
         cutoff = now - window
         with self._lock:
+            if key not in self._events and len(self._events) >= MAX_TRACKED_KEYS:
+                self._sweep_locked(window)
             bucket = self._events[key]
             while bucket and bucket[0] < cutoff:
                 bucket.popleft()
             bucket.append(now)
-            allowed = len(bucket) <= limit
-            if not bucket:
-                self._events.pop(key, None)
-            return allowed
+            # Cap the per-key history too: without this, a caller already over the limit keeps
+            # appending timestamps for the whole window, so the memory cost of being blocked
+            # grows with the flood instead of flattening out.
+            while len(bucket) > limit + 1:
+                bucket.popleft()
+            return len(bucket) <= limit
 
     def count(self, key: str, window: int) -> int:
         now = time.monotonic()
@@ -124,15 +150,35 @@ _retrain = _SlidingWindow()
 _auth_fail = _SlidingWindow()
 
 
+# How many proxies sit in front of this process and append to X-Forwarded-For. Every supported
+# topology (Cloudflare tunnel, Tailscale Serve, Render, Railway) is exactly one hop, so that is
+# the default; raise it only if you knowingly add another trusted proxy in front.
+TRUSTED_PROXY_HOPS = _int_env("LEADLENS_TRUSTED_PROXY_HOPS", 1)
+
+
 def client_ip(request) -> str:
-    """Best-effort caller IP. Trusts the left-most X-Forwarded-For hop, which the fronting
-    proxy (Render/Cloudflare/Tailscale) sets; on a direct-to-port deployment this is
-    spoofable, but a direct-to-port deployment is already outside the supported topology."""
+    """Best-effort caller IP, read from the right-hand end of X-Forwarded-For.
+
+    The left-most entry is the one thing in that header nobody trustworthy wrote: a proxy
+    *appends* the peer it saw, so anything already there was supplied by the client. Keying the
+    rate limiter and the brute-force throttle on it therefore handed an attacker a free bypass
+    -- send a different forged first hop on each request and every counter starts from zero,
+    which defeats the Basic Auth lockout entirely and grows the limiter's key table without
+    bound. Counting TRUSTED_PROXY_HOPS back from the right instead lands on the address our own
+    proxy observed, which is the last entry a client cannot forge.
+
+    With no header at all (local dev, direct connection) this falls back to the socket peer,
+    which is unspoofable.
+    """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+        hops = [part.strip() for part in forwarded.split(",") if part.strip()]
+        if hops:
+            # Clamp rather than index off the end: a request that arrives with fewer hops than
+            # configured (a healthcheck hitting the port directly, say) still resolves to the
+            # left-most entry rather than raising.
+            index = max(0, len(hops) - max(1, TRUSTED_PROXY_HOPS))
+            return hops[index]
     client = getattr(request, "client", None)
     return getattr(client, "host", None) or "unknown"
 

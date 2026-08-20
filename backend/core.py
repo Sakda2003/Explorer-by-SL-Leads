@@ -28,6 +28,52 @@ DB_PATH = Path(os.getenv("LEADLENS_DB_PATH", DATA_DIR / "leadlens.db"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 PREVIEW_DIR = DATA_DIR / "previews"
 
+# How long an un-imported preview stays on disk. A preview is the *raw uploaded workbook* --
+# lead-grain files carry customer_name and the rest of the PII -- written out so that the
+# confirm step can re-read it. Nothing ever deleted them, so every file anyone had ever put on
+# the Upload page was still sitting in data/previews, imported or not, indefinitely. That is a
+# standing copy of the customer data outside the database, with none of the database's access
+# control in front of it, and it grows forever. The confirm path now deletes its own file, and
+# anything abandoned (previewed but never confirmed) ages out here.
+PREVIEW_TTL_SECONDS = int(os.getenv("LEADLENS_PREVIEW_TTL_HOURS", "24") or 24) * 3600
+
+# Extensions the upload path will write to disk. `preview_file` derives its filename suffix
+# from the caller-supplied filename, so without an allowlist an upload could name itself
+# anything at all. Nothing in data/previews is ever executed or served, so this is defence in
+# depth rather than a live hole -- but "arbitrary attacker-chosen extension, written to disk,
+# kept forever" is not a sentence worth leaving true.
+ALLOWED_UPLOAD_SUFFIXES = frozenset({".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls"})
+
+
+def purge_stale_previews(ttl_seconds: int | None = None) -> int:
+    """Delete preview files older than the retention window. Returns how many went.
+
+    Best-effort by design: a preview that cannot be removed (locked on Windows, say) is skipped
+    rather than raising, because failing an upload over stale-file cleanup would be a worse
+    outcome than the file surviving until the next sweep.
+    """
+    ttl = PREVIEW_TTL_SECONDS if ttl_seconds is None else ttl_seconds
+    if ttl <= 0 or not PREVIEW_DIR.exists():
+        return 0
+    cutoff = datetime.now(timezone.utc).timestamp() - ttl
+    removed = 0
+    for path in PREVIEW_DIR.iterdir():
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _discard_preview(path: Path) -> None:
+    """Remove a preview file once it has been imported and is no longer needed."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 REQUIRED_COLUMNS = [
     "Platform", "Status", "Created At", "Updated At", "Customer Name",
     "UTM Campaign", "UTM Campaign ID", "UTM Ad Set ID", "UTM Ad ID",
@@ -245,6 +291,8 @@ def connect():
 def init_db() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    # Clear out anything abandoned by a previous run before doing anything else.
+    purge_stale_previews()
     # Pointing at a different database invalidates every cached read of the old one.
     _clear_change_caches()
     _holiday_proximity_map.cache_clear()
@@ -479,6 +527,23 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS ix_app_user_audit_created
           ON app_user_audit(created_at);
+        -- Server-side sign-in sessions (2026-08-20). Before this, the browser kept the raw
+        -- `Basic base64(user:pass)` header in localStorage for 30 days, which is reversible to
+        -- the plaintext password -- so anything that could read localStorage stole the
+        -- credential itself rather than a session, and there was no way to revoke it short of
+        -- changing the password. `token_hash` is a SHA-256 of the token, never the token, so a
+        -- copy of this database does not yield usable sessions.
+        CREATE TABLE IF NOT EXISTS app_sessions (
+          token_hash TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          last_seen_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_app_sessions_email
+          ON app_sessions(email);
+        CREATE INDEX IF NOT EXISTS ix_app_sessions_expires
+          ON app_sessions(expires_at);
         """)
         from . import auth
         auth.ensure_basic_user(db)
@@ -2254,9 +2319,17 @@ def _backfill_imported_ad_performance_derived_values(db: sqlite3.Connection) -> 
 
 def preview_file(content: bytes, filename: str) -> dict:
     extension = Path(filename).suffix.lower()
+    if extension not in ALLOWED_UPLOAD_SUFFIXES:
+        raise ValueError(
+            f"Unsupported file type {extension or '(none)'!s}. Upload one of: "
+            + ", ".join(sorted(ALLOWED_UPLOAD_SUFFIXES))
+        )
     token = uuid.uuid4().hex
     target = PREVIEW_DIR / f"{token}{extension}"
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    # Age out abandoned previews on the way in, so the directory is bounded by the retention
+    # window on a long-running process that never restarts.
+    purge_stale_previews()
     target.write_bytes(content)
     try:
         # a model dataset outranks a change log: the template carries both, and the lead rows
@@ -3241,19 +3314,27 @@ def import_preview(token: str, filename: str | None = None) -> dict:
     if not matches:
         raise ValueError("Preview token is invalid or has expired.")
     preview_path = matches[0]
-    if is_model_dataset_workbook(preview_path, preview_path.suffix):
-        return _import_model_dataset_preview(preview_path, filename)
-    if is_change_log_workbook(preview_path, preview_path.suffix):
-        return _import_change_log_preview(preview_path, filename)
-    _, source_columns = _read_raw_frame(preview_path, preview_path.suffix)
-    file_type = detect_upload_type_from_columns(source_columns)
-    if file_type == HOLIDAY_PROXIMITY_TYPE:
-        return _import_holiday_proximity_preview(preview_path, filename)
-    if file_type == AD_PERFORMANCE_TYPE:
-        return _import_ad_performance_preview(preview_path, filename)
-    if file_type == LEADLENS_DERIVED_TYPE:
-        return _import_leadlens_derived_preview(preview_path, filename)
-    return _import_customer_traffic_preview(preview_path, filename)
+    # Whatever happens below, this file has served its purpose the moment the import returns.
+    # The importers copy what they need into UPLOAD_DIR and the database, so keeping the
+    # preview around only leaves a second, unmanaged copy of the customer rows on disk. It is
+    # dropped on the failure path too: a preview that raised is not retryable anyway (the
+    # client has to re-upload to get a fresh token), so retaining it buys nothing.
+    try:
+        if is_model_dataset_workbook(preview_path, preview_path.suffix):
+            return _import_model_dataset_preview(preview_path, filename)
+        if is_change_log_workbook(preview_path, preview_path.suffix):
+            return _import_change_log_preview(preview_path, filename)
+        _, source_columns = _read_raw_frame(preview_path, preview_path.suffix)
+        file_type = detect_upload_type_from_columns(source_columns)
+        if file_type == HOLIDAY_PROXIMITY_TYPE:
+            return _import_holiday_proximity_preview(preview_path, filename)
+        if file_type == AD_PERFORMANCE_TYPE:
+            return _import_ad_performance_preview(preview_path, filename)
+        if file_type == LEADLENS_DERIVED_TYPE:
+            return _import_leadlens_derived_preview(preview_path, filename)
+        return _import_customer_traffic_preview(preview_path, filename)
+    finally:
+        _discard_preview(preview_path)
 
 
 # A day is treated as still in progress if its last lead lands before this hour while the

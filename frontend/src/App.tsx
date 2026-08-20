@@ -52,42 +52,59 @@ import {
 const API = '/api';
 type Page = 'Forecast' | 'Optimization' | 'Lead Management' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
 const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
-const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// What lives in localStorage is an opaque, server-issued session token (see app_sessions in
+// backend/core.py), NOT a credential. Until 2026-08-20 this held the raw
+// `Basic base64(user:pass)` header, which decodes straight back to the plaintext password --
+// so anything able to read localStorage got the password itself rather than a session, and
+// there was no way to revoke it short of changing the password. The key name is unchanged so
+// that the legacy-value migration in readStoredAuth can still find and replace old entries.
 let apiAuthHeader = '';
 
 const setApiAuthHeader = (value: string) => {
  apiAuthHeader = value;
 };
 
-const readStoredAuth = () => {
+// A stored value that is still an `Authorization: Basic ...` header from before the session
+// change. It cannot be used as a session, but it can be spent once to obtain one -- which is
+// how an already-signed-in browser upgrades itself without a visible re-login, and, more to
+// the point, how the stored password actually gets erased rather than sitting there until
+// someone happens to sign out.
+const readLegacyCredential = () => {
  const raw = localStorage.getItem(AUTH_STORAGE_KEY);
- if (raw) {
-  try {
-   const saved = JSON.parse(raw);
-   if (typeof saved?.token === 'string' && typeof saved?.expiresAt === 'number') {
-    if (Date.now() < saved.expiresAt) return saved.token;
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-   } else {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-   }
-  } catch {
-   if (raw.startsWith('Basic ')) {
-    storeAuth(raw);
-    return raw;
-   }
-   localStorage.removeItem(AUTH_STORAGE_KEY);
-  }
+ if (!raw) return '';
+ if (raw.startsWith('Basic ')) return raw;
+ try {
+  const saved = JSON.parse(raw);
+  return typeof saved?.token === 'string' && saved.token.startsWith('Basic ') ? saved.token : '';
+ } catch {
+  return '';
  }
- const sessionToken = sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
- if (sessionToken) {
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: sessionToken, expiresAt: Date.now() + AUTH_TTL_MS }));
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
- }
- return sessionToken;
 };
 
-const storeAuth = (token: string) => {
- localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, expiresAt: Date.now() + AUTH_TTL_MS }));
+const readStoredAuth = () => {
+ const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+ if (!raw) return '';
+ try {
+  const saved = JSON.parse(raw);
+  if (typeof saved?.token !== 'string' || saved.token.startsWith('Basic ')) return '';
+  // expiresAt mirrors the server's expiry so an obviously-dead token is dropped without a
+  // round-trip. The server is still the authority -- it re-checks on every request.
+  if (typeof saved?.expiresAt === 'number' && Date.now() >= saved.expiresAt) {
+   localStorage.removeItem(AUTH_STORAGE_KEY);
+   return '';
+  }
+  return saved.token;
+ } catch {
+  return '';
+ }
+};
+
+const storeAuth = (token: string, expiresAt?: string) => {
+ const expiry = expiresAt ? Date.parse(expiresAt) : NaN;
+ localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+  token,
+  expiresAt: Number.isNaN(expiry) ? Date.now() + 30 * 24 * 60 * 60 * 1000 : expiry,
+ }));
  sessionStorage.removeItem(AUTH_STORAGE_KEY);
 };
 
@@ -258,7 +275,9 @@ const leadQualitySlug = (value: string) => String(value || 'intake').toLowerCase
 
 const withAuth = (options?: RequestInit): RequestInit => {
  const headers = new Headers(options?.headers);
- if (apiAuthHeader && !headers.has('Authorization')) headers.set('Authorization', apiAuthHeader);
+ // apiAuthHeader holds a bare session token; the scheme is added here so callers never have to
+ // think about it. An explicit Authorization on the call (the sign-in request) wins.
+ if (apiAuthHeader && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${apiAuthHeader}`);
  return { ...options, headers };
 };
 
@@ -1087,7 +1106,7 @@ function AmbientSystem() {
  );
 }
 
-function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSignedIn: (token: string, user: string) => void }) {
+function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSignedIn: (token: string, user: string, expiresAt?: string) => void }) {
  const [username, setUsername] = useState('admin');
  const [password, setPassword] = useState('');
  const [busy, setBusy] = useState(false);
@@ -1096,12 +1115,14 @@ function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSig
  const submit = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
   if (checking || busy) return;
-  const token = basicAuthHeader(username.trim(), password);
+  // The Basic header is built, spent once against /auth/login, and then goes out of scope. It
+  // is never stored -- what comes back is an opaque session token, which is what persists.
+  const credential = basicAuthHeader(username.trim(), password);
   setBusy(true);
   setError('');
   try {
-   const me = await api('/auth/me', { headers: { Authorization: token } });
-   onSignedIn(token, me.user || username.trim());
+   const session = await api('/auth/login', { method: 'POST', headers: { Authorization: credential } });
+   onSignedIn(session.token, session.user || username.trim(), session.expires_at);
   } catch (signInError: any) {
    setError(signInError.message || 'Sign-in failed');
   } finally {
@@ -7943,6 +7964,21 @@ export function App() {
      return;
     }
     if (!stored) {
+     // No session, but possibly a pre-2026-08-20 stored credential. Spend it once for a real
+     // session so the password stops living in localStorage, without making anyone re-type it.
+     const legacy = readLegacyCredential();
+     if (legacy) {
+      try {
+       const session = await api('/auth/login', { method: 'POST', headers: { Authorization: legacy } });
+       setApiAuthHeader(session.token);
+       storeAuth(session.token, session.expires_at);
+       if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: session.user || '' });
+       return;
+      } catch {
+       // Stale or rejected -- drop it either way rather than leaving a password behind.
+       clearStoredAuth();
+      }
+     }
      setAuth({ checking: false, required: true, signedIn: false, user: '' });
      return;
     }
@@ -7961,13 +7997,16 @@ export function App() {
   return () => { cancelled = true; };
  }, []);
 
- const signedIn = (token: string, user: string) => {
+ const signedIn = (token: string, user: string, expiresAt?: string) => {
   setApiAuthHeader(token);
-  storeAuth(token);
+  storeAuth(token, expiresAt);
   setAuth({ checking: false, required: true, signedIn: true, user });
  };
 
  const signOut = () => {
+  // Tell the server first: clearing localStorage alone would leave the session alive for
+  // anyone who had captured the token. Local state is cleared regardless of the outcome.
+  api('/auth/logout', { method: 'POST' }).catch(() => {});
   clearStoredAuth();
   setApiAuthHeader('');
   setPage('Forecast');

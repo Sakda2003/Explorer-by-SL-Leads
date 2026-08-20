@@ -70,7 +70,8 @@ async def require_access(request: Request, call_next):
     if exempt:
         return _sealed(await call_next(request))
 
-    is_login_check = request.url.path == "/api/auth/me"
+    # Both count as "a human is proving who they are", which is what clears the lockout.
+    is_login_check = request.url.path in ("/api/auth/me", "/api/auth/login")
 
     # A caller who has burned through the failed-sign-in budget is refused before re-checking the
     # credential. The login check itself is allowed through so a real user with the correct
@@ -211,6 +212,30 @@ class AdminUserPayload(BaseModel):
     password: str | None = None
 
 
+# Excel, LibreOffice and Sheets treat a leading =, +, -, @ (or a leading tab/CR, which they
+# strip before deciding) as the start of a formula, not text. Every CSV this app exports is
+# built from values it did not author -- campaign and ad-set names come straight out of a Meta
+# workbook, full_name comes from the admin screen -- so a cell reaching the sheet as
+# `=HYPERLINK(...)` or a DDE payload is a live code path on the machine of whoever opens the
+# download. Prefixing an apostrophe is the standard neutraliser: the spreadsheet shows the
+# original text and refuses to evaluate it.
+_CSV_FORMULA_LEAD = ("=", "+", "-", "@", chr(9), chr(13))
+
+
+def _csv_safe(value):
+    """Neutralise spreadsheet formula injection in one exported cell."""
+    if not isinstance(value, str):
+        return value
+    if value.startswith(_CSV_FORMULA_LEAD):
+        return "'" + value
+    return value
+
+
+def _write_csv_row(writer, values) -> None:
+    """csv.writer.writerow, with every string cell run through _csv_safe first."""
+    writer.writerow([_csv_safe(value) for value in values])
+
+
 def _current_user(request: Request) -> str:
     return str(getattr(request.state, "user_email", "") or "")
 
@@ -240,6 +265,38 @@ def auth_me(request: Request):
         "role": getattr(request.state, "user_role", ""),
         "name": getattr(request.state, "user_name", ""),
     }
+
+
+# Exchange a credential for a session. The middleware has already authenticated this request
+# (it reaches the route only if `auth.verify` passed), so this endpoint's job is just to mint
+# the token -- it never sees or re-checks a password itself. The raw token is returned exactly
+# once and only its SHA-256 is stored, so it cannot be recovered from the database afterwards.
+@app.post("/api/auth/login")
+def auth_login(request: Request):
+    email = _current_user(request)
+    if not email:
+        raise HTTPException(401, "Not signed in.")
+    try:
+        session = auth.create_session(email)
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {
+        "token": session["token"],
+        "expires_at": session["expires_at"],
+        "user": email,
+        "role": getattr(request.state, "user_role", ""),
+        "name": getattr(request.state, "user_name", ""),
+    }
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    # Signing out has to destroy the session server-side. Clearing localStorage alone would
+    # leave a token that still works for anyone who captured it.
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        auth.revoke_session(header[7:].strip())
+    return {"signed_out": True}
 
 
 @app.get("/api/admin/users")
@@ -288,7 +345,7 @@ def admin_export_users(request: Request):
     writer = csv.writer(output)
     writer.writerow(["Email", "Full Name", "Role", "Status", "Created", "Last Login", "Password Set"])
     for user in auth.list_users():
-        writer.writerow([
+        _write_csv_row(writer, [
             user["email"], user["full_name"], user["role"], user["status"],
             user["created_at"], user["last_login_at"], "yes" if user["has_password"] else "no",
         ])
@@ -665,7 +722,7 @@ def export_ad_decisions(
                      "Cost Per Lead", "Prior Cost Per Lead", "CPL Change %", "Daily Spend",
                      "Suggested Daily Change", "Spend Share %"])
     for row in result.get("ads", []):
-        writer.writerow([row["ad_set_id"], row["campaign_name"], row["verdict"], row["reason"],
+        _write_csv_row(writer, [row["ad_set_id"], row["campaign_name"], row["verdict"], row["reason"],
                          row["spend"], row["leads"], row["cpl"], row["cpl_prior"],
                          None if row["cpl_delta_pct"] is None else round(row["cpl_delta_pct"] * 100, 1),
                          row["daily_spend"], row["suggested_daily_delta"],
@@ -1015,7 +1072,7 @@ def export_forecasts(scope: str = "active"):
         "Confidence Score", "Model Used", "Last Trained Date"])
     for row in rows:
         f7, f14 = row.get("forecast_7", {}), row.get("forecast_14", {})
-        writer.writerow([row["utm_ad_set_id"], row["utm_campaign_id"], row["historical_7"], row["historical_14"],
+        _write_csv_row(writer, [row["utm_ad_set_id"], row["utm_campaign_id"], row["historical_7"], row["historical_14"],
             f7.get("predicted_leads"), f14.get("predicted_leads"), f14.get("lower_estimate"), f14.get("upper_estimate"),
             f14.get("confidence_score"), f14.get("model_used"), row["last_trained"]])
     return Response(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=lead-forecasts.csv"})
@@ -1030,7 +1087,7 @@ def export_daily_forecasts(scope: str = "active"):
         "Model Used", "Last Trained Date"])
     for row in rows:
         for day in row.get("daily_forecast", []):
-            writer.writerow([row["utm_ad_set_id"], row["utm_campaign_id"], day["date"], day.get("weekday_name"),
+            _write_csv_row(writer, [row["utm_ad_set_id"], row["utm_campaign_id"], day["date"], day.get("weekday_name"),
                 day.get("weekday_factor"), day["day_index"],
                 day["predicted_leads"], day["lower_estimate"], day["upper_estimate"],
                 day["confidence_score"], day["model_used"], row["last_trained"]])
@@ -1046,7 +1103,7 @@ def export_forecast_realizations(ad_set_id: str | None = None):
         "Error (Predicted - Actual)", "Absolute Error", "Lower Estimate", "Upper Estimate",
         "Interval Hit", "Model Used", "Realized At"])
     for row in result["rows"]:
-        writer.writerow([row["training_run_id"], row["generated_at"], row["utm_ad_set_id"],
+        _write_csv_row(writer, [row["training_run_id"], row["generated_at"], row["utm_ad_set_id"],
             row["utm_campaign_id"], row["forecast_date"], row.get("weekday_name"), row["day_index"],
             row["predicted_leads"], row["actual_leads"], row["error"], row["absolute_error"],
             row["lower_estimate"], row["upper_estimate"], row["interval_hit"], row["model_used"],

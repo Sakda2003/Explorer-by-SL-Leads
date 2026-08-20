@@ -200,15 +200,23 @@ the static mount.
   — `RENDER` is auto-detected, or set `LEADLENS_REQUIRE_AUTH=1` — the app now **refuses to boot**
   with no gate configured, instead of silently serving every DELETE route. Called before the
   `FastAPI()` object is even built. Local dev sets neither marker, so it stays inert.
+  **Superseded detail (2026-08-20):** a later commit had carved Render out of this, minting a
+  random password and logging it in clear text instead of refusing. That was a fail-*open*, and
+  it exempted the exact host the check was written for. Removed — Render fails closed like
+  everything else. See [[Security-Audit-2026-08-20]].
 - **Docs hidden when gated.** `/docs`, `/redoc`, `/openapi.json` are `None` whenever
   `auth.config.mode` is set — no reason to enumerate every route (incl. DELETE) on a real
   deploy. Left on when inert for local dev.
 - **Rate limiting + brute-force throttle.** Per-IP sliding windows: a general cap (600/60s), a
   retrain cap (6/300s — it's ~29s CPU-bound and GIL-holding), and a Basic-Auth brute-force
   throttle (15 failed sign-ins per IP → 429 for 900s). Brute-force is **per-IP not global**, so
-  an attacker can't lock the real user out. Client IP is the left-most `X-Forwarded-For` hop,
-  trustworthy for the same topology reason the header modes are. All tunable via env
-  (`LEADLENS_RATE_*`, `LEADLENS_AUTH_FAIL_*`).
+  an attacker can't lock the real user out. All tunable via env (`LEADLENS_RATE_*`,
+  `LEADLENS_AUTH_FAIL_*`).
+  **Corrected 2026-08-20:** this originally keyed on the **left-most** `X-Forwarded-For` hop and
+  called it trustworthy. It is the opposite — a proxy *appends*, so the left-most entry is
+  client-supplied, and rotating it reset every counter and defeated the lockout entirely. Now
+  counts `LEADLENS_TRUSTED_PROXY_HOPS` (default 1) back from the right. The limiter's key table
+  was also unbounded. Full write-up: [[X-Forwarded-For-Trust-Direction]].
 - **Body/upload caps.** Middleware rejects any body over `LEADLENS_MAX_BODY_MB` (30) from
   Content-Length before reading; the upload endpoint additionally reads at most
   `LEADLENS_MAX_UPLOAD_MB`+1 (25) so it never buffers a huge file — the one worker on Render free
@@ -222,12 +230,22 @@ the static mount.
 - **Preview-token validation.** `import_preview` now rejects any token that isn't 32 hex chars
   before it reaches `PREVIEW_DIR.glob(f"{token}.*")` — stops a caller smuggling glob
   metacharacters (`*`, `?`, `[`) to match previews other than their own.
+- **Preview retention (2026-08-20).** The token check guarded *access* to previews but nothing
+  ever deleted them, so `data/previews/` had grown to 56 raw uploaded workbooks — customer PII
+  outside the database, kept forever. Imports now delete their own file and abandoned previews
+  age out after `LEADLENS_PREVIEW_TTL_HOURS` (24). See [[Security-Audit-2026-08-20]].
 
 Also: frontend `package.json` specifiers were pinned off `"latest"` to caret ranges of the
 locked versions (lockfile re-synced, `--frozen-lockfile` still passes), and
 `.github/workflows/security-audit.yml` runs `pip-audit` + `pnpm audit` on push/PR/weekly.
-Covered by `tests/test_security.py` (15 tests). SQL was already fully allowlisted/parameterized
-and the frontend has no XSS sinks — those were audited, not changed.
+Covered by `tests/test_security.py` (30 tests as of 2026-08-20). SQL was already fully
+allowlisted/parameterized and the frontend has no XSS sinks — those were audited, not changed,
+and re-confirmed on 2026-08-20.
+
+**That CI workflow only runs on `main`, PRs, and the weekly cron** — so it never saw the
+`security-hardening` branch, where 26 Python CVEs had accumulated by 2026-08-20. Dependency
+pins are now current; the trap that let starlette rot is documented in
+[[Security-Audit-2026-08-20]].
 
 ## Public demo deploy (2026-08-14)
 

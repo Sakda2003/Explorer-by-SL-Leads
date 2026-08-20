@@ -56,8 +56,9 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -75,6 +76,15 @@ _ALGORITHMS = ["RS256"]
 _EXEMPT_PATHS = frozenset({"/api/health", "/api/auth/status"})
 
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# POSTs that are part of establishing or ending a session rather than mutating data. They must
+# bypass the writer-role check: /api/auth/login is how a *read-only* account signs in, and
+# 403-ing it would lock every staff user out of the dashboard entirely.
+_SESSION_PATHS = frozenset({"/api/auth/login", "/api/auth/logout"})
+
+
+def _is_write(request) -> bool:
+    return request.method in _WRITE_METHODS and request.url.path not in _SESSION_PATHS
 
 _JWKS_TTL_SECONDS = 600
 _PASSWORD_ITERATIONS = 260_000
@@ -140,6 +150,70 @@ def _verify_password(password: str, stored: str | None) -> bool:
         return False
 
 
+# ---- Verified-credential cache -----------------------------------------------------------
+# HTTP Basic Auth resends the password on every single request, and verifying it costs one
+# PBKDF2 derivation at _PASSWORD_ITERATIONS -- deliberately expensive, which is right for a
+# login form and wrong for a hot path. Unmitigated, a signed-in client polling the dashboard
+# can pin the one worker's CPU purely on key derivation, and any request-per-second the app
+# serves is a request-per-second of hashing.
+#
+# So a *successful* verification is remembered for a short TTL, keyed by a salted digest of the
+# credential rather than the credential itself, so the process is not holding recoverable
+# passwords in memory. Failures are never cached: they stay full-price, which is what keeps
+# guessing expensive, and they are separately bounded by the per-IP lockout in
+# backend/security.py. The TTL is short and any write to app_users clears the cache outright
+# (see _invalidate_user_caches), so disabling an account takes effect promptly.
+_CREDENTIAL_CACHE_TTL = 60.0
+_CREDENTIAL_CACHE_MAX = 256
+_credential_cache_salt = secrets.token_bytes(32)
+
+
+class _VerifiedCredentials:
+    """TTL cache of credential digest -> (email, role, full_name). Thread-safe."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[float, tuple[str, str, str]]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _key(username: str, password: str) -> str:
+        # Length-prefixed so that a username/password pair cannot be re-split to collide with
+        # a different pair (e.g. "ab"/"c" vs "a"/"bc").
+        payload = f"{len(username)}:{username}:{len(password)}:{password}".encode("utf-8")
+        return hashlib.blake2b(payload, key=_credential_cache_salt, digest_size=32).hexdigest()
+
+    def get(self, username: str, password: str) -> tuple[str, str, str] | None:
+        key = self._key(username, password)
+        now = time.monotonic()
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            expires_at, value = entry
+            if expires_at <= now:
+                self._entries.pop(key, None)
+                return None
+            return value
+
+    def put(self, username: str, password: str, value: tuple[str, str, str]) -> None:
+        key = self._key(username, password)
+        now = time.monotonic()
+        with self._lock:
+            if len(self._entries) >= _CREDENTIAL_CACHE_MAX:
+                for stale in [k for k, (expires_at, _) in self._entries.items() if expires_at <= now]:
+                    self._entries.pop(stale, None)
+                if len(self._entries) >= _CREDENTIAL_CACHE_MAX:
+                    self._entries.clear()
+            self._entries[key] = (now + _CREDENTIAL_CACHE_TTL, value)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+_verified_credentials = _VerifiedCredentials()
+
+
 def _normalize_email(email: str) -> str:
     return str(email or "").strip().lower()
 
@@ -160,6 +234,124 @@ def _clean_status(status: str | None) -> str:
 
 def _role_may_write(role: str) -> bool:
     return role in {"admin", "manager"}
+
+
+# ---- Sign-in sessions --------------------------------------------------------------------
+# What the browser holds after signing in. Previously it held the `Basic base64(user:pass)`
+# header itself, parked in localStorage for 30 days: that string decodes straight back to the
+# plaintext password, so it was a stored credential rather than a session, and nothing short of
+# a password change could revoke it. A session token is opaque, server-issued, individually
+# revocable, and expires on a date the server controls.
+#
+# Only the SHA-256 of the token is stored. The token is high-entropy and random (not a
+# password), so a single unsalted hash is the right construction here -- there is nothing to
+# brute-force -- and it means a leaked copy of the database yields no usable sessions.
+SESSION_TTL_DAYS = int(os.getenv("LEADLENS_SESSION_TTL_DAYS", "30") or 30)
+
+
+def _hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _sessions_ready(conn) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_sessions'"
+    ).fetchone()
+    return row is not None
+
+
+def _purge_expired_sessions(conn) -> None:
+    conn.execute("DELETE FROM app_sessions WHERE expires_at <= ?", (_utc_now(),))
+
+
+def create_session(email: str) -> dict:
+    """Mint a session for an already-authenticated email. Returns the raw token once."""
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=SESSION_TTL_DAYS)
+    with _connect_users() as db:
+        if not _sessions_ready(db):
+            raise ValueError("Session table is not ready.")
+        _purge_expired_sessions(db)
+        db.execute(
+            "INSERT INTO app_sessions(token_hash, email, created_at, expires_at, last_seen_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (_hash_session_token(token), _normalize_email(email),
+             now.isoformat(timespec="microseconds"), expires.isoformat(timespec="microseconds"),
+             now.isoformat(timespec="microseconds")),
+        )
+    return {"token": token, "expires_at": expires.isoformat(timespec="microseconds")}
+
+
+def revoke_session(token: str) -> None:
+    if not token:
+        return
+    try:
+        with _connect_users() as db:
+            if _sessions_ready(db):
+                db.execute("DELETE FROM app_sessions WHERE token_hash=?", (_hash_session_token(token),))
+    except sqlite3.Error:
+        pass
+
+
+def revoke_sessions_for(email: str) -> None:
+    """Drop every session belonging to one account -- used when it is disabled or deleted."""
+    try:
+        with _connect_users() as db:
+            if _sessions_ready(db):
+                db.execute("DELETE FROM app_sessions WHERE email=?", (_normalize_email(email),))
+    except sqlite3.Error:
+        pass
+
+
+def resolve_session(token: str) -> tuple[str, str, str] | None:
+    """(email, role, full_name) for a live session, or None.
+
+    The role is re-read from app_users on every call rather than being baked into the session
+    at sign-in. That is what makes a demotion or a disable take effect immediately instead of
+    at the session's natural expiry -- the session proves *who*, never *what they may do*.
+    """
+    if not token:
+        return None
+    try:
+        with _connect_users() as db:
+            if not _sessions_ready(db):
+                return None
+            row = db.execute(
+                "SELECT email, expires_at FROM app_sessions WHERE token_hash=?",
+                (_hash_session_token(token),),
+            ).fetchone()
+            if row is None:
+                return None
+            if str(row["expires_at"]) <= _utc_now():
+                db.execute("DELETE FROM app_sessions WHERE token_hash=?", (_hash_session_token(token),))
+                return None
+            email = _normalize_email(row["email"])
+            db.execute(
+                "UPDATE app_sessions SET last_seen_at=? WHERE token_hash=?",
+                (_utc_now(), _hash_session_token(token)),
+            )
+            user = _user_by_email(db, email)
+            if user is not None:
+                if user["status"] != _ACTIVE_STATUS:
+                    db.execute("DELETE FROM app_sessions WHERE email=?", (email,))
+                    return None
+                return email, user["role"], user["full_name"] or ""
+            # No app_users row: the environment-only BASIC_AUTH account, which is admin by
+            # definition. Anything else with a session but no row has had its account deleted.
+            if config.basic_user and _normalize_email(config.basic_user) == email:
+                return email, "admin", "Administrator"
+            db.execute("DELETE FROM app_sessions WHERE email=?", (email,))
+            return None
+    except sqlite3.Error:
+        return None
+
+
+def _bearer_token(request) -> str:
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        return header[7:].strip()
+    return ""
 
 
 def _record_user_audit(db, actor: str, action: str, target: str = "", detail: str = "") -> None:
@@ -191,11 +383,29 @@ def _user_by_email(db, email: str):
     return db.execute("SELECT * FROM app_users WHERE email=?", (_normalize_email(email),)).fetchone()
 
 
+# Once the env Basic Auth account has been reconciled into app_users, doing it again on the
+# next request is pure waste. This is not a security decision but a cost one: reconciling runs
+# PBKDF2 at _PASSWORD_ITERATIONS, and this function used to be called on *every* authenticated
+# request, so each one burned two full key derivations (one to verify, one to build a
+# replacement hash that was usually discarded). That is roughly a quarter-second of CPU per
+# request on the single worker, and an unauthenticated caller could drive it just by sending an
+# Authorization header -- a work-amplification lever pointed straight at the process. The flag
+# is cleared whenever the credential changes, so a rotated BASIC_AUTH_PASS still takes effect.
+_basic_user_synced_for: tuple[str, str] | None = None
+
+
 def ensure_basic_user(db=None) -> None:
-    """Keep the environment Basic Auth account available as an admin user."""
+    """Keep the environment Basic Auth account available as an admin user.
+
+    Idempotent and self-caching: after the first successful reconcile for a given
+    BASIC_AUTH_USER/PASS pair this returns immediately, so it is safe to call on a hot path.
+    """
+    global _basic_user_synced_for
     username = (os.getenv("BASIC_AUTH_USER") or "").strip()
     password = os.getenv("BASIC_AUTH_PASS") or ""
     if not username or not password:
+        return
+    if _basic_user_synced_for == (username, password):
         return
     owns = db is None
     conn = db or _connect_users()
@@ -205,8 +415,10 @@ def ensure_basic_user(db=None) -> None:
         email = _normalize_email(username)
         now = _utc_now()
         existing = _user_by_email(conn, email)
-        hashed = _hash_password(password)
         if existing:
+            # Hash only when a write is actually needed. _verify_password is one derivation;
+            # the old code paid for a second one building `hashed` before knowing whether the
+            # row needed updating at all.
             if (
                 existing["role"] != "admin"
                 or existing["status"] != "active"
@@ -216,16 +428,17 @@ def ensure_basic_user(db=None) -> None:
                     """UPDATE app_users
                        SET role='admin', status='active', password_hash=?, updated_at=?
                        WHERE email=?""",
-                    (hashed, now, email),
+                    (_hash_password(password), now, email),
                 )
         else:
             conn.execute(
                 """INSERT INTO app_users(email, full_name, role, status, password_hash, created_at, updated_at)
                    VALUES (?, ?, 'admin', 'active', ?, ?, ?)""",
-                (email, "Administrator", hashed, now, now),
+                (email, "Administrator", _hash_password(password), now, now),
             )
         if owns:
             conn.commit()
+        _basic_user_synced_for = (username, password)
     finally:
         if owns:
             conn.close()
@@ -260,6 +473,20 @@ def _active_admin_count(db, exclude_id: int | None = None) -> int:
     return int(db.execute(f"SELECT COUNT(*) FROM app_users WHERE {where}", params).fetchone()[0])
 
 
+def _invalidate_user_caches() -> None:
+    """Drop both credential caches after any write to app_users.
+
+    Without this, the admin screen's edits would not be visible to the auth path until the
+    process restarted: a disabled account would keep authenticating for the cache TTL, and a
+    changed password would keep being reverted to the environment value by a stale reconcile
+    flag. Correctness of a *revocation* is the reason this is unconditional rather than
+    targeted at the one row that changed.
+    """
+    global _basic_user_synced_for
+    _basic_user_synced_for = None
+    _verified_credentials.clear()
+
+
 def save_user(payload: dict, actor: str, user_id: int | None = None) -> dict:
     email = _normalize_email(payload.get("email", ""))
     if not email or "@" not in email:
@@ -282,6 +509,7 @@ def save_user(payload: dict, actor: str, user_id: int | None = None) -> dict:
             )
             _record_user_audit(db, actor, "created_user", email, f"role={role}; status={status}")
             row = _user_by_email(db, email)
+            _invalidate_user_caches()
             return _user_public(row)
 
         existing = db.execute("SELECT * FROM app_users WHERE id=?", (user_id,)).fetchone()
@@ -300,8 +528,15 @@ def save_user(payload: dict, actor: str, user_id: int | None = None) -> dict:
             detail += "; password=changed"
         values.append(user_id)
         db.execute(f"UPDATE app_users SET {', '.join(fields)} WHERE id=?", values)
+        # A disabled account, a changed password, or a changed email must not leave a live
+        # session behind -- otherwise "disable this user" is advisory until their token expires.
+        if status != _ACTIVE_STATUS or password or email != _normalize_email(existing["email"]):
+            for affected in {email, _normalize_email(existing["email"])}:
+                if _sessions_ready(db):
+                    db.execute("DELETE FROM app_sessions WHERE email=?", (affected,))
         _record_user_audit(db, actor, "updated_user", email, detail)
         row = db.execute("SELECT * FROM app_users WHERE id=?", (user_id,)).fetchone()
+        _invalidate_user_caches()
         return _user_public(row)
 
 
@@ -316,7 +551,10 @@ def delete_user(user_id: int, actor: str) -> dict:
             raise ValueError("At least one active admin is required.")
         email = row["email"]
         db.execute("DELETE FROM app_users WHERE id=?", (user_id,))
+        if _sessions_ready(db):
+            db.execute("DELETE FROM app_sessions WHERE email=?", (_normalize_email(email),))
         _record_user_audit(db, actor, "deleted_user", email)
+        _invalidate_user_caches()
         return {"deleted": True, "email": email}
 
 
@@ -459,7 +697,7 @@ def _authorize(email: str, request) -> tuple[bool, int, str]:
     if not config.may_read(email):
         log.warning("Denied read for %s", email)
         return False, 403, "This account does not have access."
-    if request.method in _WRITE_METHODS and not config.may_write(email):
+    if _is_write(request) and not config.may_write(email):
         log.warning("Denied write for %s on %s", email, request.url.path)
         return False, 403, "This account has read-only access."
 
@@ -522,9 +760,29 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
 
     Uses constant-time comparison so response timing cannot leak how much of the guess was
     right, same reasoning as any password check.
+
+    Two credential shapes reach here. `Bearer <token>` is a session minted by
+    /api/auth/login and is what the dashboard sends after sign-in; `Basic <base64>` is the raw
+    credential, still accepted so that curl, the container healthcheck and any non-browser
+    client keep working, and so that /api/auth/login itself has something to authenticate.
     """
-    header = request.headers.get("Authorization", "")
     challenge = _basic_challenge_for(request)
+
+    token = _bearer_token(request)
+    if token:
+        resolved = resolve_session(token)
+        if resolved is None:
+            return False, 401, "Session has expired. Sign in again.", challenge
+        email, role, name = resolved
+        if _is_write(request) and not _role_may_write(role):
+            log.warning("Denied write for %s on %s", email, request.url.path)
+            return False, 403, "This account has read-only access.", {}
+        request.state.user_email = email
+        request.state.user_role = role
+        request.state.user_name = name
+        return True, 200, "", {}
+
+    header = request.headers.get("Authorization", "")
     if not header.startswith("Basic "):
         return False, 401, "Not signed in.", challenge
     try:
@@ -533,6 +791,24 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
         return False, 401, "Sign-in is not valid.", challenge
     username, _, password = decoded.partition(":")
     normalized = _normalize_email(username)
+
+    # A credential verified moments ago skips both the PBKDF2 derivation and the database
+    # round-trip. The write-side check below still runs against the cached role, so a
+    # read-only account cannot slip a write through on a cache hit.
+    cached = _verified_credentials.get(username, password)
+    if cached is not None:
+        cached_email, cached_role, cached_name = cached
+        if _is_write(request) and not _role_may_write(cached_role):
+            log.warning("Denied write for %s on %s", cached_email, request.url.path)
+            return False, 403, "This account has read-only access.", {}
+        # The sign-in paths are deliberately excluded from the cache so that last_login_at
+        # and the audit row still record every real sign-in.
+        if request.url.path not in ("/api/auth/me", "/api/auth/login"):
+            request.state.user_email = cached_email
+            request.state.user_role = cached_role
+            request.state.user_name = cached_name
+            return True, 200, "", {}
+
     try:
         ensure_basic_user()
         with _connect_users() as db:
@@ -541,16 +817,19 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
                 if user["status"] != _ACTIVE_STATUS or not _verify_password(password, user["password_hash"]):
                     log.warning("Rejected app user sign-in attempt for %r", username)
                     return False, 401, "Sign-in is not valid.", challenge
-                if request.method in _WRITE_METHODS and not _role_may_write(user["role"]):
+                if _is_write(request) and not _role_may_write(user["role"]):
                     log.warning("Denied write for %s on %s", normalized, request.url.path)
                     return False, 403, "This account has read-only access.", {}
-                if request.url.path == "/api/auth/me":
+                if request.url.path in ("/api/auth/me", "/api/auth/login"):
                     now = _utc_now()
                     db.execute("UPDATE app_users SET last_login_at=?, updated_at=? WHERE id=?", (now, now, user["id"]))
                     _record_user_audit(db, normalized, "signed_in", normalized)
                 request.state.user_email = normalized
                 request.state.user_role = user["role"]
                 request.state.user_name = user["full_name"] or ""
+                _verified_credentials.put(
+                    username, password, (normalized, user["role"], user["full_name"] or "")
+                )
                 return True, 200, "", {}
     except sqlite3.Error:
         pass
@@ -565,6 +844,7 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
     request.state.user_email = normalized or username
     request.state.user_role = "admin"
     request.state.user_name = "Administrator"
+    _verified_credentials.put(username, password, (normalized or username, "admin", "Administrator"))
     return True, 200, "", {}
 
 
@@ -631,17 +911,15 @@ def require_gate_or_die() -> None:
     markers = ("RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME", "DYNO", "WEBSITE_INSTANCE_ID")
     detected = next((name for name in markers if (os.getenv(name) or "").strip()), None)
     require = _flag("LEADLENS_REQUIRE_AUTH") or detected is not None
-    if require and detected == "RENDER" and not config.mode:
-        config.basic_user = "admin"
-        config.basic_pass = secrets.token_urlsafe(24)
-        log.warning(
-            "Render started without BASIC_AUTH_USER/BASIC_AUTH_PASS. Generated temporary "
-            "Basic Auth credentials for this boot: username=%s password=%s. Set permanent "
-            "values in Render's Environment tab; this password changes on every restart.",
-            config.basic_user,
-            config.basic_pass,
-        )
-        return
+    # Render used to be special-cased here: booting with no gate would mint a random password
+    # and print it to the log. That was a fail-*open* dressed as a fail-closed, and it defeated
+    # this function twice over. It wrote a live credential into Render's log stream, which is
+    # retained, searchable, and visible to everyone on the account -- the one place a password
+    # must never be -- and it meant the single deployment style this check was written in
+    # response to (the open Render deploy of 2026-08-14) was the only one it did not stop.
+    # render.yaml sets BASIC_AUTH_PASS with `generateValue: true`, so the blueprint path
+    # already has a real gate; a Render deploy that does not is a misconfiguration and now
+    # fails like every other host.
     if require and not config.mode:
         raise RuntimeError(
             "Refusing to start with no access gate on a deployment that requires one "

@@ -7,8 +7,14 @@ check -- plus the preview-token validation that stops glob smuggling.
 
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+import sqlite3
 import sys
+import tempfile
+import time
+from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,14 +73,60 @@ class BruteForceTests(unittest.TestCase):
 
 
 class ClientIpTests(unittest.TestCase):
-    def test_prefers_left_most_forwarded_hop(self):
-        request = SimpleNamespace(headers={"x-forwarded-for": "9.9.9.9, 10.0.0.1"},
-                                  client=SimpleNamespace(host="10.0.0.1"))
-        self.assertEqual(security.client_ip(request), "9.9.9.9")
+    """The limiter key has to be the one hop a client cannot choose for itself.
+
+    Reading the left-most X-Forwarded-For entry (which is what this did until 2026-08-20) meant
+    an attacker could reset every counter -- general limit and Basic Auth lockout alike -- by
+    varying a header they control, so the brute-force throttle protected nothing against anyone
+    who thought to send one.
+    """
+
+    def _request(self, forwarded: str | None, peer: str = "10.0.0.1"):
+        headers = {"x-forwarded-for": forwarded} if forwarded is not None else {}
+        return SimpleNamespace(headers=headers, client=SimpleNamespace(host=peer))
+
+    def test_uses_the_hop_the_trusted_proxy_appended(self):
+        # "9.9.9.9" is whatever the client sent; "10.0.0.1" is what our proxy actually saw.
+        self.assertEqual(security.client_ip(self._request("9.9.9.9, 10.0.0.1")), "10.0.0.1")
+
+    def test_forged_left_most_hop_cannot_shift_the_key(self):
+        keys = {
+            security.client_ip(self._request(f"{n}.{n}.{n}.{n}, 10.0.0.1"))
+            for n in range(1, 20)
+        }
+        self.assertEqual(keys, {"10.0.0.1"})
+
+    def test_single_hop_header_is_used_as_is(self):
+        self.assertEqual(security.client_ip(self._request("10.0.0.1")), "10.0.0.1")
+
+    def test_fewer_hops_than_configured_does_not_raise(self):
+        self.assertEqual(security.client_ip(self._request("")), "10.0.0.1")
 
     def test_falls_back_to_socket_peer(self):
         request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
         self.assertEqual(security.client_ip(request), "127.0.0.1")
+
+
+class SlidingWindowMemoryTests(unittest.TestCase):
+    """The limiter must not become the memory-exhaustion vector it exists to prevent."""
+
+    def test_key_table_stays_bounded(self):
+        original = security.MAX_TRACKED_KEYS
+        security.MAX_TRACKED_KEYS = 50
+        try:
+            window = security._SlidingWindow()
+            for n in range(500):
+                window.hit(f"ip-{n}", limit=5, window=60)
+            self.assertLessEqual(len(window._events), 50)
+        finally:
+            security.MAX_TRACKED_KEYS = original
+
+    def test_per_key_history_stays_bounded_under_a_flood(self):
+        window = security._SlidingWindow()
+        for _ in range(1000):
+            window.hit("flooder", limit=3, window=60)
+        self.assertLessEqual(len(window._events["flooder"]), 4)
+        self.assertFalse(window.hit("flooder", limit=3, window=60))
 
 
 class CspTests(unittest.TestCase):
@@ -140,12 +192,21 @@ class StartupGateTests(unittest.TestCase):
     def test_open_local_boot_is_allowed(self):
         auth.require_gate_or_die()  # no marker, no gate -> fine
 
-    def test_render_without_a_gate_generates_temporary_basic_auth(self):
+    def test_render_without_a_gate_refuses_to_boot(self):
+        # Previously this generated a password and logged it in clear text. Failing closed is
+        # the whole point of the function; see the comment in require_gate_or_die.
         os.environ["RENDER"] = "true"
-        auth.require_gate_or_die()
-        self.assertEqual(auth.config.mode, "basic")
-        self.assertEqual(auth.config.basic_user, "admin")
-        self.assertTrue(auth.config.basic_pass)
+        with self.assertRaises(RuntimeError):
+            auth.require_gate_or_die()
+        self.assertEqual(auth.config.mode, "")
+
+    def test_no_generated_credential_is_ever_logged(self):
+        os.environ["RENDER"] = "true"
+        with self.assertLogs("leadlens.auth", level="DEBUG") as captured:
+            logging.getLogger("leadlens.auth").debug("probe")  # assertLogs needs >=1 record
+            with self.assertRaises(RuntimeError):
+                auth.require_gate_or_die()
+        self.assertNotIn("password=", " ".join(captured.output).lower())
 
     def test_render_with_basic_auth_boots(self):
         os.environ["RENDER"] = "true"
@@ -169,6 +230,166 @@ class PreviewTokenTests(unittest.TestCase):
         for bad in ("*", "../etc", "abc", "", "A" * 32, "g" * 32):
             with self.assertRaises(ValueError):
                 core.import_preview(bad)
+
+
+class CsvExportSafetyTests(unittest.TestCase):
+    """Exported cells must not become formulas when the download is opened in a spreadsheet."""
+
+    def test_formula_leads_are_neutralised(self):
+        from backend.app import _csv_safe
+        for payload in ("=1+1", "+1", "-1", "@SUM(A1)", chr(9) + "=1", chr(13) + "=1"):
+            with self.subTest(payload=payload):
+                self.assertEqual(_csv_safe(payload), "'" + payload)
+
+    def test_ordinary_text_is_untouched(self):
+        from backend.app import _csv_safe
+        for payload in ("Explorer by SL", "Campaign 2026", "", "a=b"):
+            self.assertEqual(_csv_safe(payload), payload)
+
+    def test_numbers_pass_through_unquoted(self):
+        # Negative numbers must stay numeric -- only *strings* are prefixed.
+        from backend.app import _csv_safe
+        for payload in (5, -5, 0.5, None, True):
+            self.assertEqual(_csv_safe(payload), payload)
+
+
+class PreviewRetentionTests(unittest.TestCase):
+    """Uploaded previews are raw customer workbooks; they must not live on disk forever."""
+
+    def setUp(self):
+        self._dir = tempfile.mkdtemp()
+        self._original = core.PREVIEW_DIR
+        core.PREVIEW_DIR = Path(self._dir)
+
+    def tearDown(self):
+        core.PREVIEW_DIR = self._original
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    def test_stale_previews_are_purged_and_fresh_ones_kept(self):
+        stale = core.PREVIEW_DIR / ("a" * 32 + ".csv")
+        fresh = core.PREVIEW_DIR / ("b" * 32 + ".csv")
+        stale.write_text("Customer Name,Someone Real", encoding="utf-8")
+        fresh.write_text("Customer Name,Someone Else", encoding="utf-8")
+        old = time.time() - (core.PREVIEW_TTL_SECONDS + 60)
+        os.utime(stale, (old, old))
+
+        removed = core.purge_stale_previews()
+
+        self.assertEqual(removed, 1)
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+
+    def test_zero_ttl_disables_the_sweep(self):
+        keep = core.PREVIEW_DIR / ("c" * 32 + ".csv")
+        keep.write_text("x", encoding="utf-8")
+        os.utime(keep, (0, 0))
+        self.assertEqual(core.purge_stale_previews(ttl_seconds=0), 0)
+        self.assertTrue(keep.exists())
+
+    def test_unsupported_extension_is_refused_before_anything_is_written(self):
+        with self.assertRaises(ValueError):
+            core.preview_file(b"whatever", "payload.exe")
+        with self.assertRaises(ValueError):
+            core.preview_file(b"whatever", "no-extension")
+        self.assertEqual(list(core.PREVIEW_DIR.iterdir()), [])
+
+
+class SessionTests(unittest.TestCase):
+    """Sign-in sessions replaced the stored Basic credential on 2026-08-20.
+
+    The property that matters is that the browser now holds something *revocable* that is not
+    the password. These check the parts that make that true: the token is opaque, only its hash
+    is stored, and it stops working the moment the account behind it stops being valid.
+    """
+
+    def setUp(self):
+        self._dir = tempfile.mkdtemp()
+        self._db = Path(self._dir) / "sessions.db"
+        self._original_env = os.environ.get("LEADLENS_DB_PATH")
+        os.environ["LEADLENS_DB_PATH"] = str(self._db)
+        self._original_core = core.DB_PATH
+        core.DB_PATH = self._db
+        core.init_db()
+
+    def tearDown(self):
+        core.DB_PATH = self._original_core
+        if self._original_env is None:
+            os.environ.pop("LEADLENS_DB_PATH", None)
+        else:
+            os.environ["LEADLENS_DB_PATH"] = self._original_env
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    def _make_user(self, email="staff@example.com", role="staff", status="active"):
+        return auth.save_user(
+            {"email": email, "full_name": "Test User", "role": role,
+             "status": status, "password": "a-password-123"},
+            actor="admin@example.com",
+        )
+
+    def test_token_is_opaque_and_only_its_hash_is_stored(self):
+        self._make_user()
+        token = auth.create_session("staff@example.com")["token"]
+        self.assertNotIn("a-password-123", token)
+        with sqlite3.connect(self._db) as db:
+            stored = db.execute("SELECT token_hash FROM app_sessions").fetchone()[0]
+        self.assertNotEqual(stored, token)
+        self.assertNotIn(token, stored)
+        self.assertEqual(len(stored), 64)  # sha256 hex
+
+    def test_session_resolves_to_the_live_role_not_a_snapshot(self):
+        user = self._make_user(role="staff")
+        token = auth.create_session("staff@example.com")["token"]
+        self.assertEqual(auth.resolve_session(token)[1], "staff")
+        auth.save_user({"email": "staff@example.com", "full_name": "Test User",
+                        "role": "manager", "status": "active"},
+                       actor="admin@example.com", user_id=user["id"])
+        # Same token, new role -- a promotion or demotion must not wait for re-login.
+        self.assertEqual(auth.resolve_session(token)[1], "manager")
+
+    def test_disabling_an_account_kills_its_live_sessions(self):
+        user = self._make_user()
+        token = auth.create_session("staff@example.com")["token"]
+        self.assertIsNotNone(auth.resolve_session(token))
+        auth.save_user({"email": "staff@example.com", "full_name": "Test User",
+                        "role": "staff", "status": "disabled"},
+                       actor="admin@example.com", user_id=user["id"])
+        self.assertIsNone(auth.resolve_session(token))
+
+    def test_deleting_an_account_kills_its_live_sessions(self):
+        user = self._make_user()
+        token = auth.create_session("staff@example.com")["token"]
+        auth.delete_user(user["id"], actor="admin@example.com")
+        self.assertIsNone(auth.resolve_session(token))
+
+    def test_logout_revokes_only_that_session(self):
+        self._make_user()
+        first = auth.create_session("staff@example.com")["token"]
+        second = auth.create_session("staff@example.com")["token"]
+        auth.revoke_session(first)
+        self.assertIsNone(auth.resolve_session(first))
+        self.assertIsNotNone(auth.resolve_session(second))
+
+    def test_expired_session_is_refused_and_cleaned_up(self):
+        self._make_user()
+        token = auth.create_session("staff@example.com")["token"]
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="microseconds")
+        with sqlite3.connect(self._db) as db:
+            db.execute("UPDATE app_sessions SET expires_at=?", (past,))
+        self.assertIsNone(auth.resolve_session(token))
+        with sqlite3.connect(self._db) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM app_sessions").fetchone()[0], 0)
+
+    def test_unknown_and_empty_tokens_are_refused(self):
+        for bad in ("", "not-a-token", "x" * 43):
+            self.assertIsNone(auth.resolve_session(bad))
+
+    def test_signing_in_is_not_treated_as_a_write(self):
+        # A read-only account must be able to POST /api/auth/login. Guarding it with the
+        # writer check would 403 every staff user out of the dashboard entirely.
+        request = SimpleNamespace(method="POST", url=SimpleNamespace(path="/api/auth/login"))
+        self.assertFalse(auth._is_write(request))
+        request = SimpleNamespace(method="DELETE", url=SimpleNamespace(path="/api/leads/1"))
+        self.assertTrue(auth._is_write(request))
 
 
 if __name__ == "__main__":

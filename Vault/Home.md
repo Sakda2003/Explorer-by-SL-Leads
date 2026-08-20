@@ -39,6 +39,8 @@ codebase.
 - [[Lead-Management-Page]] — the CRM workspace for rating leads; four-cell bento, why the funnel describes the scope and not the stage selection, and why rating skips the retrain
 - [[Lead-Drilldown-Inline-Edit]] — the date-click lead table now edits inline per cell, Monday.com-style, instead of a separate edit-panel form
 - [[Spend-Leads-Scatter]] — spend-vs-leads scatter with a benchmark-CPL ray; why $0-spend ad sets are held out
+- [[Sign-In-Sessions]] — opaque server-issued sessions; what the browser stores is no longer the
+  password, and disabling an account now actually revokes
 - [[Access-Control]] — three auth topologies (Cloudflare Access / Tailscale Serve / Basic Auth), Docker deploy phases, hosting choice, and the Railway demo move
 - [[Dataset-Page]] — data inventory, variable dictionary, correlation matrix, and raw-row browser; portfolio-wide audit surface before trusting the forecast
 - [[Model-Performance-Removal]] — Dataset is now the sole portfolio-wide diagnostics surface
@@ -60,6 +62,10 @@ codebase.
 - [[Retrain-Debounce-And-GIL-Contention]] — why a single cell edit froze the board for ~31s, and the three separate costs behind it (inline retrain, UI busy-gate, GIL)
 - [[CSP-Inline-Script-Hash]] — the CSP allows the one inline theme script by sha256 hash, keeping 'unsafe-inline' off script-src
 - [[Model-Dataset-Export-For-Migration]] — `export_model_dataset_chunks.py` re-exports the live DB as re-importable model_dataset workbooks, chunked by date, for migrating history into another deployed instance
+- [[Security-Audit-2026-08-20]] — full security sweep: what was fixed, what was already sound,
+  and the three items left for Sakda to decide
+- [[X-Forwarded-For-Trust-Direction]] — a proxy *appends*, so the left-most hop is the one the
+  client wrote; keying a rate limit on it defeats the limit
 - [[Customer-Traffic-Created-Updated-Alias]] — traffic exports with "Created"/"Updated" headers (no "At") were rejected by the type detector, which never consulted the header-alias map read_tabular already used; also: missing `pyjwt` locally causes "Failed to fetch" on Upload, not an import-logic bug
 
 ## Maintenance convention
