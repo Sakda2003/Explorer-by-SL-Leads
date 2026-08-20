@@ -19,10 +19,9 @@ triaging a book of 3,800 leads, which is what this page exists for.
 
 ## Layout, top to bottom
 
-1. **Filter bar** — campaign, ad set, status, created-date range, free-text search, and a
-   Clear button that only appears once something is set. Search and Clear sit at the right
-   edge, away from the scope pickers: they act on the result, not on the scope.
-2. **Bento** — four cells for four questions (see the redesign section below).
+1. **Bento** — four cells for four questions (see the redesign section below).
+2. **Toolbar** — one compact row directly above the board: search, campaign, ad set, status,
+   created range, Clear, then a hairline rule, then Sort and row height.
 3. **Board** — the same Monday-style `board-table` the Dataset page uses, with sort, density,
    column resize, per-page and select-all-matching selection, and a floating bulk bar.
 
@@ -102,6 +101,37 @@ Collapses to `pipeline / queue + outcomes / cost` under 1120px, then to a single
 - **The campaign / ad set selects are capped** at 260px / 330px. `flex: 1 1 auto` let them
   stretch past 600px on a wide screen, which put each label a hand-span from its value.
 
+### One toolbar instead of a labelled filter panel (2026-08-20, same day)
+
+The scope filters started as a labelled panel above the bento: five fields, each with an
+uppercase caption over it. It cost about 90px of vertical space to print "CAMPAIGN" above a
+control that already read "All campaigns", and the two greedy selects (`flex: 1 1 auto`)
+stretched past 600px on a wide screen, putting each caption a hand-span from its own value.
+
+Now they sit in the board toolbar, in the Dataset page's toolbar vocabulary — so the app's two
+data surfaces are operated the same way:
+
+    [ 3,801 leads in this view ]      [search] [Campaign v] [Ad set v] [Status v] [All time v] [x Clear] | [Sort v] [rows]
+
+- The captions are gone because every control names itself when nothing is picked ("All
+  campaigns", "Any status", "All ad sets") and carries a leading icon once something is.
+- An applied filter turns gold, matching `.board-tool-btn.is-active` beside it, so "is anything
+  filtered?" is answerable without opening a menu.
+- A hairline rule separates scope (which leads are under discussion) from board tools
+  (re-ordering the ones already chosen). Different jobs, so proximity should not merge them.
+- `MenuSelect` gained an optional `short` per option: the menu still renders the full `label`
+  (campaign name plus lead count, ad set id plus title plus count) while the closed trigger
+  shows a short form. Without it a picked campaign truncated to "Leads | VISA | AU | KHM (8...",
+  and a cut-off count is worse than no count. Optional field, so every other caller is
+  unaffected.
+
+The toolbar now sits *below* the bento it scopes. That is deliberate — it is the board's
+toolbar, and the Dataset page puts it in the same place — and the pipeline cell prints the
+active scope in its own header note, so the bento always states what it is counting.
+
+Adaptation checked at 1280 / 1024 / 820px: one toolbar row down to 1024, wrapping (not
+squeezing) at 820, no horizontal overflow at any width.
+
 ### The funnel describes the SCOPE, not the stage selection
 
 The most important behavioural fix, and the one that is easiest to reintroduce by accident.
@@ -135,11 +165,22 @@ multi-select stacking (Qualified 430 + Converted 268 = a 698-row board); keyboar
 pipeline order; `detect.mjs` clean over this page's code; no console errors. The 1,559 demo
 ratings used to review the populated state were restored to Intake afterwards.
 
-**Measuring contrast here needs compositing.** `--surface-soft` is `var(--surface-tint)`, an
-`rgba()` overlay. Treating it as an opaque background reports the filter labels at 2.6:1 and
-3.0:1 and looks like a real AA failure; blending the translucent layers onto the canvas first
-gives their true 6.8 and 5.2. Blend before believing a contrast number on this app's tinted
-surfaces.
+**Measuring contrast on this app has two traps, and both manufacture false failures.** Between
+them they produced three "AA failures" here that did not exist:
+
+1. `--surface-soft` is `var(--surface-tint)`, an `rgba()` overlay. Read as an opaque background
+   it reports the old filter labels at 2.6:1 and 3.0:1; composited onto the canvas first they
+   are 6.8 and 5.2.
+2. `color-mix()` computes to `color(srgb 0.96 0.95 0.93)` in Chromium — **0-to-1 floats, not
+   0-to-255**. A parser written for `rgb()` reads that near-white tint as near-black and reports
+   the gold scoped-filter pill at 3.53:1 when it is really 5.34:1.
+
+`scratchpad/contrast_final.py` in the session that wrote this handles both. Composite the
+layers and check the color space before believing a number.
+
+One *real* failure did surface once the parser was fixed: on an `.is-active` stage row the tint
+lifts the background and `--dim` fell to 4.03:1 in dark. That row's percentage now steps up to
+`--muted`.
 
 
 ## API

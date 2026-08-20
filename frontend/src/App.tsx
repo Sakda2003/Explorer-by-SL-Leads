@@ -46,6 +46,7 @@ import {
  Upload,
  UserCheck,
  UserPlus,
+ Users,
  X,
 } from 'lucide-react';
 
@@ -4990,7 +4991,9 @@ const FILTER_TYPE_ICON: Record<FilterFieldType, typeof Pencil> = {
 // the moment a filter row sits low in that scrolling panel, which is exactly where a filter
 // row usually is once you've added more than one.
 function MenuSelect({ value, options, onChange, className, ariaLabel }: {
- value: string; options: { value: string; label: string; icon?: typeof Pencil }[];
+ // `short` is what the closed trigger shows when the full `label` is too long for a toolbar
+ // button -- the menu always renders `label`. Optional, so every existing caller is unaffected.
+ value: string; options: { value: string; label: string; short?: string; icon?: typeof Pencil }[];
  onChange: (value: string) => void; className?: string; ariaLabel: string;
 }) {
  const [open, setOpen] = useState(false);
@@ -5053,7 +5056,7 @@ function MenuSelect({ value, options, onChange, className, ariaLabel }: {
   <div className={`menu-select${open ? ' open' : ''}${className ? ` ${className}` : ''}`} ref={wrapRef}>
    <button ref={triggerRef} type="button" className="menu-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} onClick={() => setOpen((v) => !v)}>
     {current?.icon && <current.icon size={13} />}
-    <span>{current?.label}</span>
+    <span>{current?.short ?? current?.label}</span>
     <ChevronDown size={13} className="menu-select-caret" />
    </button>
    {open && createPortal(
@@ -6849,66 +6852,6 @@ function LeadManagementPage() {
    </section>
 
    <section className="dataset-section">
-    <div className="lead-filter-bar">
-     <div className="lead-filter-field">
-      <label>Campaign</label>
-      <MenuSelect
-       ariaLabel="Filter by campaign"
-       value={campaignId}
-       onChange={pickCampaign}
-       options={[
-        { value: '', label: 'All campaigns' },
-        ...options.campaigns.map((item: any) => ({
-         value: String(item.campaign_id),
-         label: `${item.campaign || item.campaign_id} (${fmt(item.leads)})`,
-        })),
-       ]}
-      />
-     </div>
-     <div className="lead-filter-field">
-      <label>Ad set ID</label>
-      <MenuSelect
-       ariaLabel="Filter by ad set"
-       value={adSetId}
-       onChange={pickAdSet}
-       options={[
-        { value: '', label: campaignId ? 'All ad sets in campaign' : 'All ad sets' },
-        ...adSetChoices.map((item: any) => ({
-         value: String(item.ad_set_id),
-         label: `${item.ad_set_id}${item.ad_title ? ` - ${item.ad_title}` : ''} (${fmt(item.leads)})`,
-        })),
-       ]}
-      />
-     </div>
-     <div className="lead-filter-field">
-      <label>Status</label>
-      <MenuSelect
-       ariaLabel="Filter by lead status"
-       value={statusFilter}
-       onChange={setStatusFilter}
-       options={[{ value: '', label: 'Any status' }, { value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
-      />
-     </div>
-     <div className="lead-filter-field">
-      <label>Created</label>
-      <PresetDateRangePicker
-       value={dateRange}
-       onApply={setDateRange}
-       onClear={() => setDateRange(null)}
-       minDate={options.first_day || undefined}
-      />
-     </div>
-     <div className="lead-filter-field lead-filter-search">
-      <label>Search</label>
-      <BoardSearch value={searchDraft} onChange={setSearchDraft} />
-     </div>
-     {hasAnyFilter && (
-      <button type="button" className="lead-filter-clear" onClick={clearFilters}>
-       <X size={13} />Clear filters
-      </button>
-     )}
-    </div>
-
     {/* Bento rather than three bands of equal tiles. "Where is my book stuck" is the question
         this page exists to answer, so the pipeline is the one object that leads; the review
         queue and the outcome rates flank it, and acquisition cost runs underneath. Four cells
@@ -7028,11 +6971,72 @@ function LeadManagementPage() {
      </section>
     </div>
 
+    {/* One toolbar instead of a labelled filter panel above the bento and a separate board
+        row down here. Same vocabulary as the Dataset page's board toolbar, so the two data
+        surfaces in this app are operated the same way. The field labels are gone because each
+        control already says what it is when nothing is picked ("All campaigns", "Any status")
+        and carries a leading icon once something is. */}
     <div className="dataset-rows-controls lead-board-controls">
      <div className="lead-board-count">
       {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
      </div>
      <div className="dataset-rows-controls-right">
+      <BoardSearch value={searchDraft} onChange={setSearchDraft} />
+      <MenuSelect
+       className={`lead-scope-select${campaignId ? ' is-scoped' : ''}`}
+       ariaLabel="Filter by campaign"
+       value={campaignId}
+       onChange={pickCampaign}
+       options={[
+        { value: '', label: 'All campaigns', icon: Megaphone },
+        ...options.campaigns.map((item: any) => ({
+         value: String(item.campaign_id),
+         label: `${item.campaign || item.campaign_id} (${fmt(item.leads)})`,
+         short: String(item.campaign || item.campaign_id),
+         icon: Megaphone,
+        })),
+       ]}
+      />
+      <MenuSelect
+       className={`lead-scope-select${adSetId ? ' is-scoped' : ''}`}
+       ariaLabel="Filter by ad set"
+       value={adSetId}
+       onChange={pickAdSet}
+       options={[
+        { value: '', label: campaignId ? 'All ad sets in campaign' : 'All ad sets', icon: Layers3 },
+        ...adSetChoices.map((item: any) => ({
+         value: String(item.ad_set_id),
+         label: `${item.ad_set_id}${item.ad_title ? ` - ${item.ad_title}` : ''} (${fmt(item.leads)})`,
+         short: String(item.ad_title || item.ad_set_id),
+         icon: Layers3,
+        })),
+       ]}
+      />
+      <MenuSelect
+       className={`lead-scope-select${statusFilter ? ' is-scoped' : ''}`}
+       ariaLabel="Filter by lead status"
+       value={statusFilter}
+       onChange={setStatusFilter}
+       options={[
+        { value: '', label: 'Any status', icon: Users },
+        { value: 'New', label: 'New', icon: Users },
+        { value: 'Existing', label: 'Existing', icon: Users },
+       ]}
+      />
+      <PresetDateRangePicker
+       value={dateRange}
+       onApply={setDateRange}
+       onClear={() => setDateRange(null)}
+       minDate={options.first_day || undefined}
+      />
+      {hasAnyFilter && (
+       <button type="button" className="lead-filter-clear" onClick={clearFilters} title="Clear every filter">
+        <X size={13} />Clear
+       </button>
+      )}
+      {/* Scope on the left of the rule, board tools on the right: narrowing which leads are
+          under discussion and re-ordering the ones already chosen are different jobs. */}
+      <span className="lead-toolbar-rule" aria-hidden="true" />
       <BoardSortMenu columns={LEAD_MANAGEMENT_COLUMNS} sortable={LEAD_MANAGEMENT_SORT_FIELDS} sort={rowSort} onChange={setRowSort} />
       <BoardDensityMenu density={density} onChange={setDensity} />
      </div>

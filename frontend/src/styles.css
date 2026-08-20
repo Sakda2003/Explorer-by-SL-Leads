@@ -6042,47 +6042,62 @@ tr:hover .benchmark-bar span { opacity: 1; }
   gap: 20px;
 }
 
-/* --- Filter bar ---------------------------------------------------------------------------
-   One labelled row of scope pickers. Labels sit above each control rather than beside it:
-   with five controls, inline labels push the row to wrap on any laptop width. */
-.lead-filter-bar {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 14px;
-  padding: 13px 15px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-soft);
+/* --- Toolbar -------------------------------------------------------------------------------
+   Scope filters and board tools share one compact row above the board, in the same vocabulary
+   as the Dataset page's toolbar. The labelled panel this replaced cost ~90px of vertical space
+   to say "Campaign" above a control already reading "All campaigns". */
+
+/* The row wraps rather than squeezing: eight controls plus a count will not fit on a laptop,
+   and a squeezed 24px-wide select is worse than a second line. */
+.lead-board-controls { row-gap: 10px; }
+.lead-board-controls .dataset-rows-controls-right { gap: 7px; }
+
+/* Auto-width, not the MenuSelect default of 100% -- these sit in a toolbar, so each should be
+   as wide as what it says and no wider. Capped because a selected ad set's label carries an
+   18-digit id plus an ad title, which would otherwise push Sort off the row. */
+.lead-scope-select .menu-select-trigger {
+  width: auto;
+  max-width: 208px;
+  height: 32px;
+  padding: 0 9px 0 10px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
 }
-.lead-filter-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-/* Capped, not greedy. These two carry the longest values (a campaign name, or an 18-digit ad
-   set id plus its ad title) so they get the most room, but `1 1 auto` let them stretch to
-   ~600px on a wide screen, which put the label a whole hand-span from its value and made a
-   two-word select look like a text area. */
-.lead-filter-field:nth-child(1) { flex: 0 1 260px; }
-.lead-filter-field:nth-child(2) { flex: 0 1 330px; }
-.lead-filter-field > label {
-  color: var(--muted);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+.lead-scope-select .menu-select-trigger > svg:first-child { width: 14px; height: 14px; }
+.lead-scope-select .menu-select-trigger span { flex: 0 1 auto; }
+/* An applied scope reads as applied, matching `.board-tool-btn.is-active` next to it, so the
+   toolbar answers "is anything filtered?" without opening a single menu. */
+.lead-scope-select.is-scoped .menu-select-trigger {
+  border-color: color-mix(in srgb, var(--gold-strong) 50%, transparent);
+  color: var(--gold-strong);
+  background: color-mix(in srgb, var(--gold) 8%, var(--surface));
 }
-.lead-filter-field .menu-select { flex: 1 1 auto; }
-/* Search and Clear ride the right edge, away from the scope pickers: they act on the result,
-   not on the scope. */
-.lead-filter-search { flex: 0 0 auto; margin-left: auto; }
-/* The shared date trigger is 40px tall for the Forecast page's larger controls; here it sits
-   in a 32px row with four other pickers and has to match them. */
-.lead-filter-bar .date-range-trigger { min-height: 32px; height: 32px; padding: 0 10px; font-size: 11px; }
+.lead-scope-select.is-scoped .menu-select-trigger > svg:first-child,
+.lead-scope-select.is-scoped .menu-select-caret { color: var(--gold-strong); }
+
+/* The date picker is shared with the Forecast page, where it is a 40px control. */
+.lead-board-controls .date-range-trigger {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+}
+
+.lead-toolbar-rule {
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
 .lead-filter-clear {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 32px;
-  padding: 0 11px;
+  padding: 0 10px;
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -6254,6 +6269,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-weight: 600;
 }
 .lead-stage-row.is-active .lead-stage-label { color: var(--text); }
+/* The active row's tint lifts its background, which drops `--dim` on it to 4.03:1 in dark --
+   below AA for 10.5px text. A step up to `--muted` clears it and reinforces the active state
+   at the same time. */
+.lead-stage-row.is-active .lead-stage-pct { color: var(--muted); }
 .lead-stage-n {
   color: var(--text);
   font-family: var(--font-mono);
@@ -6406,9 +6425,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "pipeline" "queue" "outcomes" "cost";
   }
-  .lead-filter-field:nth-child(1),
-  .lead-filter-field:nth-child(2) { flex: 1 1 100%; }
-  .lead-filter-search { margin-left: 0; }
+  .lead-scope-select .menu-select-trigger { max-width: 150px; }
   .lead-total strong, .lead-queue-figure strong { font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) {
