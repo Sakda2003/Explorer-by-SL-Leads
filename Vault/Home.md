@@ -36,6 +36,7 @@ codebase.
 - [[Budget-Optimization-Tab]] — CPL-vs-budget response signal, merged into the same page
 - [[CPL-Trend-Chart]] — the daily spend-per-day chart on the Forecast page
 - [[Forecast-Page-OLS-Panel]] — the OLS cards under the forecast chart; scoped to the selected campaign/ad set, and why thin scopes refuse to fit
+- [[Lead-Management-Page]] — the CRM workspace for rating leads through the six pipeline stages; funnel + filters + bulk rating, and why rating deliberately skips the retrain
 - [[Lead-Drilldown-Inline-Edit]] — the date-click lead table now edits inline per cell, Monday.com-style, instead of a separate edit-panel form
 - [[Spend-Leads-Scatter]] — spend-vs-leads scatter with a benchmark-CPL ray; why $0-spend ad sets are held out
 - [[Access-Control]] — three auth topologies (Cloudflare Access / Tailscale Serve / Basic Auth), Docker deploy phases, hosting choice, and the Railway demo move

@@ -6023,3 +6023,252 @@ tr:hover .benchmark-bar span { opacity: 1; }
   text-transform: uppercase;
 }
 .scatter-form-panel-resid { display: block; height: 190px; width: 100%; }
+
+
+/* ===========================================================================================
+   Lead Management page
+   Appended after the board/menu base rules on purpose: the few overrides below (the heading's
+   flex row, the date trigger's height) have to win over them, and matching specificity by
+   nesting selectors instead would be harder to follow than relying on source order.
+   =========================================================================================== */
+
+/* The heading carries the retrain chip on its right, unlike the Dataset page's, which is a
+   plain block. */
+.lead-management-page .dataset-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+/* --- Filter bar ---------------------------------------------------------------------------
+   One labelled row of scope pickers. Labels sit above each control rather than beside it:
+   with five controls, inline labels push the row to wrap on any laptop width. */
+.lead-filter-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-soft);
+}
+.lead-filter-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* Campaign and ad set carry the longest values (a campaign name, or an 18-digit ad set id
+   plus its ad title), so they get the room; the rest size to their content. */
+.lead-filter-field:nth-child(1) { flex: 1 1 230px; }
+.lead-filter-field:nth-child(2) { flex: 1 1 280px; }
+.lead-filter-field > label {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.lead-filter-field .menu-select { flex: 1 1 auto; }
+/* The shared date trigger is 40px tall for the Forecast page's larger controls; here it sits
+   in a 32px row with four other pickers and has to match them. */
+.lead-filter-bar .date-range-trigger { min-height: 32px; height: 32px; padding: 0 10px; font-size: 11px; }
+.lead-filter-search { flex: 0 0 auto; }
+.lead-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color .14s ease, border-color .14s ease, background .14s ease;
+}
+.lead-filter-clear:hover { color: var(--text); border-color: var(--line-strong); background: var(--surface); }
+
+/* --- Pipeline funnel ----------------------------------------------------------------------
+   Six stage cards, each a filter toggle. Auto-fit rather than a fixed six columns so the row
+   reflows to two or three per line on a narrow window instead of crushing every card. */
+.lead-funnel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.lead-stage-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 12px 13px 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  font-family: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+/* The stage's own colour, set per card below, tints the card rather than filling it: six
+   fully saturated tiles in a row would fight the board underneath for attention. */
+.lead-stage-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--stage-fill, var(--status-neutral-fill));
+}
+.lead-stage-card:hover { border-color: var(--line-strong); background: var(--surface-soft); transform: translateY(-1px); }
+.lead-stage-card.is-active {
+  border-color: color-mix(in srgb, var(--stage-fill, var(--status-neutral-fill)) 62%, var(--line));
+  background: color-mix(in srgb, var(--stage-fill, var(--status-neutral-fill)) 13%, var(--surface));
+}
+.lead-stage-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.lead-stage-name {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  line-height: 1.35;
+  /* Two lines' worth whether or not the label needs them. "Awaiting Document and Payment" is
+     the only stage that wraps, and without this its count sat a line lower than the other
+     five, breaking the row's shared baseline. */
+  min-height: 2.7em;
+}
+.lead-stage-card.is-active .lead-stage-name { color: var(--text); }
+.lead-stage-count {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+.lead-stage-share { color: var(--dim); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lead-stage-bar {
+  width: 100%;
+  height: 3px;
+  /* `auto` rather than a fixed gap, so the bars sit on a shared baseline across the row even
+     if a label's height ever differs from its neighbours'. The grid stretches every card to
+     the tallest, so there is always free space for this to absorb. */
+  margin-top: auto;
+  border-radius: 2px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+.lead-stage-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--stage-fill, var(--status-neutral-fill));
+  transition: width .3s cubic-bezier(.22,1,.36,1);
+}
+
+/* Each stage's colour, matching the pill it recolours in the board below (see the
+   `.lead-quality-select.quality-*` rules) so a stage reads the same in both places. */
+.lead-stage-card.quality-intake { --stage-fill: var(--status-neutral-fill); }
+.lead-stage-card.quality-not-qualified { --stage-fill: var(--status-bad-fill); }
+.lead-stage-card.quality-qualified { --stage-fill: var(--status-info-fill); }
+.lead-stage-card.quality-converted { --stage-fill: var(--status-good-fill); }
+.lead-stage-card.quality-lost { --stage-fill: var(--status-lost-fill); }
+.lead-stage-card.quality-awaiting-document-and-payment { --stage-fill: var(--status-warn-fill); }
+
+/* --- Rate + economics strips ----------------------------------------------------------- */
+.metrics.lead-pipeline-metrics { grid-template-columns: repeat(4, minmax(170px, 1fr)); }
+
+.lead-economics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 22px;
+  margin-bottom: 22px;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-soft);
+}
+.lead-economics > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lead-economics span {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.lead-economics b {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 15.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The attribution caveat spans the whole strip under the figures rather than sitting beside
+   one of them -- it qualifies all four. */
+.lead-economics p {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* --- Board --------------------------------------------------------------------------------
+   Same board as the Dataset page's, so only the count label on the left is new. */
+.lead-board-count { color: var(--muted); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Edge-to-edge status/quality cell fills, restated on a class React puts on the <td> itself.
+   The equivalents further up this file select the cell with `td:has(> .lead-quality-select
+   .quality-*)`, and that `:has()` does not re-invalidate when React swaps the pill's class on
+   an already-rendered row -- verified live in both themes: the cell repaints on reload but
+   not on the click that changed the rating. On this page recolouring on click IS the
+   interaction, so the fill can't depend on that. These selectors match only cells carrying
+   `.lead-cell-status`/`.lead-cell-quality`, which nothing outside this page renders, so the
+   Dataset board keeps its existing behaviour untouched. Specificity (0,3,1) beats the
+   neutral base rule's (0,2,1), so the stage colour wins wherever both apply. */
+.board-table td.lead-cell-status,
+.board-table td.lead-cell-quality { padding: 0; background: var(--status-neutral-fill); }
+.board-table td.lead-cell-status.status-new { background: var(--status-new-fill); }
+.board-table td.lead-cell-status.status-existing { background: var(--status-existing-fill); }
+.board-table td.lead-cell-quality.quality-intake { background: var(--status-neutral-fill); }
+.board-table td.lead-cell-quality.quality-not-qualified { background: var(--status-bad-fill); }
+.board-table td.lead-cell-quality.quality-qualified { background: var(--status-info-fill); }
+.board-table td.lead-cell-quality.quality-converted { background: var(--status-good-fill); }
+.board-table td.lead-cell-quality.quality-lost { background: var(--status-lost-fill); }
+.board-table td.lead-cell-quality.quality-awaiting-document-and-payment { background: var(--status-warn-fill); }
+
+/* The trigger is transparent over the cell fill, so the ink has to come from the same token
+   the fill did -- restated here for the same invalidation reason as the backgrounds above. */
+.board-table td.lead-cell-status.status-new .menu-select-trigger { color: var(--status-new-ink); }
+.board-table td.lead-cell-status.status-existing .menu-select-trigger { color: var(--status-existing-ink); }
+.board-table td.lead-cell-quality.quality-intake .menu-select-trigger { color: var(--status-neutral-ink); }
+.board-table td.lead-cell-quality.quality-not-qualified .menu-select-trigger { color: var(--status-bad-ink); }
+.board-table td.lead-cell-quality.quality-qualified .menu-select-trigger { color: var(--status-info-ink); }
+.board-table td.lead-cell-quality.quality-converted .menu-select-trigger { color: var(--status-good-ink); }
+.board-table td.lead-cell-quality.quality-lost .menu-select-trigger { color: var(--status-lost-ink); }
+.board-table td.lead-cell-quality.quality-awaiting-document-and-payment .menu-select-trigger { color: var(--status-warn-ink); }
+
+/* The bulk bar's action side gains a label here, since "Set quality to" needs to name what
+   the dropdown next to it does -- Dataset's bar is only icon buttons. */
+.board-bulk-actions { align-items: center; }
+.board-bulk-label { color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.lead-bulk-quality .menu-select-trigger { min-width: 160px; }
+
+@media (max-width: 900px) {
+  .metrics.lead-pipeline-metrics { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+  .lead-filter-field:nth-child(1),
+  .lead-filter-field:nth-child(2) { flex: 1 1 100%; }
+}
+@media (max-width: 620px) {
+  .lead-funnel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lead-stage-count { font-size: 19px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lead-stage-card, .lead-stage-bar > i { transition: none; }
+  .lead-stage-card:hover { transform: none; }
+}

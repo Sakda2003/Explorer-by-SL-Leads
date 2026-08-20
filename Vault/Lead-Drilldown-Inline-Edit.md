@@ -120,6 +120,13 @@ unchanged, confirmed by string equality against its pre-edit value), persisted s
 Screenshot verification wasn't available in that session (pane not compositing) — confirmed
 via DOM/network only; a visual check is still worth doing before calling this fully done.
 
+> **Superseded in part, 2026-08-20:** the drill-down is no longer the only place to set a
+> lead's quality. [[Lead-Management-Page]] is now the dedicated surface for it, with filters,
+> a funnel, and bulk rating across the whole book of leads rather than one day at a time. The
+> drill-down keeps its column and still works exactly as described below. Note that the
+> `:has()`-based cell colouring described here does **not** repaint when a rating changes on an
+> already-rendered row — see that note's gotcha section.
+
 ### "Lead Quality" column added, 2026-08-08
 
 New CRM pipeline-stage column, between Status and Date, per request. There's no import

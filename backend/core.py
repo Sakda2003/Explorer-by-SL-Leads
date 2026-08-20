@@ -6761,6 +6761,150 @@ def get_dataset_row_ids(
     return {"ids": ids, "total": int(total), "capped": int(total) > len(ids)}
 
 
+# --- Lead Management page ---------------------------------------------------------------
+# The pipeline stages that count as "made it past qualification". Kept as a named group
+# rather than inlined so the funnel card, the qualification rate, and the cost-per-qualified
+# figure can never drift apart on which stages they consider a pass. "Awaiting Document and
+# Payment" is included: the lead has been qualified and is mid-handover, not still in triage.
+LEAD_QUALIFIED_STAGES = ("Qualified", "Converted", "Awaiting Document and Payment")
+# Stages that ended the pipeline without a sale. Named for the same reason.
+LEAD_DROPPED_STAGES = ("Not Qualified", "Lost")
+
+
+def get_lead_pipeline_summary(
+    campaign_id: str | None = None, ad_set_id: str | None = None,
+    filters: list[dict] | None = None, search: str | None = None,
+) -> dict:
+    """Stage counts + conversion economics for whatever lead set the filters currently match.
+
+    Deliberately shares `_dataset_where` (and therefore the "leads" table's filter/search
+    allowlists) with `get_dataset_rows`, so the funnel above the Lead Management board is
+    always counting exactly the rows the board is paging through -- a separately-written
+    WHERE clause here would drift the moment either side gained a filter field.
+    """
+    spec = DATASET_ROW_TABLES["leads"]
+    clause, params = _dataset_where("leads", spec, campaign_id, ad_set_id, filters, search)
+    join_sql = str(spec.get("join") or "")
+    table_sql = f"{spec['table']} {join_sql} {clause}"
+
+    with connect() as db:
+        stage_rows = db.execute(
+            f"SELECT COALESCE(NULLIF(TRIM(lead_quality), ''), ?) AS stage, COUNT(*) AS n "
+            f"FROM {table_sql} GROUP BY stage",
+            [LEAD_QUALITY_OPTIONS[0], *params],
+        ).fetchall()
+        status_rows = db.execute(
+            f"SELECT COALESCE(NULLIF(TRIM(status), ''), 'Unknown') AS status, COUNT(*) AS n "
+            f"FROM {table_sql} GROUP BY status",
+            params,
+        ).fetchall()
+        # Spend is summed over the DISTINCT (ad set, day) pairs the matched leads came from,
+        # never per lead: `amount_spent_usd` on a lead row is the ad set's whole-day spend
+        # (see the "leads" spec's COALESCE join), so SUM()ing it across leads would multiply
+        # each day's budget by however many leads that day happened to produce.
+        spend = db.execute(
+            f"""SELECT COALESCE(SUM(p.spend), 0) FROM (
+                  SELECT DISTINCT utm_ad_set_id AS ad_set_id, date(created_at) AS day
+                  FROM {table_sql}
+                ) matched
+                JOIN (SELECT ad_set_id, day, SUM(amount_spent_usd) AS spend
+                      FROM daily_ad_performance GROUP BY ad_set_id, day) p
+                  ON p.ad_set_id = matched.ad_set_id AND p.day = matched.day""",
+            params,
+        ).fetchone()[0]
+
+    counts = {str(row["stage"]): int(row["n"]) for row in stage_rows}
+    # Zero-filled and ordered by LEAD_QUALITY_OPTIONS so the funnel renders every stage in
+    # pipeline order even when nothing has reached it yet -- an absent card reads as "this
+    # stage doesn't exist", which is the wrong message for an empty one.
+    stages = [{"quality": option, "count": counts.get(option, 0), "share": 0.0}
+              for option in LEAD_QUALITY_OPTIONS]
+    # Any stage value outside the allowlist (only reachable from a row written before
+    # validation existed) still gets its own entry, so the funnel's parts always sum to the
+    # board's row count instead of quietly losing rows.
+    stages.extend({"quality": value, "count": n, "share": 0.0}
+                  for value, n in sorted(counts.items()) if value not in LEAD_QUALITY_OPTIONS)
+    total = sum(item["count"] for item in stages)
+    for item in stages:
+        item["share"] = (item["count"] / total) if total else 0.0
+
+    qualified = sum(counts.get(stage, 0) for stage in LEAD_QUALIFIED_STAGES)
+    dropped = sum(counts.get(stage, 0) for stage in LEAD_DROPPED_STAGES)
+    converted = counts.get("Converted", 0)
+    intake = counts.get(LEAD_QUALITY_OPTIONS[0], 0)
+    # "Rated" means someone has actually moved the lead off the default stage -- the honest
+    # denominator for a qualification rate, since an untouched Intake lead is an unanswered
+    # question, not a rejection.
+    rated = total - intake
+    spend_value = float(spend or 0.0)
+
+    return {
+        "total": total,
+        "stages": stages,
+        "statuses": {str(row["status"]): int(row["n"]) for row in status_rows},
+        "intake": intake,
+        "rated": rated,
+        "rated_share": (rated / total) if total else 0.0,
+        "qualified": qualified,
+        "dropped": dropped,
+        "converted": converted,
+        # Rates over the rated subset, not the whole match: with most leads still at Intake a
+        # whole-set denominator would report a conversion rate that only measures how much
+        # rating has been done so far.
+        "qualification_rate": (qualified / rated) if rated else None,
+        "conversion_rate": (converted / rated) if rated else None,
+        # Spend on the ad set days these leads came from -- an upper bound on what the matched
+        # leads cost, since a day's spend is counted whole even if only some of its leads match.
+        "matched_spend_usd": spend_value,
+        "cost_per_lead": (spend_value / total) if total else None,
+        "cost_per_qualified": (spend_value / qualified) if qualified else None,
+        "cost_per_converted": (spend_value / converted) if converted else None,
+    }
+
+
+def get_lead_filter_options() -> dict:
+    """Campaign and ad set pickers for the Lead Management filter bar.
+
+    Built from `lead_events` rather than from the ad-performance export so the dropdowns can
+    only ever offer a value that some lead actually carries -- picking an option always
+    returns rows.
+    """
+    with connect() as db:
+        campaign_rows = db.execute(
+            """SELECT utm_campaign_id AS campaign_id,
+                      COALESCE(MAX(NULLIF(TRIM(utm_campaign), '')), '') AS campaign,
+                      COUNT(*) AS leads
+               FROM lead_events
+               WHERE TRIM(COALESCE(utm_campaign_id, '')) <> ''
+               GROUP BY utm_campaign_id
+               ORDER BY leads DESC, campaign_id"""
+        ).fetchall()
+        ad_set_rows = db.execute(
+            """SELECT utm_ad_set_id AS ad_set_id,
+                      COALESCE(MAX(NULLIF(TRIM(utm_campaign_id), '')), '') AS campaign_id,
+                      COALESCE(MAX(NULLIF(TRIM(fb_ad_title), '')), '') AS ad_title,
+                      COUNT(*) AS leads,
+                      MAX(date(created_at)) AS last_seen
+               FROM lead_events
+               WHERE TRIM(COALESCE(utm_ad_set_id, '')) <> ''
+               GROUP BY utm_ad_set_id
+               ORDER BY leads DESC, ad_set_id"""
+        ).fetchall()
+        bounds = db.execute(
+            "SELECT MIN(date(created_at)) AS first_day, MAX(date(created_at)) AS last_day "
+            "FROM lead_events"
+        ).fetchone()
+    return {
+        "campaigns": [dict(row) for row in campaign_rows],
+        "ad_sets": [dict(row) for row in ad_set_rows],
+        "qualities": list(LEAD_QUALITY_OPTIONS),
+        "statuses": ["New", "Existing"],
+        "first_day": bounds["first_day"] if bounds else None,
+        "last_day": bounds["last_day"] if bounds else None,
+    }
+
+
+
 def calculate_forecast_metrics(
     actual: Iterable[float], predicted: Iterable[float], lower: Iterable[float] | None = None,
     upper: Iterable[float] | None = None, naive_scale: float = 1.0, backtest_windows: int = 1,
@@ -9486,6 +9630,63 @@ def update_lead_event(lead_id: int, changes: dict, retrain: bool = True) -> dict
     rebuild_aggregates()
     run = train_models()
     return {"updated": lead_id, "lead": updated, "training_run": run}
+
+
+def bulk_update_lead_quality(lead_ids: Iterable[int], quality: str, retrain: bool = True) -> dict:
+    """Set one pipeline stage on many leads at once, for the Lead Management board's bulk bar.
+
+    Exists because rating is the one lead edit done in batches -- "every lead from this ad set
+    last week was Not Qualified" is a single judgement about 200 rows, and firing 200 PATCHes
+    for it would mean 200 `raw_json` round-trips and 200 retrain requests. `retrain=False`
+    matches `update_lead_event`'s contract: write and return, leaving the ~31s
+    rebuild+train pair to the caller's background guard.
+    """
+    cleaned_quality = _clean_lead_update_value("lead_quality", quality)
+    ids = []
+    for raw_id in lead_ids:
+        try:
+            ids.append(int(raw_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Lead id {raw_id!r} is not a number.") from exc
+    if not ids:
+        raise ValueError("No leads were selected.")
+    if len(ids) > SELECT_ALL_MATCHING_CAP:
+        raise ValueError(f"Too many leads in one request (limit {SELECT_ALL_MATCHING_CAP:,}).")
+    ids = list(dict.fromkeys(ids))
+
+    now = utc_now()
+    raw_key = LEAD_RAW_FIELD_MAP["lead_quality"]
+    updated = 0
+    with connect() as db:
+        # One statement per row rather than a single `UPDATE ... WHERE id IN (...)` because
+        # each row's `raw_json` has to be re-serialised with the new value -- the same
+        # bookkeeping `update_lead_event` does, and the reason the Dataset board's exports
+        # and the lead detail popover agree with the column. All inside one transaction, so
+        # a mid-batch failure leaves nothing half-applied.
+        placeholders = ", ".join("?" for _ in ids)
+        rows = db.execute(
+            f"SELECT id, raw_json FROM lead_events WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        for row in rows:
+            try:
+                raw = json.loads(row["raw_json"] or "{}")
+            except json.JSONDecodeError:
+                raw = {}
+            raw[raw_key] = str(cleaned_quality)
+            db.execute(
+                "UPDATE lead_events SET lead_quality=?, updated_at=?, raw_json=? WHERE id=?",
+                (cleaned_quality, now, json.dumps(raw, ensure_ascii=False), row["id"]),
+            )
+            updated += 1
+
+    if retrain:
+        rebuild_aggregates()
+        train_models()
+    # `requested` vs `updated` are reported separately so a caller passing a stale id set (a
+    # selection made before someone else deleted a row) sees the shortfall instead of a
+    # success message that silently covered fewer leads than it named.
+    return {"requested": len(ids), "updated": updated, "lead_quality": cleaned_quality}
+
 
 
 # Editable columns on daily_ad_performance, for the Dataset page's board. Deliberately a

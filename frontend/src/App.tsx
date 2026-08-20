@@ -40,17 +40,19 @@ import {
  ShieldCheck,
  SlidersHorizontal,
  Sun,
+ Target,
  Trash2,
  TrendingDown,
  TrendingUp,
  Upload,
  UserCheck,
  UserPlus,
+ Users,
  X,
 } from 'lucide-react';
 
 const API = '/api';
-type Page = 'Forecast' | 'Optimization' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
+type Page = 'Forecast' | 'Optimization' | 'Lead Management' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
 const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
 const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 let apiAuthHeader = '';
@@ -107,15 +109,16 @@ const CHANGE_SCOPES: { key: 'ad_set' | 'ad'; label: string }[] = [
 // tab is actually showing.
 const CHANGE_TAB_ORDER: Array<'ad_set' | 'ad' | 'start_date'> = ['ad_set', 'ad', 'start_date'];
 
-// Grouped rather than one flat list of six: the pages fall into three genuinely
-// different jobs -- reading the model's output, feeding it, and configuring it -- and
-// the group labels make that split legible instead of implied by ordering.
+// Grouped rather than one flat list: the pages fall into three genuinely different jobs --
+// working the leads and the model's output, feeding the model, and configuring it -- and the
+// group labels make that split legible instead of implied by ordering.
 const navGroups: { label: string; items: [Page, any][] }[] = [
  {
   label: 'Analyze',
   items: [
    ['Forecast', BarChart3],
    ['Optimization', TrendingUp],
+   ['Lead Management', UserCheck],
   ],
  },
  {
@@ -6466,6 +6469,590 @@ function DatasetPage() {
  );
 }
 
+
+// --- Lead Management ---------------------------------------------------------------------
+// The board's columns. Only Status and Lead Quality are editable here: this page exists to
+// record a judgement about a lead, and every other column is imported identity the rater is
+// reading *to make* that judgement, not something they should be able to overwrite by
+// clicking the wrong cell mid-triage. The Dataset page's board stays the place to correct
+// imported values -- same rows, same endpoint, different job. Typed as DatasetRowColumn so
+// BoardHeaderCell/BoardSortMenu take it directly; `edit` is unused since the two editable
+// columns here are pill dropdowns rather than LeadEditableCell text inputs.
+const LEAD_MANAGEMENT_COLUMNS: DatasetRowColumn[] = [
+ { key: 'created_at', label: 'Created', width: 126, render: (row) => dateFmt(row.created_at) },
+ { key: 'customer_name', label: 'Customer', width: 184 },
+ { key: 'status', label: 'Status', width: 116 },
+ { key: 'lead_quality', label: 'Lead Quality', width: 216 },
+ { key: 'utm_campaign', label: 'Campaign', width: 188 },
+ { key: 'utm_campaign_id', label: 'Campaign ID', width: 166 },
+ { key: 'utm_ad_set_id', label: 'Ad set ID', width: 166 },
+ { key: 'utm_ad_id', label: 'Ad ID', width: 166 },
+ { key: 'fb_ad_title', label: 'Ad title', width: 160 },
+];
+
+// Mirrors DATASET_ROW_TABLES["leads"]["sort_fields"] in backend/core.py for the columns this
+// board shows. Every one is a real lead_events column, so all of them are sortable.
+const LEAD_MANAGEMENT_SORT_FIELDS = LEAD_MANAGEMENT_COLUMNS.map((column) => column.key);
+
+// Which stages count as "past qualification" and which ended without a sale. Mirrors
+// LEAD_QUALIFIED_STAGES / LEAD_DROPPED_STAGES in backend/core.py -- used here only to band
+// the funnel cards; the rates themselves are computed server-side off the same two lists.
+const LEAD_QUALIFIED_STAGES = ['Qualified', 'Converted', 'Awaiting Document and Payment'];
+const LEAD_DROPPED_STAGES = ['Not Qualified', 'Lost'];
+
+const EMPTY_LEAD_SUMMARY = {
+ total: 0, stages: [] as any[], statuses: {} as Record<string, number>, intake: 0, rated: 0,
+ rated_share: 0, qualified: 0, dropped: 0, converted: 0, qualification_rate: null,
+ conversion_rate: null, matched_spend_usd: 0, cost_per_lead: null, cost_per_qualified: null,
+ cost_per_converted: null,
+};
+
+function LeadManagementPage() {
+ const [options, setOptions] = useState<{ campaigns: any[]; ad_sets: any[]; first_day: string | null; last_day: string | null }>(
+  { campaigns: [], ad_sets: [], first_day: null, last_day: null },
+ );
+ const [summary, setSummary] = useState<any>(EMPTY_LEAD_SUMMARY);
+ const [summaryBusy, setSummaryBusy] = useState(true);
+
+ // --- Filters -----------------------------------------------------------------------------
+ // Campaign and ad set ride as scope params (the backend's `campaign_id`/`ad_set_id`), the
+ // rest as {field, operator, value} rows -- the same split /api/dataset/rows already makes,
+ // so the board and the funnel share one filter pipeline instead of growing two.
+ const [campaignId, setCampaignId] = useState('');
+ const [adSetId, setAdSetId] = useState('');
+ const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null);
+ const [statusFilter, setStatusFilter] = useState('');
+ // Multi-select rather than one value: the funnel cards are the main way to filter here, and
+ // "show me Qualified *and* Awaiting Document" is the natural next question after seeing the
+ // two counts side by side.
+ const [qualityFilter, setQualityFilter] = useState<string[]>([]);
+ const [searchDraft, setSearchDraft] = useState('');
+ const [search, setSearch] = useState('');
+
+ // --- Board -------------------------------------------------------------------------------
+ const [rowsData, setRowsData] = useState<{ rows: any[]; total: number; limit: number }>({ rows: [], total: 0, limit: 50 });
+ const [rowsOffset, setRowsOffset] = useState(0);
+ const [rowsBusy, setRowsBusy] = useState(false);
+ const [rowSort, setRowSort] = useState<{ field: string; direction: 'asc' | 'desc' } | null>(null);
+ const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+ const [density, setDensity] = useState<BoardDensity>('default');
+ const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+ const [selectedAllMatching, setSelectedAllMatching] = useState(false);
+ const [selectAllMatchingBusy, setSelectAllMatchingBusy] = useState(false);
+ const [boardBusy, setBoardBusy] = useState(false);
+ const [boardError, setBoardError] = useState('');
+ // Bumped after any write, to pull the funnel back in sync with the board. Rows are updated
+ // optimistically, but the stage counts are a server-side aggregate over rows this page may
+ // not have loaded, so they have to be re-asked for rather than adjusted in place.
+ const [refreshKey, setRefreshKey] = useState(0);
+
+ const { retraining, watchRetrain } = useRetrainWatcher();
+
+ useEffect(() => {
+  api('/lead-management/options')
+   .then(setOptions)
+   .catch((err: any) => setBoardError(err.message || 'Failed to load filter options.'));
+ }, []);
+
+ // Debounced so typing doesn't fire a request per keystroke -- same as the Dataset board.
+ useEffect(() => {
+  const timer = window.setTimeout(() => setSearch(searchDraft.trim()), 350);
+  return () => window.clearTimeout(timer);
+ }, [searchDraft]);
+
+ const boardFilters = useMemo(() => {
+  const rows: { field: string; operator: string; value: any }[] = [];
+  if (dateRange) rows.push({ field: 'created_at', operator: 'between', value: dateRange });
+  if (statusFilter) rows.push({ field: 'status', operator: 'is', value: [statusFilter] });
+  if (qualityFilter.length) rows.push({ field: 'lead_quality', operator: 'is', value: qualityFilter });
+  return rows;
+ }, [dateRange, statusFilter, qualityFilter]);
+
+ // The scope/filter/search params every one of this page's three endpoints takes, built once
+ // so the board, the funnel, and "select all matching" can never end up describing different
+ // row sets. An ad set wins over a campaign when both are set, matching every other scope
+ // picker in the app -- and picking an ad set pins its campaign (see `pickAdSet`), so the two
+ // selects can never show a contradictory pair.
+ const queryParts = useMemo(() => {
+  const parts: string[] = [];
+  if (adSetId) parts.push(`ad_set_id=${encodeURIComponent(adSetId)}`);
+  else if (campaignId) parts.push(`campaign_id=${encodeURIComponent(campaignId)}`);
+  if (boardFilters.length) parts.push(`filters=${encodeURIComponent(JSON.stringify(boardFilters))}`);
+  if (search) parts.push(`search=${encodeURIComponent(search)}`);
+  return parts;
+ }, [adSetId, campaignId, boardFilters, search]);
+ // Appended to a URL that already has a query string, vs. one that has none.
+ const appendedQuery = queryParts.map((part) => `&${part}`).join('');
+ const standaloneQuery = queryParts.length ? `?${queryParts.join('&')}` : '';
+ const hasAnyFilter = queryParts.length > 0;
+
+ // Everything that decides *which* rows are showing, apart from which page of them.
+ const queryKey = [appendedQuery, rowSort?.field ?? '', rowSort?.direction ?? ''].join(' ');
+ // Adjusted during render, not in an effect -- React's documented "adjust state when props
+ // change" escape hatch. Narrowing the filter while on page 5 must not leave the pager
+ // stranded past the new end of the result set, and doing this in an effect means the fetch
+ // below fires once at the stale offset first. See the Dataset board's longer note on the
+ // flicker loop that produced.
+ const lastQueryKey = useRef(queryKey);
+ if (lastQueryKey.current !== queryKey) {
+  lastQueryKey.current = queryKey;
+  if (rowsOffset !== 0) setRowsOffset(0);
+ }
+
+ // Monotonic request ids: only the newest in-flight reply may write state, so a slow earlier
+ // response can't overwrite newer rows. One per endpoint, since the two race independently.
+ const rowsRequestId = useRef(0);
+ const summaryRequestId = useRef(0);
+
+ useEffect(() => {
+  setRowsBusy(true);
+  const sortQuery = rowSort ? `&sort=${encodeURIComponent(rowSort.field)}&direction=${rowSort.direction}` : '';
+  const requestId = ++rowsRequestId.current;
+  api(`/dataset/rows?table=leads&offset=${rowsOffset}&limit=${rowsData.limit}${appendedQuery}${sortQuery}`)
+   .then((data) => {
+    if (requestId !== rowsRequestId.current) return;
+    // The response's own `offset` is discarded on purpose: it echoes what it was given, so
+    // letting a late reply write it back re-applies a stale page and starts another fetch.
+    setRowsData({ rows: data.rows, total: data.total, limit: data.limit });
+   })
+   .catch((err: any) => { if (requestId === rowsRequestId.current) setBoardError(err.message || 'Failed to load leads.'); })
+   .finally(() => { if (requestId === rowsRequestId.current) setRowsBusy(false); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [queryKey, rowsOffset, refreshKey]);
+
+ useEffect(() => {
+  setSummaryBusy(true);
+  const requestId = ++summaryRequestId.current;
+  api(`/lead-management/summary${standaloneQuery}`)
+   .then((data) => { if (requestId === summaryRequestId.current) setSummary(data); })
+   .catch(() => { if (requestId === summaryRequestId.current) setSummary(EMPTY_LEAD_SUMMARY); })
+   .finally(() => { if (requestId === summaryRequestId.current) setSummaryBusy(false); });
+  // Deliberately not keyed on `rowsOffset`: the funnel describes the whole filtered set, not
+  // whichever page of it happens to be loaded.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [queryKey, refreshKey]);
+
+ // --- Filter controls ---------------------------------------------------------------------
+ // Ad sets narrow to the picked campaign; picking an ad set that belongs to another campaign
+ // (possible while "All campaigns" is showing) pins that campaign too, so the pair on screen
+ // always describes one real scope.
+ const adSetChoices = useMemo(
+  () => (campaignId ? options.ad_sets.filter((item: any) => String(item.campaign_id) === String(campaignId)) : options.ad_sets),
+  [options.ad_sets, campaignId],
+ );
+ const pickCampaign = (value: string) => {
+  setCampaignId(value);
+  // A held-over ad set from the previous campaign would silently override the new campaign
+  // scope (ad set wins), showing rows from a campaign the picker says isn't selected.
+  if (value && adSetId && !options.ad_sets.some((item: any) => String(item.ad_set_id) === adSetId && String(item.campaign_id) === value)) {
+   setAdSetId('');
+  }
+ };
+ const pickAdSet = (value: string) => {
+  setAdSetId(value);
+  const match = options.ad_sets.find((item: any) => String(item.ad_set_id) === value);
+  if (match?.campaign_id) setCampaignId(String(match.campaign_id));
+ };
+ const toggleStage = (quality: string) => {
+  setQualityFilter((current) => (current.includes(quality) ? current.filter((item) => item !== quality) : [...current, quality]));
+ };
+ const clearFilters = () => {
+  setCampaignId(''); setAdSetId(''); setDateRange(null); setStatusFilter('');
+  setQualityFilter([]); setSearchDraft(''); setSearch(''); setBoardError('');
+ };
+
+ // --- Board behaviour ---------------------------------------------------------------------
+ const pageRowIds: string[] = rowsData.rows.map((row: any) => String(row.id));
+ const selectedOnPage = pageRowIds.filter((id) => selectedRowIds.includes(id));
+ const allPageSelected = pageRowIds.length > 0 && selectedOnPage.length === pageRowIds.length;
+ const columnWidthOf = (column: DatasetRowColumn) => columnWidths[column.key] ?? column.width ?? 160;
+ const boardTableWidth = 44 + LEAD_MANAGEMENT_COLUMNS.reduce((total, column) => total + columnWidthOf(column), 0);
+ const rowStart = rowsData.total ? rowsOffset + 1 : 0;
+ const rowEnd = Math.min(rowsOffset + rowsData.limit, rowsData.total);
+
+ const cycleSort = (field: string) => {
+  if (!LEAD_MANAGEMENT_SORT_FIELDS.includes(field)) return;
+  setRowSort((current) => {
+   if (current?.field !== field) return { field, direction: 'asc' };
+   if (current.direction === 'asc') return { field, direction: 'desc' };
+   return null;
+  });
+ };
+ const toggleRowSelected = (id: string) => {
+  setSelectedAllMatching(false);
+  setSelectedRowIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+ };
+ const toggleSelectAllOnPage = () => {
+  setSelectedAllMatching(false);
+  setSelectedRowIds((current) => (
+   allPageSelected ? current.filter((id) => !pageRowIds.includes(id)) : Array.from(new Set([...current, ...pageRowIds]))
+  ));
+ };
+ const selectAllMatchingRows = async () => {
+  setSelectAllMatchingBusy(true);
+  setBoardError('');
+  try {
+   const result = await api(`/dataset/row-ids?table=leads${appendedQuery}`);
+   setSelectedRowIds(result.ids || []);
+   setSelectedAllMatching(true);
+   if (result.capped) {
+    setBoardError(`Only the first ${fmt((result.ids || []).length)} of ${fmt(result.total)} matching leads were selected -- narrow the filter to rate the rest.`);
+   }
+  } catch (err: any) {
+   setBoardError(err.message || 'Failed to select all matching leads.');
+  } finally {
+   setSelectAllMatchingBusy(false);
+  }
+ };
+
+ // One lead, one field. Optimistic so the pill recolours on click rather than after the
+ // round-trip, and rolled back per-cell on failure -- two edits can be in flight at once, so
+ // restoring a whole-page snapshot would also revert the other one.
+ const commitLeadField = async (row: any, field: 'status' | 'lead_quality', value: string) => {
+  const previous = row[field];
+  if (previous === value) return;
+  setBoardError('');
+  setRowsData((current) => ({
+   ...current,
+   rows: current.rows.map((item: any) => (item.id === row.id ? { ...item, [field]: value } : item)),
+  }));
+  try {
+   await api(`/leads/${row.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [field]: value }),
+   });
+   watchRetrain();
+   setRefreshKey((key) => key + 1);
+  } catch (err: any) {
+   setRowsData((current) => ({
+    ...current,
+    rows: current.rows.map((item: any) => (item.id === row.id ? { ...item, [field]: previous } : item)),
+   }));
+   setBoardError(err.message || 'Failed to save the change.');
+  }
+ };
+
+ // The whole selection in one request rather than one PATCH each: rating a batch is a single
+ // judgement about many rows, and N requests would mean N scheduled retrains.
+ const applyBulkQuality = async (quality: string) => {
+  if (!selectedRowIds.length) return;
+  setBoardBusy(true);
+  setBoardError('');
+  try {
+   const result = await api('/leads/bulk-quality', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lead_ids: selectedRowIds.map(Number), lead_quality: quality }),
+   });
+   const rated = new Set(selectedRowIds);
+   setRowsData((current) => ({
+    ...current,
+    rows: current.rows.map((item: any) => (rated.has(String(item.id)) ? { ...item, lead_quality: quality } : item)),
+   }));
+   setSelectedRowIds([]);
+   setSelectedAllMatching(false);
+   // No `watchRetrain()` here, unlike the single-cell commit above: /leads/bulk-quality
+   // writes only `lead_quality`, which no model input reads, so the backend deliberately
+   // schedules no retrain for it. Showing the chip would promise work that never runs.
+   setRefreshKey((key) => key + 1);
+   // A shortfall means the selection referenced leads that no longer exist -- say so rather
+   // than reporting success for a count that was never reached.
+   if (result.updated < result.requested) {
+    setBoardError(`${fmt(result.updated)} of ${fmt(result.requested)} selected leads were updated -- the rest no longer exist.`);
+   }
+  } catch (err: any) {
+   setBoardError(err.message || 'Failed to rate the selected leads.');
+  } finally {
+   setBoardBusy(false);
+  }
+ };
+
+ const stages: any[] = summary.stages?.length
+  ? summary.stages
+  : LEAD_QUALITY_OPTIONS.map((quality) => ({ quality, count: 0, share: 0 }));
+ const campaignLabel = campaignId
+  ? (options.campaigns.find((item: any) => String(item.campaign_id) === campaignId)?.campaign || campaignId)
+  : 'All campaigns';
+
+ return (
+  <div className="page-content lead-management-page">
+   <section className="dataset-heading">
+    <div>
+     <span>Lead Management</span>
+     <h2>Rate every lead and follow it through</h2>
+    </div>
+    {/* Shown while a single-cell edit's background retrain is running. Status genuinely is a
+        model input (rebuild_aggregates counts New vs Existing per ad set day), and the shared
+        PATCH endpoint schedules a retrain for any lead field, so the chip is honest for both
+        editable columns here. Bulk rating writes only `lead_quality` and schedules nothing --
+        see applyBulkQuality. */}
+    {retraining && <span className="board-retrain-chip"><RefreshCw size={12} />Retraining the model</span>}
+   </section>
+
+   <section className="dataset-section">
+    <div className="lead-filter-bar">
+     <div className="lead-filter-field">
+      <label>Campaign</label>
+      <MenuSelect
+       ariaLabel="Filter by campaign"
+       value={campaignId}
+       onChange={pickCampaign}
+       options={[
+        { value: '', label: 'All campaigns' },
+        ...options.campaigns.map((item: any) => ({
+         value: String(item.campaign_id),
+         label: `${item.campaign || item.campaign_id} (${fmt(item.leads)})`,
+        })),
+       ]}
+      />
+     </div>
+     <div className="lead-filter-field">
+      <label>Ad set ID</label>
+      <MenuSelect
+       ariaLabel="Filter by ad set"
+       value={adSetId}
+       onChange={pickAdSet}
+       options={[
+        { value: '', label: campaignId ? 'All ad sets in campaign' : 'All ad sets' },
+        ...adSetChoices.map((item: any) => ({
+         value: String(item.ad_set_id),
+         label: `${item.ad_set_id}${item.ad_title ? ` - ${item.ad_title}` : ''} (${fmt(item.leads)})`,
+        })),
+       ]}
+      />
+     </div>
+     <div className="lead-filter-field">
+      <label>Status</label>
+      <MenuSelect
+       ariaLabel="Filter by lead status"
+       value={statusFilter}
+       onChange={setStatusFilter}
+       options={[{ value: '', label: 'Any status' }, { value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
+      />
+     </div>
+     <div className="lead-filter-field">
+      <label>Created</label>
+      <PresetDateRangePicker
+       value={dateRange}
+       onApply={setDateRange}
+       onClear={() => setDateRange(null)}
+       minDate={options.first_day || undefined}
+      />
+     </div>
+     <div className="lead-filter-field lead-filter-search">
+      <label>Search</label>
+      <BoardSearch value={searchDraft} onChange={setSearchDraft} />
+     </div>
+     {hasAnyFilter && (
+      <button type="button" className="lead-filter-clear" onClick={clearFilters}>
+       <X size={13} />Clear filters
+      </button>
+     )}
+    </div>
+
+    {/* The funnel. Each card is also a filter toggle, so "how many converted?" and "show me
+        the ones that converted" are one click rather than two separate controls. */}
+    <div className="lead-funnel" role="group" aria-label="Filter by pipeline stage">
+     {stages.map((stage: any) => {
+      const active = qualityFilter.includes(stage.quality);
+      const band = LEAD_QUALIFIED_STAGES.includes(stage.quality)
+       ? 'is-qualified'
+       : LEAD_DROPPED_STAGES.includes(stage.quality) ? 'is-dropped' : 'is-open';
+      return (
+       <button
+        type="button"
+        key={stage.quality}
+        className={`lead-stage-card quality-${leadQualitySlug(stage.quality)} ${band}${active ? ' is-active' : ''}`}
+        aria-pressed={active}
+        onClick={() => toggleStage(stage.quality)}
+       >
+        <span className="lead-stage-name">{stage.quality}</span>
+        <strong className="lead-stage-count">{fmt(stage.count)}</strong>
+        <span className="lead-stage-share">{percent(stage.share)}</span>
+        <span className="lead-stage-bar" aria-hidden="true">
+         <i style={{ width: `${Math.max(0, Math.min(1, Number(stage.share) || 0)) * 100}%` }} />
+        </span>
+       </button>
+      );
+     })}
+    </div>
+
+    <div className="metrics lead-pipeline-metrics">
+     <Metric
+      label="Leads in view" value={summary.total} index={0} icon={Users} loading={summaryBusy}
+      sub={hasAnyFilter ? `Filtered - ${campaignLabel}` : 'Every lead on record'}
+     />
+     <Metric
+      label="Rated" value={summary.rated} index={1} icon={UserCheck} loading={summaryBusy}
+      sub={`${percent(summary.rated_share)} moved off Intake`}
+     />
+     <Metric
+      label="Qualification rate" value={(Number(summary.qualification_rate) || 0) * 100} suffix="%"
+      index={2} icon={Target} loading={summaryBusy}
+      sub={summary.rated ? `${fmt(summary.qualified)} of ${fmt(summary.rated)} rated` : 'Nothing rated yet'}
+     />
+     <Metric
+      label="Conversion rate" value={(Number(summary.conversion_rate) || 0) * 100} suffix="%"
+      index={3} icon={CircleCheckBig} loading={summaryBusy}
+      sub={summary.rated ? `${fmt(summary.converted)} converted` : 'Nothing rated yet'}
+     />
+    </div>
+
+    {/* Spend here is the whole day's budget for every ad set day the matched leads came from,
+        so it over-attributes whenever a filter selects only some of a day's leads. Said
+        plainly on the strip rather than left for the reader to discover. */}
+    <div className="lead-economics">
+     <div><span>Matched ad set spend</span><b>{cplMoney(summary.matched_spend_usd)}</b></div>
+     <div><span>Cost per lead</span><b>{cplMoney(summary.cost_per_lead)}</b></div>
+     <div><span>Cost per qualified</span><b>{cplMoney(summary.cost_per_qualified)}</b></div>
+     <div><span>Cost per converted</span><b>{cplMoney(summary.cost_per_converted)}</b></div>
+     <p>Spend covers every ad set day these leads came from, counted whole - an upper bound when a filter selects only part of a day.</p>
+    </div>
+
+    <div className="dataset-rows-controls lead-board-controls">
+     <div className="lead-board-count">
+      {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
+     </div>
+     <div className="dataset-rows-controls-right">
+      <BoardSortMenu columns={LEAD_MANAGEMENT_COLUMNS} sortable={LEAD_MANAGEMENT_SORT_FIELDS} sort={rowSort} onChange={setRowSort} />
+      <BoardDensityMenu density={density} onChange={setDensity} />
+     </div>
+    </div>
+
+    {boardError && <div className="lead-action-error board-error">{boardError}</div>}
+
+    <div className={`dataset-rows-scroll board-scroll density-${density}${boardBusy ? ' is-busy' : ''}`}>
+     <table className="dataset-rows-table board-table" style={{ width: boardTableWidth }}>
+      <thead>
+       <tr>
+        <th className="board-check-col" style={{ width: 44 }}>
+         <BoardCheckbox
+          checked={allPageSelected}
+          indeterminate={selectedOnPage.length > 0}
+          label={allPageSelected ? 'Deselect all leads on this page' : 'Select all leads on this page'}
+          onChange={toggleSelectAllOnPage}
+         />
+        </th>
+        {LEAD_MANAGEMENT_COLUMNS.map((column) => (
+         <BoardHeaderCell
+          key={column.key}
+          column={column}
+          sortable={LEAD_MANAGEMENT_SORT_FIELDS.includes(column.key)}
+          sortDirection={rowSort?.field === column.key ? rowSort.direction : null}
+          width={columnWidthOf(column)}
+          onSort={() => cycleSort(column.key)}
+          onResize={(width: number) => setColumnWidths((current) => ({ ...current, [column.key]: width }))}
+         />
+        ))}
+       </tr>
+      </thead>
+      <tbody>
+       {rowsData.rows.map((row: any) => {
+        const id = String(row.id);
+        const isSelected = selectedRowIds.includes(id);
+        const who = row.customer_name || `lead ${id}`;
+        return (
+         <tr key={id} className={isSelected ? 'is-selected' : ''}>
+          <td className="board-check-col">
+           <BoardCheckbox checked={isSelected} label={`Select ${who}`} onChange={() => toggleRowSelected(id)} />
+          </td>
+          {LEAD_MANAGEMENT_COLUMNS.map((column) => {
+           if (column.key === 'status') {
+            // The state class goes on the <td> as well as the pill. The shared board CSS
+            // colours these cells with `td:has(> .lead-status-select.status-*)`, and that
+            // `:has()` does not re-evaluate when React swaps the pill's class in place --
+            // verified live: a cell repaints on reload but not on the click that changed it.
+            // Harmless on the Dataset board, where ratings are incidental; not here, where
+            // recolouring on click IS the interaction. A plain class React owns always
+            // invalidates. See `.board-table td.lead-cell-*` in styles.css.
+            return (
+             <td key={column.key} className={`lead-cell-status status-${String(row.status || 'unknown').toLowerCase()}`}>
+              <MenuSelect
+               className={`lead-status-select status-${String(row.status || 'unknown').toLowerCase()}`}
+               ariaLabel={`Status for ${who}`}
+               value={row.status || ''}
+               options={[{ value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
+               onChange={(value) => void commitLeadField(row, 'status', value)}
+              />
+             </td>
+            );
+           }
+           if (column.key === 'lead_quality') {
+            const quality = row.lead_quality || LEAD_QUALITY_OPTIONS[0];
+            // Same reason as the status cell above -- the class on the <td> is what actually
+            // repaints the fill when a rating changes.
+            return (
+             <td key={column.key} className={`lead-cell-quality quality-${leadQualitySlug(quality)}`}>
+              <MenuSelect
+               className={`lead-quality-select quality-${leadQualitySlug(quality)}`}
+               ariaLabel={`Lead quality for ${who}`}
+               value={quality}
+               options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+               onChange={(value) => void commitLeadField(row, 'lead_quality', value)}
+              />
+             </td>
+            );
+           }
+           return (
+            <td key={column.key}>
+             <span className="board-cell-static">{column.render ? column.render(row) : (row[column.key] || '-')}</span>
+            </td>
+           );
+          })}
+         </tr>
+        );
+       })}
+      </tbody>
+     </table>
+     {!rowsBusy && !rowsData.rows.length && (
+      <div className="table-empty">
+       {hasAnyFilter ? 'No leads match the current filters.' : 'No leads have been imported yet.'}
+      </div>
+     )}
+    </div>
+
+    <div className="dataset-rows-pager">
+     <span>{rowsData.total ? `${fmt(rowStart)}-${fmt(rowEnd)} of ${fmt(rowsData.total)}` : ''}</span>
+     <div>
+      <button className="dataset-link-btn" disabled={rowsBusy || rowsOffset === 0} onClick={() => setRowsOffset((prev) => Math.max(0, prev - rowsData.limit))}><ChevronLeft size={13} /> Prev</button>
+      <button className="dataset-link-btn" disabled={rowsBusy || rowEnd >= rowsData.total} onClick={() => setRowsOffset((prev) => prev + rowsData.limit)}>Next <ChevronRight size={13} /></button>
+     </div>
+    </div>
+
+    {/* The batch rater. Floats at the bottom of the viewport while anything is ticked, so it
+        stays reachable however far down the board you have scrolled. */}
+    {!!selectedRowIds.length && (
+     <div className="board-bulk-bar" role="region" aria-label="Rate selected leads">
+      <div className="board-bulk-count"><strong>{fmt(selectedRowIds.length)}</strong><span>{selectedRowIds.length === 1 ? 'lead' : 'leads'} selected</span></div>
+      {allPageSelected && !selectedAllMatching && rowsData.total > pageRowIds.length && (
+       <button type="button" className="board-bulk-link" disabled={selectAllMatchingBusy} onClick={() => void selectAllMatchingRows()}>
+        {selectAllMatchingBusy ? 'Selecting...' : `Select all ${fmt(rowsData.total)} leads matching this view`}
+       </button>
+      )}
+      <div className="board-bulk-actions">
+       <span className="board-bulk-label">Set quality to</span>
+       {/* Value stays empty rather than sticky: this picker is an action, not a state, so it
+           must never look like it is reporting the selection's current rating. */}
+       <MenuSelect
+        className="lead-bulk-quality"
+        ariaLabel="Set lead quality for the selected leads"
+        value=""
+        options={[
+         { value: '', label: boardBusy ? 'Rating...' : 'Choose stage' },
+         ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option })),
+        ]}
+        onChange={(value) => { if (value) void applyBulkQuality(value); }}
+       />
+      </div>
+      <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
+     </div>
+    )}
+   </section>
+  </div>
+ );
+}
+
 // One row, one action. The verdict against benchmark and the ad set's own budget-response curve
 // are reconciled server-side, so the page never shows "boost" next to "cost is climbing".
 const ACTIONS: Record<string, { label: string; tone: string }> = {
@@ -7233,7 +7820,7 @@ export function App() {
 
  return (
  <Shell page={page} setPage={setPage} onSignOut={auth.required ? signOut : undefined}>
- {page === 'Forecast' ? <ForecastPage /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Upload Data' ? <UploadPage /> : page === 'Data History' ? <HistoryPage /> : page === 'Dataset' ? <DatasetPage /> : page === 'Admin' ? <AdminPage /> : <SettingsPage />}
+ {page === 'Forecast' ? <ForecastPage /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Lead Management' ? <LeadManagementPage /> : page === 'Upload Data' ? <UploadPage /> : page === 'Data History' ? <HistoryPage /> : page === 'Dataset' ? <DatasetPage /> : page === 'Admin' ? <AdminPage /> : <SettingsPage />}
  </Shell>
  );
 }

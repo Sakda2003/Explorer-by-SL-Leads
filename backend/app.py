@@ -22,6 +22,7 @@ from .core import (
                    ROOT, change_event_coverage, connect, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_forecast_realizations,
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
+                   bulk_update_lead_quality, get_lead_filter_options, get_lead_pipeline_summary,
                    list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
 
 # Refuse to boot open on a deployment that declares itself public (Render, or an explicit
@@ -132,6 +133,14 @@ if _cors_origins:
 class ConfirmUpload(BaseModel):
     token: str
     file_name: str | None = None
+
+
+# The Lead Management board's bulk bar: one pipeline stage applied to a whole selection.
+# A body (not query params) because the id list is unbounded in principle -- a "select all
+# matching" of a few thousand leads would blow past URL length limits as a query string.
+class LeadQualityBulkUpdate(BaseModel):
+    lead_ids: list[int]
+    lead_quality: str
 
 
 class LeadUpdate(BaseModel):
@@ -549,6 +558,21 @@ def dataset_correlation(ad_set_id: str | None = None, campaign_id: str | None = 
     return get_dataset_correlation(ad_set_id=ad_set_id, campaign_id=campaign_id)
 
 
+def _parse_filters_param(filters: str | None) -> list | None:
+    """Shared JSON-decode for the `filters` query param used by the Dataset and Lead
+    Management boards. Both send the same [{field, operator, value}, ...] shape, and both
+    need the same 400 (not a 500) when it is not valid JSON."""
+    if not filters:
+        return None
+    try:
+        parsed = json.loads(filters)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, "filters must be a valid JSON array.") from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(400, "filters must be a JSON array")
+    return parsed
+
+
 @app.get("/api/dataset/rows")
 def dataset_rows(
     table: str,
@@ -567,14 +591,7 @@ def dataset_rows(
     direction: str = "asc",
     search: str | None = None,
 ):
-    parsed_filters = None
-    if filters:
-        try:
-            parsed_filters = json.loads(filters)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(400, "filters must be a valid JSON array.") from exc
-        if not isinstance(parsed_filters, list):
-            raise HTTPException(400, "filters must be a JSON array")
+    parsed_filters = _parse_filters_param(filters)
     try:
         return get_dataset_rows(
             table, offset, limit, campaign_id=campaign_id, ad_set_id=ad_set_id,
@@ -594,14 +611,7 @@ def dataset_row_ids(
 ):
     """Every row id matching the current filter/search -- backs the Dataset page's "select all
     N matching rows" action, which needs ids beyond whatever page happens to be loaded."""
-    parsed_filters = None
-    if filters:
-        try:
-            parsed_filters = json.loads(filters)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(400, "filters must be a valid JSON array.") from exc
-        if not isinstance(parsed_filters, list):
-            raise HTTPException(400, "filters must be a JSON array")
+    parsed_filters = _parse_filters_param(filters)
     try:
         return get_dataset_row_ids(
             table, campaign_id=campaign_id, ad_set_id=ad_set_id,
@@ -830,6 +840,48 @@ def leads(
         "count": len(rows),
         "rows": [dict(row) for row in rows],
     }
+
+
+@app.get("/api/lead-management/options")
+def lead_management_options():
+    """Campaign / ad set / date-bound choices for the Lead Management filter bar."""
+    return get_lead_filter_options()
+
+
+@app.get("/api/lead-management/summary")
+def lead_management_summary(
+    campaign_id: str | None = None,
+    ad_set_id: str | None = None,
+    filters: str | None = None,
+    search: str | None = None,
+):
+    """Pipeline-stage counts for the same filter set the board is paging through -- takes the
+    identical params as /api/dataset/rows?table=leads so the funnel and the table can never
+    describe different row sets."""
+    try:
+        return get_lead_pipeline_summary(
+            campaign_id=campaign_id, ad_set_id=ad_set_id,
+            filters=_parse_filters_param(filters), search=search,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+# Rating a batch is one judgement about many rows, so it is one request rather than N.
+#
+# And deliberately NO retrain, unlike the single-lead PATCH below. `lead_quality` is a pure
+# CRM annotation: nothing in rebuild_aggregates() or train_models() reads it (grep it in
+# core.py -- outside the schema, the update allowlist, and this page's own summary query, it
+# appears nowhere). The generic PATCH has to retrain because it can also move `created_at`,
+# `utm_ad_set_id`, or `amount_spent_usd`, all of which really do feed the aggregates; this
+# endpoint can only ever write the one column that doesn't. Scheduling ~31s of
+# rebuild+train per rating batch would burn the CPU to recompute an identical model.
+@app.post("/api/leads/bulk-quality")
+def bulk_lead_quality(payload: LeadQualityBulkUpdate):
+    try:
+        return bulk_update_lead_quality(payload.lead_ids, payload.lead_quality, retrain=False)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # Lead edits schedule their model refresh in the background, for the same reason the

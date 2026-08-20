@@ -15,10 +15,12 @@ traps.
 
 ## What the inventory found
 
-The current six pages (`Page` union at the top of `frontend/src/App.tsx`) are Forecast,
+The pages inventoried (`Page` union at the top of `frontend/src/App.tsx`) were Forecast,
 Optimization, Upload Data, Data History, Dataset, and Settings. The archived artifact includes
 the former Model Performance page; it was removed on 2026-08-12 — see
-[[Model-Performance-Removal]].
+[[Model-Performance-Removal]]. **Lead Management** was added on 2026-08-20
+([[Lead-Management-Page]]) and is not in the counts below; it reuses the Dataset board wholesale
+and adds one new pattern of its own, the clickable stage card that doubles as a filter toggle.
 
 Component load is very unevenly distributed:
 
