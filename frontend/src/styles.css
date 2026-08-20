@@ -5831,7 +5831,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-size: 12.5px;
 }
 .model-gov-ols-forms-row:last-of-type { border-bottom: 0; }
-.model-gov-ols-forms-row .num { text-align: right; }
+.model-gov-ols-forms-head .num,
+.model-gov-ols-forms-row .num {
+  justify-self: stretch;
+  text-align: right;
+  white-space: nowrap;
+}
 /* The AIC winner. Marked with weight and a leading rule rather than a fill, so the row still
    reads as part of the same table and the numbers stay comparable down the column. */
 .model-gov-ols-forms-row.is-best {
