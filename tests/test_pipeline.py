@@ -1,4 +1,6 @@
+import csv
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -218,6 +220,30 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(parsed.loc[0, "UTM Ad Set ID"], "120244603714800078")
         self.assertEqual(parsed.loc[0, "FB Ad Title"], "TH1|KFTH1")
         self.assertAlmostEqual(float(parsed.loc[0, "Amount spent (USD)"]), 1.93)
+
+    def test_lead_management_export_matches_board_shape_and_date_filter(self):
+        self.import_frame(frame_for(3), "lead-management-export.csv")
+        from fastapi.testclient import TestClient
+        from backend.app import app
+
+        filters = json.dumps([{
+            "field": "created_at",
+            "operator": "between",
+            "value": {"from": "2026-06-02", "to": "2026-06-03"},
+        }])
+        response = TestClient(app).get("/api/lead-management/leads.csv", params={"filters": filters})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("lead-management-2026-06-02-to-2026-06-03.csv", response.headers["content-disposition"])
+        rows = list(csv.reader(io.StringIO(response.text)))
+        self.assertEqual(rows[0], [
+            "Created", "Customer", "Status", "Lead Quality", "Campaign",
+            "Campaign ID", "Ad set ID", "Ad ID", "Ad title",
+        ])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row[0] for row in rows[1:]], ["Jun 2, 2026", "Jun 3, 2026"])
+        self.assertEqual([row[1] for row in rows[1:]], ["Customer 1", "Customer 2"])
+        self.assertTrue(all(row[3] == "Intake" for row in rows[1:]))
 
     def test_dashboard_insights_reconcile_status_and_campaign_mix(self):
         self.import_frame(frame_for(4), "dashboard-mix.csv")

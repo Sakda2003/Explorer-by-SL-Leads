@@ -6,6 +6,7 @@ import json
 import math
 import os
 import threading
+from datetime import datetime
 from statistics import median
 from pathlib import Path
 
@@ -922,6 +923,88 @@ def lead_management_summary(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _lead_management_export_filename(filters: list | None) -> str:
+    def clean_date_label(value: object) -> str:
+        text = str(value or "")
+        if len(text) == 10 and text[4] == "-" and text[7] == "-" and text.replace("-", "").isdigit():
+            return text
+        return "custom"
+
+    for row in filters or []:
+        if row.get("field") != "created_at" or row.get("operator") != "between":
+            continue
+        value = row.get("value")
+        if isinstance(value, dict) and value.get("from") and value.get("to"):
+            return f"lead-management-{clean_date_label(value['from'])}-to-{clean_date_label(value['to'])}.csv"
+    return "lead-management-leads.csv"
+
+
+def _lead_management_created_label(value: object) -> str:
+    if not value:
+        return ""
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(text[:10])
+        except ValueError:
+            return text
+    return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}"
+
+
+@app.get("/api/lead-management/leads.csv")
+def lead_management_export(
+    campaign_id: str | None = None,
+    ad_set_id: str | None = None,
+    filters: str | None = None,
+    sort: str | None = None,
+    direction: str = "asc",
+    search: str | None = None,
+):
+    parsed_filters = _parse_filters_param(filters)
+    try:
+        rows: list[dict] = []
+        offset = 0
+        page_size = 500
+        while True:
+            page = get_dataset_rows(
+                "leads", offset, page_size, campaign_id=campaign_id, ad_set_id=ad_set_id,
+                filters=parsed_filters, sort=sort, direction=direction, search=search,
+            )
+            page_rows = page.get("rows") or []
+            rows.extend(page_rows)
+            if not page_rows or len(rows) >= int(page.get("total") or 0):
+                break
+            offset += page_size
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    _write_csv_row(writer, [
+        "Created", "Customer", "Status", "Lead Quality", "Campaign",
+        "Campaign ID", "Ad set ID", "Ad ID", "Ad title",
+    ])
+    for row in rows:
+        _write_csv_row(writer, [
+            _lead_management_created_label(row.get("created_at")),
+            row.get("customer_name"),
+            row.get("status"),
+            row.get("lead_quality"),
+            row.get("utm_campaign"),
+            row.get("utm_campaign_id"),
+            row.get("utm_ad_set_id"),
+            row.get("utm_ad_id"),
+            row.get("fb_ad_title"),
+        ])
+    return Response(
+        output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={_lead_management_export_filename(parsed_filters)}"},
+    )
 
 
 # Rating a batch is one judgement about many rows, so it is one request rather than N.

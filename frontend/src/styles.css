@@ -6084,6 +6084,30 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-size: 11px;
 }
 
+.lead-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--gold-strong) 42%, var(--line));
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--gold) 8%, var(--surface));
+  font: 700 11px var(--font-display);
+  cursor: pointer;
+  transition: color .14s ease, border-color .14s ease, background .14s ease, transform .1s ease;
+}
+.lead-export-btn > svg { color: var(--gold-strong); }
+.lead-export-btn:hover {
+  color: var(--gold-strong);
+  border-color: color-mix(in srgb, var(--gold-strong) 62%, var(--line));
+  background: color-mix(in srgb, var(--gold) 12%, var(--surface));
+}
+.lead-export-btn:active { transform: scale(.97); }
+.lead-export-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.lead-export-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
 .lead-toolbar-rule {
   align-self: center;
   width: 1px;

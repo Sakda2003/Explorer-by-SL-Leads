@@ -6604,6 +6604,7 @@ function LeadManagementPage() {
  const [selectedAllMatching, setSelectedAllMatching] = useState(false);
  const [selectAllMatchingBusy, setSelectAllMatchingBusy] = useState(false);
  const [boardBusy, setBoardBusy] = useState(false);
+ const [exportingCsv, setExportingCsv] = useState(false);
  const [boardError, setBoardError] = useState('');
  // Bumped after any write, to pull the funnel back in sync with the board. Rows are updated
  // optimistically, but the stage counts are a server-side aggregate over rows this page may
@@ -6862,6 +6863,26 @@ function LeadManagementPage() {
    setBoardBusy(false);
   }
  };
+ const exportLeadCsv = async () => {
+  setExportingCsv(true);
+  setBoardError('');
+  try {
+   const exportParts = [...queryParts];
+   if (rowSort) {
+    exportParts.push(`sort=${encodeURIComponent(rowSort.field)}`);
+    exportParts.push(`direction=${rowSort.direction}`);
+   }
+   const exportQuery = exportParts.length ? `?${exportParts.join('&')}` : '';
+   const fallbackName = dateRange
+    ? `lead-management-${dateRange.from}-to-${dateRange.to}.csv`
+    : 'lead-management-leads.csv';
+   await downloadApiFile(`/lead-management/leads.csv${exportQuery}`, fallbackName);
+  } catch (err: any) {
+   setBoardError(err.message || 'Failed to export leads.');
+  } finally {
+   setExportingCsv(false);
+  }
+ };
 
  // Skeletons only on the very first load. Once a total exists, a refetch swaps numbers in
  // place rather than blanking cells the reader is mid-sentence on.
@@ -7018,6 +7039,9 @@ function LeadManagementPage() {
       {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
      </div>
      <div className="dataset-rows-controls-right">
+      <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
+       <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
+      </button>
       <BoardSearch value={searchDraft} onChange={setSearchDraft} />
       <MenuSelect
        className={`lead-scope-select${campaignId ? ' is-scoped' : ''}`}
