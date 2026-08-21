@@ -51,7 +51,12 @@ import {
 
 const API = '/api';
 type Page = 'Forecast' | 'Optimization' | 'Lead Management' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
+type UserRole = 'admin' | 'manager' | 'staff' | '';
 const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
+
+const cleanUserRole = (role: any): UserRole => (
+ role === 'admin' || role === 'manager' || role === 'staff' ? role : ''
+);
 // What lives in localStorage is an opaque, server-issued session token (see app_sessions in
 // backend/core.py), NOT a credential. Until 2026-08-20 this held the raw
 // `Basic base64(user:pass)` header, which decodes straight back to the plaintext password --
@@ -1106,7 +1111,7 @@ function AmbientSystem() {
  );
 }
 
-function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSignedIn: (token: string, user: string, expiresAt?: string) => void }) {
+function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSignedIn: (token: string, user: string, role: UserRole, expiresAt?: string) => void }) {
  const [username, setUsername] = useState('admin');
  const [password, setPassword] = useState('');
  const [busy, setBusy] = useState(false);
@@ -1122,7 +1127,7 @@ function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSig
   setError('');
   try {
    const session = await api('/auth/login', { method: 'POST', headers: { Authorization: credential } });
-   onSignedIn(session.token, session.user || username.trim(), session.expires_at);
+   onSignedIn(session.token, session.user || username.trim(), cleanUserRole(session.role), session.expires_at);
   } catch (signInError: any) {
    setError(signInError.message || 'Sign-in failed');
   } finally {
@@ -1165,9 +1170,15 @@ function LoginPage({ checking = false, onSignedIn }: { checking?: boolean; onSig
  );
 }
 
-function Shell({ page, setPage, children, onSignOut }: { page: Page; setPage: (page: Page) => void; children: any; onSignOut?: () => void }) {
+function Shell({ page, setPage, children, role, onSignOut }: { page: Page; setPage: (page: Page) => void; children: any; role: UserRole; onSignOut?: () => void }) {
  const [open, setOpen] = useState(false);
  const [theme, toggleTheme] = useTheme();
+ const visibleNavGroups = navGroups
+  .map((group) => ({
+   ...group,
+   items: group.items.filter(([name]) => (name !== 'Admin' || role === 'admin') && (name !== 'Upload Data' || role !== 'staff')),
+  }))
+  .filter((group) => group.items.length);
  return (
  <div className="app-shell">
  <AmbientSystem />
@@ -1178,7 +1189,7 @@ function Shell({ page, setPage, children, onSignOut }: { page: Page; setPage: (p
  <button className="mobile-close" aria-label="Close navigation" onClick={() => setOpen(false)}><X /></button>
  </div>
  <nav>
- {navGroups.map((group) => (
+ {visibleNavGroups.map((group) => (
  <div className="nav-group" key={group.label}>
  <div className="nav-label">{group.label}</div>
  {group.items.map(([name, Icon]) => (
@@ -2344,7 +2355,8 @@ function ChangeEventButton({ adSetId, onChange, retraining = false }: { adSetId:
  );
 }
 
-function ForecastPage() {
+function ForecastPage({ role }: { role: UserRole }) {
+ const canWrite = role !== 'staff';
  const [summary, setSummary] = useState<any>({});
  const [insights, setInsights] = useState<any>({ statuses: [], campaigns: [] });
  const [forecastTracking, setForecastTracking] = useState<any>({ summary: {}, timeline: [] });
@@ -2913,6 +2925,7 @@ function ForecastPage() {
  };
  const budgetInfo = scenario?.budget || baselineScenario?.budget || null;
  const saveBudgetPeriod = async () => {
+ if (!canWrite) return;
  if (!selectedId) return;
  setBudgetError('');
  if (!budgetDraft.start_date || !budgetDraft.end_date || String(budgetDraft.daily_budget).trim() === '') {
@@ -2940,6 +2953,7 @@ function ForecastPage() {
  }
  };
  const deleteBudgetPeriod = async (id: number) => {
+ if (!canWrite) return;
  setBudgetError('');
  setBudgetBusy(true);
  try {
@@ -3000,6 +3014,7 @@ function ForecastPage() {
  // via a single-field PATCH (the backend's LeadUpdate ignores unset fields), instead of a
  // separate whole-row edit form the user had to open and save.
  const commitLeadField = async (lead: any, field: string, rawValue: string) => {
+ if (!canWrite) return;
  let value: any = rawValue;
  if (field === 'amount_spent_usd') {
  value = String(rawValue).trim() === '' ? null : Number(rawValue);
@@ -3026,6 +3041,7 @@ function ForecastPage() {
  }
  };
  const deleteLead = async (lead: any) => {
+ if (!canWrite) return;
  if (!lead?.id) return;
  if (!confirm(`Delete lead #${lead.id}? This will update the lead totals and forecasts.`)) return;
  setLeadActionBusy(true);
@@ -3679,16 +3695,16 @@ function ForecastPage() {
  ) : null}
  </div>
  <span className="budget-table-amount">{money(period.daily_budget)}</span>
- <button type="button" className="budget-table-delete" aria-label="Delete budget period" disabled={budgetBusy} onClick={() => deleteBudgetPeriod(period.id)}><X size={13} /></button>
+ {canWrite && <button type="button" className="budget-table-delete" aria-label="Delete budget period" disabled={budgetBusy} onClick={() => deleteBudgetPeriod(period.id)}><X size={13} /></button>}
  </div>
  );
  })}
- <div className="budget-table-draft">
+ {canWrite && <div className="budget-table-draft">
  <SingleDatePicker value={budgetDraft.start_date} onChange={(next) => setBudgetDraft((current) => ({ ...current, start_date: next }))} ariaLabel="Budget start date" />
  <SingleDatePicker value={budgetDraft.end_date} min={budgetDraft.start_date || undefined} onChange={(next) => setBudgetDraft((current) => ({ ...current, end_date: next }))} ariaLabel="Budget end date" />
  <input type="number" min="0" step="1" placeholder="$/day" value={budgetDraft.daily_budget} onChange={(event) => setBudgetDraft((current) => ({ ...current, daily_budget: event.target.value }))} aria-label="Daily budget" />
  <button type="button" className="budget-table-add" aria-label="Add budget period" disabled={budgetBusy} onClick={() => void saveBudgetPeriod()}><Plus size={14} /></button>
- </div>
+ </div>}
  </div>
  {budgetError && <p className="budget-popover-error">{budgetError}</p>}
  {(!budgetInfo?.fitted_elasticity) && (
@@ -3700,7 +3716,7 @@ function ForecastPage() {
  </div>
  )}
  </div>
- <ChangeEventButton adSetId={selectedId} retraining={retraining} onChange={() => { setModelRefreshKey((key) => key + 1); watchRetrain(); }} />
+ {canWrite && <ChangeEventButton adSetId={selectedId} retraining={retraining} onChange={() => { setModelRefreshKey((key) => key + 1); watchRetrain(); }} />}
  </div>
  </div>
  </div>
@@ -3945,7 +3961,7 @@ function ForecastPage() {
  <td>
  <LeadEditableCell
  value={lead.customer_name || ''}
- disabled={leadActionBusy}
+ disabled={leadActionBusy || !canWrite}
  onCommit={(value) => commitLeadField(lead, 'customer_name', value)}
  formatDisplay={(value) => <b>{value || '-'}</b>}
  />
@@ -3956,6 +3972,7 @@ function ForecastPage() {
  ariaLabel={`Status for lead ${lead.id}`}
  value={lead.status || ''}
  options={[{ value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
+ disabled={!canWrite}
  onChange={(value) => commitLeadField(lead, 'status', value)}
  />
  </td>
@@ -3965,6 +3982,7 @@ function ForecastPage() {
  ariaLabel={`Lead quality for lead ${lead.id}`}
  value={lead.lead_quality || LEAD_QUALITY_OPTIONS[0]}
  options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+ disabled={!canWrite}
  onChange={(value) => commitLeadField(lead, 'lead_quality', value)}
  />
  </td>
@@ -3983,7 +4001,7 @@ function ForecastPage() {
  <LeadEditableCell
  type="date"
  value={datePart}
- disabled={leadActionBusy}
+ disabled={leadActionBusy || !canWrite}
  onCommit={(value) => commitLeadField(lead, 'created_at', `${value}T${timePart}`)}
  formatDisplay={() => dateFmt(lead.created_at)}
  />
@@ -3992,7 +4010,7 @@ function ForecastPage() {
  <LeadEditableCell
  type="time"
  value={timePart}
- disabled={leadActionBusy}
+ disabled={leadActionBusy || !canWrite}
  onCommit={(value) => commitLeadField(lead, 'created_at', `${datePart}T${value}`)}
  formatDisplay={() => timePart || '-'}
  />
@@ -4001,32 +4019,32 @@ function ForecastPage() {
  );
  })()}
  <td>
- <LeadEditableCell value={lead.utm_campaign || ''} disabled={leadActionBusy} onCommit={(value) => commitLeadField(lead, 'utm_campaign', value)} />
+ <LeadEditableCell value={lead.utm_campaign || ''} disabled={leadActionBusy || !canWrite} onCommit={(value) => commitLeadField(lead, 'utm_campaign', value)} />
  </td>
  <td>
- <LeadEditableCell value={lead.utm_campaign_id || ''} disabled={leadActionBusy} onCommit={(value) => commitLeadField(lead, 'utm_campaign_id', value)} formatDisplay={(value) => <code>{value || '-'}</code>} />
+ <LeadEditableCell value={lead.utm_campaign_id || ''} disabled={leadActionBusy || !canWrite} onCommit={(value) => commitLeadField(lead, 'utm_campaign_id', value)} formatDisplay={(value) => <code>{value || '-'}</code>} />
  </td>
  <td>
- <LeadEditableCell value={lead.utm_ad_set_id || ''} disabled={leadActionBusy} onCommit={(value) => commitLeadField(lead, 'utm_ad_set_id', value)} formatDisplay={(value) => <code>{value || '-'}</code>} />
+ <LeadEditableCell value={lead.utm_ad_set_id || ''} disabled={leadActionBusy || !canWrite} onCommit={(value) => commitLeadField(lead, 'utm_ad_set_id', value)} formatDisplay={(value) => <code>{value || '-'}</code>} />
  </td>
  <td>
- <LeadEditableCell value={lead.utm_ad_id || ''} disabled={leadActionBusy} onCommit={(value) => commitLeadField(lead, 'utm_ad_id', value)} formatDisplay={(value) => <code>{value || '-'}</code>} />
+ <LeadEditableCell value={lead.utm_ad_id || ''} disabled={leadActionBusy || !canWrite} onCommit={(value) => commitLeadField(lead, 'utm_ad_id', value)} formatDisplay={(value) => <code>{value || '-'}</code>} />
  </td>
  <td>
- <LeadEditableCell value={lead.fb_ad_title || ''} disabled={leadActionBusy} onCommit={(value) => commitLeadField(lead, 'fb_ad_title', value)} />
+ <LeadEditableCell value={lead.fb_ad_title || ''} disabled={leadActionBusy || !canWrite} onCommit={(value) => commitLeadField(lead, 'fb_ad_title', value)} />
  </td>
  <td className="num">
  <LeadEditableCell
  type="number"
  align="num"
  value={lead.amount_spent_usd == null ? '' : String(lead.amount_spent_usd)}
- disabled={leadActionBusy}
+ disabled={leadActionBusy || !canWrite}
  onCommit={(value) => commitLeadField(lead, 'amount_spent_usd', value)}
  formatDisplay={(value) => (value === '' ? '-' : money(Number(value)))}
  />
  </td>
  <td className="lead-actions-cell">
- <button type="button" className="lead-row-icon-btn danger" title="Delete lead" aria-label={`Delete lead ${lead.id}`} disabled={leadActionBusy} onClick={() => void deleteLead(lead)}><Trash2 size={13} /></button>
+ {canWrite && <button type="button" className="lead-row-icon-btn danger" title="Delete lead" aria-label={`Delete lead ${lead.id}`} disabled={leadActionBusy} onClick={() => void deleteLead(lead)}><Trash2 size={13} /></button>}
  </td>
  </tr>
  ))}
@@ -4441,7 +4459,8 @@ function ForecastPage() {
  );
 }
 
-function UploadPage() {
+function UploadPage({ role }: { role: UserRole }) {
+ const canWrite = role !== 'staff';
  const [preview, setPreview] = useState<any>(null);
  const [busy, setBusy] = useState(false);
  const [dragging, setDragging] = useState(false);
@@ -4570,6 +4589,19 @@ function UploadPage() {
  const queuePosition = queuedCount ? batchIndex + 1 : 0;
  const remainingCount = Math.max(0, queuedCount - queuePosition);
  const filesToImportCount = Math.max(1, queuedCount - batchIndex);
+
+ if (!canWrite) {
+  return (
+   <div className="page-content narrow upload-page upload-v2-page">
+    <section className="upload-v2-head">
+     <div>
+      <h2>Upload data</h2>
+      <p>Uploads are available to managers and admins. Staff can review imported data in Data History and Dataset.</p>
+     </div>
+    </section>
+   </div>
+  );
+ }
 
  return (
  <div className="page-content narrow upload-page upload-v2-page">
@@ -4747,7 +4779,8 @@ function UploadPage() {
  );
 }
 
-function HistoryPage() {
+function HistoryPage({ role }: { role: UserRole }) {
+ const canWrite = role !== 'staff';
  const [rows, setRows] = useState<any[]>([]);
  const load = () => api('/uploads').then(setRows);
  useEffect(() => { void load(); }, []);
@@ -4798,7 +4831,7 @@ function HistoryPage() {
   <span className="num imports-muted-num">{fmt(row.duplicate_count)}</span>
   <span className="num">{isSpend ? money(row.total_spend_usd) : '-'}</span>
   <span className="imports-valid"><i />Imported</span>
-  <button className="imports-delete" title={isSpend ? 'Delete ad performance upload' : 'Delete upload and retrain'} aria-label={isSpend ? 'Delete ad performance upload' : 'Delete upload and retrain'} onClick={() => void removeUpload(row, isSpend)}><Trash2 size={13} /></button>
+  {canWrite ? <button className="imports-delete" title={isSpend ? 'Delete ad performance upload' : 'Delete upload and retrain'} aria-label={isSpend ? 'Delete ad performance upload' : 'Delete upload and retrain'} onClick={() => void removeUpload(row, isSpend)}><Trash2 size={13} /></button> : <span />}
   </div>
   );
  })}
@@ -5010,11 +5043,11 @@ const FILTER_TYPE_ICON: Record<FilterFieldType, typeof Pencil> = {
 // a menu rendered in place would get clipped by `.filter-menu`'s own `overflow: auto` box
 // the moment a filter row sits low in that scrolling panel, which is exactly where a filter
 // row usually is once you've added more than one.
-function MenuSelect({ value, options, onChange, className, ariaLabel }: {
+function MenuSelect({ value, options, onChange, className, ariaLabel, disabled = false }: {
  // `short` is what the closed trigger shows when the full `label` is too long for a toolbar
  // button -- the menu always renders `label`. Optional, so every existing caller is unaffected.
  value: string; options: { value: string; label: string; short?: string; icon?: typeof Pencil }[];
- onChange: (value: string) => void; className?: string; ariaLabel: string;
+ onChange: (value: string) => void; className?: string; ariaLabel: string; disabled?: boolean;
 }) {
  const [open, setOpen] = useState(false);
  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 0, openUp: false });
@@ -5074,12 +5107,12 @@ function MenuSelect({ value, options, onChange, className, ariaLabel }: {
 
  return (
   <div className={`menu-select${open ? ' open' : ''}${className ? ` ${className}` : ''}`} ref={wrapRef}>
-   <button ref={triggerRef} type="button" className="menu-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} onClick={() => setOpen((v) => !v)}>
+   <button ref={triggerRef} type="button" className="menu-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} disabled={disabled} onClick={() => { if (!disabled) setOpen((v) => !v); }}>
     {current?.icon && <current.icon size={13} />}
     <span>{current?.short ?? current?.label}</span>
     <ChevronDown size={13} className="menu-select-caret" />
    </button>
-   {open && createPortal(
+   {open && !disabled && createPortal(
     <div
      ref={menuRef}
      className={`menu-select-menu${menuPos.openUp ? ' opens-upward' : ''}`}
@@ -5625,7 +5658,8 @@ const correlationCellStyle = (value: number): CSSProperties => {
  };
 };
 
-function DatasetPage() {
+function DatasetPage({ role }: { role: UserRole }) {
+ const canWrite = role !== 'staff';
  const [correlation, setCorrelation] = useState<any>(null);
  const [ols, setOls] = useState<any>(null);
  const [error, setError] = useState('');
@@ -5914,6 +5948,7 @@ function DatasetPage() {
  // optimistic update already shows the new value immediately; `boardBusy` is kept for bulk
  // delete, which really does need to lock the board while it walks N rows.
  const commitBoardField = async (row: any, column: DatasetRowColumn, rawValue: string) => {
+  if (!canWrite) return;
   let value: any = rawValue;
   if (column.edit === 'number') value = String(rawValue).trim() === '' ? null : Number(rawValue);
   else if (column.edit === 'datetime-local') value = rawValue ? `${rawValue}:00` : '';
@@ -5935,6 +5970,7 @@ function DatasetPage() {
  };
 
  const deleteSelectedRows = async () => {
+  if (!canWrite) return;
   if (!selectedRowIds.length) return;
   const noun = rowsTable === 'leads' ? 'lead' : 'ad performance row';
   if (!confirm(`Delete ${selectedRowIds.length} ${noun}${selectedRowIds.length === 1 ? '' : 's'}? This updates the totals the forecast is built on.`)) return;
@@ -6170,7 +6206,7 @@ function DatasetPage() {
       </div>
       {adSetLookupError && <small className="dataset-scope-error">{adSetLookupError}</small>}
      </form>
-     <ChangeEventButton adSetId={selectedAdSetId} retraining={retraining} onChange={() => { setDataRefreshKey((key) => key + 1); watchRetrain(); }} />
+     {canWrite && <ChangeEventButton adSetId={selectedAdSetId} retraining={retraining} onChange={() => { setDataRefreshKey((key) => key + 1); watchRetrain(); }} />}
     </div>
    </section>
 
@@ -6415,6 +6451,7 @@ function DatasetPage() {
                ariaLabel={`Status for row ${id}`}
                value={row.status || ''}
                options={[{ value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
+               disabled={!canWrite}
                onChange={(value) => commitBoardField(row, col, value)}
               />
              </td>
@@ -6430,7 +6467,7 @@ function DatasetPage() {
                type={col.edit}
                align={col.align}
                value={raw}
-               disabled={boardBusy}
+               disabled={boardBusy || !canWrite}
                onCommit={(value) => commitBoardField(row, col, value)}
                formatDisplay={() => col.render ? col.render(row) : (row[col.key] ?? '-')}
               />
@@ -6478,9 +6515,9 @@ function DatasetPage() {
       )}
       <div className="board-bulk-actions">
        <button type="button" className="board-bulk-btn" onClick={() => void exportSelectedRows()}><Download size={14} />Export CSV</button>
-       <button type="button" className="board-bulk-btn danger" disabled={boardBusy} onClick={() => void deleteSelectedRows()}>
+       {canWrite && <button type="button" className="board-bulk-btn danger" disabled={boardBusy} onClick={() => void deleteSelectedRows()}>
         <Trash2 size={14} />{boardBusy ? 'Deleting...' : 'Delete'}
-       </button>
+       </button>}
       </div>
       <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
      </div>
@@ -6572,7 +6609,8 @@ function SplitMoney({ value }: { value: any }) {
  return <>{whole}{cents && <i className="lead-figure-cents">.{cents}</i>}</>;
 }
 
-function LeadManagementPage() {
+function LeadManagementPage({ role }: { role: UserRole }) {
+ const isStaff = role === 'staff';
  const [options, setOptions] = useState<{ campaigns: any[]; ad_sets: any[]; first_day: string | null; last_day: string | null }>(
   { campaigns: [], ad_sets: [], first_day: null, last_day: null },
  );
@@ -6805,6 +6843,7 @@ function LeadManagementPage() {
  // round-trip, and rolled back per-cell on failure -- two edits can be in flight at once, so
  // restoring a whole-page snapshot would also revert the other one.
  const commitLeadField = async (row: any, field: 'status' | 'lead_quality', value: string) => {
+  if (isStaff && field !== 'lead_quality') return;
   const previous = row[field];
   if (previous === value) return;
   setBoardError('');
@@ -7177,6 +7216,7 @@ function LeadManagementPage() {
                ariaLabel={`Status for ${who}`}
                value={row.status || ''}
                options={[{ value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
+               disabled={isStaff}
                onChange={(value) => void commitLeadField(row, 'status', value)}
               />
              </td>
@@ -7776,7 +7816,7 @@ function AdminPage() {
  const rules = [
   ['Admin', 'Full user control, password changes, imports, deletes, and all dashboard writes.'],
   ['Manager', 'Can change forecasting data and operational records, but cannot manage users.'],
-  ['Staff', 'Read-only dashboard access.'],
+  ['Staff', 'Can sort and rate Lead Management quality. Everything else is view-only, with no Admin page access.'],
  ];
 
  return (
@@ -7974,7 +8014,7 @@ function SettingsPage() {
 
 export function App() {
  const [page, setPage] = useState<Page>('Forecast');
- const [auth, setAuth] = useState({ checking: true, required: false, signedIn: false, user: '' });
+ const [auth, setAuth] = useState<{ checking: boolean; required: boolean; signedIn: boolean; user: string; role: UserRole }>({ checking: true, required: false, signedIn: false, user: '', role: '' });
 
  useEffect(() => {
   let cancelled = false;
@@ -7984,7 +8024,7 @@ export function App() {
    .then(async (status: any) => {
     if (cancelled) return;
     if (!status.required) {
-     setAuth({ checking: false, required: false, signedIn: true, user: '' });
+     setAuth({ checking: false, required: false, signedIn: true, user: '', role: 'admin' });
      return;
     }
     if (!stored) {
@@ -7996,35 +8036,35 @@ export function App() {
        const session = await api('/auth/login', { method: 'POST', headers: { Authorization: legacy } });
        setApiAuthHeader(session.token);
        storeAuth(session.token, session.expires_at);
-       if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: session.user || '' });
+       if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: session.user || '', role: cleanUserRole(session.role) });
        return;
       } catch {
        // Stale or rejected -- drop it either way rather than leaving a password behind.
        clearStoredAuth();
       }
      }
-     setAuth({ checking: false, required: true, signedIn: false, user: '' });
+     setAuth({ checking: false, required: true, signedIn: false, user: '', role: '' });
      return;
     }
     try {
      const me = await api('/auth/me');
-     if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: me.user || '' });
+     if (!cancelled) setAuth({ checking: false, required: true, signedIn: true, user: me.user || '', role: cleanUserRole(me.role) });
     } catch {
      clearStoredAuth();
      setApiAuthHeader('');
-     if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '' });
+     if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '', role: '' });
     }
    })
    .catch(() => {
-    if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '' });
+    if (!cancelled) setAuth({ checking: false, required: true, signedIn: false, user: '', role: '' });
    });
   return () => { cancelled = true; };
  }, []);
 
- const signedIn = (token: string, user: string, expiresAt?: string) => {
+ const signedIn = (token: string, user: string, role: UserRole, expiresAt?: string) => {
   setApiAuthHeader(token);
   storeAuth(token, expiresAt);
-  setAuth({ checking: false, required: true, signedIn: true, user });
+  setAuth({ checking: false, required: true, signedIn: true, user, role });
  };
 
  const signOut = () => {
@@ -8034,15 +8074,22 @@ export function App() {
   clearStoredAuth();
   setApiAuthHeader('');
   setPage('Forecast');
-  setAuth((current) => ({ ...current, signedIn: false, user: '' }));
+  setAuth((current) => ({ ...current, signedIn: false, user: '', role: '' }));
  };
+
+ const role = auth.role || (auth.required ? 'staff' : 'admin');
+
+ useEffect(() => {
+  if (page === 'Admin' && role !== 'admin') setPage('Forecast');
+  if (page === 'Upload Data' && role === 'staff') setPage('Forecast');
+ }, [page, role]);
 
  if (auth.checking) return <LoginPage checking onSignedIn={signedIn} />;
  if (auth.required && !auth.signedIn) return <LoginPage onSignedIn={signedIn} />;
 
  return (
- <Shell page={page} setPage={setPage} onSignOut={auth.required ? signOut : undefined}>
- {page === 'Forecast' ? <ForecastPage /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Lead Management' ? <LeadManagementPage /> : page === 'Upload Data' ? <UploadPage /> : page === 'Data History' ? <HistoryPage /> : page === 'Dataset' ? <DatasetPage /> : page === 'Admin' ? <AdminPage /> : <SettingsPage />}
+ <Shell page={page} setPage={setPage} role={role} onSignOut={auth.required ? signOut : undefined}>
+ {page === 'Forecast' ? <ForecastPage role={role} /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Lead Management' ? <LeadManagementPage role={role} /> : page === 'Upload Data' ? <UploadPage role={role} /> : page === 'Data History' ? <HistoryPage role={role} /> : page === 'Dataset' ? <DatasetPage role={role} /> : page === 'Admin' && role === 'admin' ? <AdminPage /> : <SettingsPage />}
  </Shell>
  );
 }

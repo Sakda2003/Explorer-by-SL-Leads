@@ -5374,6 +5374,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .menu-select-field { flex: 1 1 150px; min-width: 0; }
 .menu-select-operator { flex: 1 1 128px; min-width: 0; }
 .menu-select-trigger { width: 100%; height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); color: var(--text); font-size: 11px; font-weight: 600; font-family: inherit; cursor: pointer; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
+.menu-select-trigger:disabled { cursor: default; opacity: .82; }
 .menu-select-trigger > svg:first-child { flex: none; color: var(--muted); }
 .menu-select-trigger span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .menu-select-caret { flex: none; color: var(--muted); transition: transform .16s ease, color .16s ease; }

@@ -391,6 +391,29 @@ class SessionTests(unittest.TestCase):
         request = SimpleNamespace(method="DELETE", url=SimpleNamespace(path="/api/leads/1"))
         self.assertTrue(auth._is_write(request))
 
+    def test_staff_write_scope_is_limited_to_lead_quality_routes(self):
+        lead_patch = SimpleNamespace(method="PATCH", url=SimpleNamespace(path="/api/leads/1"))
+        bulk_quality = SimpleNamespace(method="POST", url=SimpleNamespace(path="/api/leads/bulk-quality"))
+        delete_lead = SimpleNamespace(method="DELETE", url=SimpleNamespace(path="/api/leads/1"))
+        upload = SimpleNamespace(method="POST", url=SimpleNamespace(path="/api/uploads/confirm"))
+
+        self.assertTrue(auth._role_may_write_request("staff", lead_patch))
+        self.assertTrue(auth._role_may_write_request("staff", bulk_quality))
+        self.assertFalse(auth._role_may_write_request("staff", delete_lead))
+        self.assertFalse(auth._role_may_write_request("staff", upload))
+        self.assertTrue(auth._role_may_write_request("manager", upload))
+        self.assertTrue(auth._role_may_write_request("admin", delete_lead))
+
+    def test_staff_cannot_patch_lead_status(self):
+        from fastapi import HTTPException
+        from backend.app import LeadUpdate, patch_lead
+
+        request = SimpleNamespace(state=SimpleNamespace(user_role="staff"))
+        with self.assertRaises(HTTPException) as raised:
+            patch_lead(1, LeadUpdate(status="Existing"), request)
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(raised.exception.detail, "Staff can only change lead quality.")
+
 
 if __name__ == "__main__":
     unittest.main()

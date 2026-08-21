@@ -236,6 +236,19 @@ def _role_may_write(role: str) -> bool:
     return role in {"admin", "manager"}
 
 
+def _staff_may_write_request(request) -> bool:
+    path = request.url.path
+    return (
+        request.method == "PATCH" and path.startswith("/api/leads/") and path.count("/") == 3
+    ) or (
+        request.method == "POST" and path == "/api/leads/bulk-quality"
+    )
+
+
+def _role_may_write_request(role: str, request) -> bool:
+    return _role_may_write(role) or (role == "staff" and _staff_may_write_request(request))
+
+
 # ---- Sign-in sessions --------------------------------------------------------------------
 # What the browser holds after signing in. Previously it held the `Basic base64(user:pass)`
 # header itself, parked in localStorage for 30 days: that string decodes straight back to the
@@ -697,9 +710,6 @@ def _authorize(email: str, request) -> tuple[bool, int, str]:
     if not config.may_read(email):
         log.warning("Denied read for %s", email)
         return False, 403, "This account does not have access."
-    if _is_write(request) and not config.may_write(email):
-        log.warning("Denied write for %s on %s", email, request.url.path)
-        return False, 403, "This account has read-only access."
 
     request.state.user_email = email
     try:
@@ -714,6 +724,9 @@ def _authorize(email: str, request) -> tuple[bool, int, str]:
     except sqlite3.Error:
         request.state.user_role = "manager" if config.may_write(email) else "staff"
         request.state.user_name = ""
+    if _is_write(request) and not _role_may_write_request(request.state.user_role, request):
+        log.warning("Denied write for %s on %s", email, request.url.path)
+        return False, 403, "This account has read-only access."
     return True, 200, ""
 
 
@@ -774,7 +787,7 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
         if resolved is None:
             return False, 401, "Session has expired. Sign in again.", challenge
         email, role, name = resolved
-        if _is_write(request) and not _role_may_write(role):
+        if _is_write(request) and not _role_may_write_request(role, request):
             log.warning("Denied write for %s on %s", email, request.url.path)
             return False, 403, "This account has read-only access.", {}
         request.state.user_email = email
@@ -798,7 +811,7 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
     cached = _verified_credentials.get(username, password)
     if cached is not None:
         cached_email, cached_role, cached_name = cached
-        if _is_write(request) and not _role_may_write(cached_role):
+        if _is_write(request) and not _role_may_write_request(cached_role, request):
             log.warning("Denied write for %s on %s", cached_email, request.url.path)
             return False, 403, "This account has read-only access.", {}
         # The sign-in paths are deliberately excluded from the cache so that last_login_at
@@ -817,7 +830,7 @@ def _verify_basic(request) -> tuple[bool, int, str, dict[str, str]]:
                 if user["status"] != _ACTIVE_STATUS or not _verify_password(password, user["password_hash"]):
                     log.warning("Rejected app user sign-in attempt for %r", username)
                     return False, 401, "Sign-in is not valid.", challenge
-                if _is_write(request) and not _role_may_write(user["role"]):
+                if _is_write(request) and not _role_may_write_request(user["role"], request):
                     log.warning("Denied write for %s on %s", normalized, request.url.path)
                     return False, 403, "This account has read-only access.", {}
                 if request.url.path in ("/api/auth/me", "/api/auth/login"):

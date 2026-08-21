@@ -1031,7 +1031,9 @@ def bulk_lead_quality(payload: LeadQualityBulkUpdate):
 # minute per keystroke-commit. `rebuild_aggregates_first=True` because a lead edit changes
 # what those aggregates hold -- see the guard's comment above.
 @app.patch("/api/leads/{lead_id}")
-def patch_lead(lead_id: int, payload: LeadUpdate):
+def patch_lead(lead_id: int, payload: LeadUpdate, request: Request):
+    if getattr(request.state, "user_role", "") == "staff" and payload.status is not None:
+        raise HTTPException(403, "Staff can only change lead quality.")
     try:
         result = update_lead_event(lead_id, payload.dict(exclude_unset=True), retrain=False)
     except ValueError as exc:
