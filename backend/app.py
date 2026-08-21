@@ -1001,8 +1001,8 @@ def lead_management_export(
             row.get("fb_ad_title"),
         ])
     return Response(
-        output.getvalue(),
-        media_type="text/csv",
+        output.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={_lead_management_export_filename(parsed_filters)}"},
     )
 

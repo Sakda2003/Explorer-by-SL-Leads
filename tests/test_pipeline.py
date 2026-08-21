@@ -235,7 +235,8 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("lead-management-2026-06-02-to-2026-06-03.csv", response.headers["content-disposition"])
-        rows = list(csv.reader(io.StringIO(response.text)))
+        self.assertEqual(response.content[:3], b"\xef\xbb\xbf")
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"))))
         self.assertEqual(rows[0], [
             "Created", "Customer", "Status", "Lead Quality", "Campaign",
             "Campaign ID", "Ad set ID", "Ad ID", "Ad title",
