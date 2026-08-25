@@ -394,11 +394,13 @@ class SessionTests(unittest.TestCase):
     def test_staff_write_scope_is_limited_to_lead_quality_routes(self):
         lead_patch = SimpleNamespace(method="PATCH", url=SimpleNamespace(path="/api/leads/1"))
         bulk_quality = SimpleNamespace(method="POST", url=SimpleNamespace(path="/api/leads/bulk-quality"))
+        create_lead = SimpleNamespace(method="POST", url=SimpleNamespace(path="/api/leads"))
         delete_lead = SimpleNamespace(method="DELETE", url=SimpleNamespace(path="/api/leads/1"))
         upload = SimpleNamespace(method="POST", url=SimpleNamespace(path="/api/uploads/confirm"))
 
         self.assertTrue(auth._role_may_write_request("staff", lead_patch))
         self.assertTrue(auth._role_may_write_request("staff", bulk_quality))
+        self.assertFalse(auth._role_may_write_request("staff", create_lead))
         self.assertFalse(auth._role_may_write_request("staff", delete_lead))
         self.assertFalse(auth._role_may_write_request("staff", upload))
         self.assertTrue(auth._role_may_write_request("manager", upload))

@@ -20,7 +20,7 @@ from . import auth
 from . import security
 
 from .core import (
-                   ROOT, change_event_coverage, connect, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_forecast_realizations,
+                   ROOT, change_event_coverage, connect, create_lead_event, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_forecast_realizations,
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
                    bulk_update_lead_quality, get_lead_filter_options, get_lead_pipeline_summary,
@@ -156,6 +156,20 @@ class LeadUpdate(BaseModel):
     utm_ad_id: str | None = None
     fb_ad_title: str | None = None
     amount_spent_usd: float | None = None
+
+
+class LeadCreate(BaseModel):
+    status: str
+    lead_quality: str
+    created_at: str
+    customer_name: str
+    utm_campaign: str
+    utm_campaign_id: str
+    utm_ad_set_id: str
+    utm_ad_id: str
+    fb_ad_title: str
+    amount_spent_usd: float | None = None
+    platform: str | None = "manual"
 
 
 # Mirrors AD_PERFORMANCE_UPDATE_FIELDS in core.py. `leads` and
@@ -1022,6 +1036,16 @@ def bulk_lead_quality(payload: LeadQualityBulkUpdate):
         return bulk_update_lead_quality(payload.lead_ids, payload.lead_quality, retrain=False)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/leads")
+def create_lead(payload: LeadCreate):
+    try:
+        result = create_lead_event(payload.dict(exclude_unset=True), retrain=False)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    _request_retrain(rebuild_aggregates_first=True)
+    return result
 
 
 # Lead edits schedule their model refresh in the background, for the same reason the

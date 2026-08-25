@@ -1459,6 +1459,70 @@ class IsolatedDbTestCase(unittest.TestCase):
         self.temp.cleanup()
 
 
+class ManualLeadEntryTests(IsolatedDbTestCase):
+    def lead_payload(self, **overrides):
+        payload = {
+            "status": "New",
+            "lead_quality": "Intake",
+            "created_at": "2026-06-08T09:30:00",
+            "customer_name": "Manual Customer",
+            "utm_campaign": "Leads | VISA | JP | FOR",
+            "utm_campaign_id": "120235942262330078",
+            "utm_ad_set_id": "120235942906970078",
+            "utm_ad_id": "120235942976420078",
+            "fb_ad_title": "VF008C1 - TAFVJ01",
+            "amount_spent_usd": 4.25,
+            "platform": "manual",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_manual_lead_writes_the_board_fields_and_rejects_duplicates(self):
+        created = core.create_lead_event(self.lead_payload(), retrain=False)
+        self.assertEqual(created["lead"]["customer_name"], "Manual Customer")
+        self.assertEqual(created["lead"]["lead_quality"], "Intake")
+        self.assertEqual(created["lead"]["utm_ad_set_id"], "120235942906970078")
+        self.assertAlmostEqual(created["lead"]["amount_spent_usd"], 4.25)
+
+        with core.connect() as db:
+            raw = json.loads(db.execute("SELECT raw_json FROM lead_events").fetchone()[0])
+        self.assertTrue(raw["Manual Entry"])
+        self.assertEqual(raw["Platform"], "manual")
+
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            core.create_lead_event(self.lead_payload(), retrain=False)
+
+    def test_upload_delete_does_not_remove_manual_leads(self):
+        manual = core.create_lead_event(self.lead_payload(), retrain=False)
+        upload_path = core.DATA_DIR / "traffic.csv"
+        upload_path.write_text("placeholder", encoding="utf-8")
+
+        with core.connect() as db:
+            upload_id = db.execute(
+                """INSERT INTO raw_uploads(file_name, stored_path, file_sha256, file_type, uploaded_at,
+                   row_count, imported_count) VALUES(?,?,?,?,?,?,?)""",
+                ("traffic.csv", str(upload_path), "hash", core.CUSTOMER_TRAFFIC_TYPE, core.utc_now(), 1, 1),
+            ).lastrowid
+            imported_id = db.execute(
+                """INSERT INTO lead_events(event_hash, platform, status, created_at, updated_at,
+                   customer_name, utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
+                   fb_ad_title, amount_spent_usd, raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "imported-orphan", "messenger", "New", "2026-06-08T10:00:00", None,
+                    "Imported Customer", "Leads | VISA | JP | FOR", "campaign", "adset", "ad",
+                    "title", None, "{}",
+                ),
+            ).lastrowid
+            db.execute("INSERT INTO upload_lead_links(upload_id, lead_id) VALUES(?,?)", (upload_id, imported_id))
+
+        with mock.patch("backend.core.rebuild_aggregates"), mock.patch("backend.core.train_models", return_value={}):
+            core.delete_upload(int(upload_id))
+
+        with core.connect() as db:
+            remaining = [dict(row) for row in db.execute("SELECT id, customer_name FROM lead_events ORDER BY id").fetchall()]
+        self.assertEqual(remaining, [{"id": manual["created"], "customer_name": "Manual Customer"}])
+
+
 class CurrencyParsingTests(IsolatedDbTestCase):
     """Accounting-formatted currency from exports that passed through Excel."""
 

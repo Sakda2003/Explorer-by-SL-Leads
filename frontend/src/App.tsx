@@ -273,6 +273,30 @@ const dateTimeInputValue = (value: any) => {
 const LEAD_QUALITY_OPTIONS = [
  'Intake', 'Not Qualified', 'Qualified', 'Converted', 'Lost', 'Awaiting Document and Payment',
 ];
+type ManualLeadDraft = {
+ status: string;
+ lead_quality: string;
+ created_at: string;
+ customer_name: string;
+ utm_campaign: string;
+ utm_campaign_id: string;
+ utm_ad_set_id: string;
+ utm_ad_id: string;
+ fb_ad_title: string;
+ amount_spent_usd: string;
+};
+const newManualLeadDraft = (): ManualLeadDraft => ({
+ status: 'New',
+ lead_quality: LEAD_QUALITY_OPTIONS[0],
+ created_at: dateTimeInputValue(new Date().toISOString()),
+ customer_name: '',
+ utm_campaign: '',
+ utm_campaign_id: '',
+ utm_ad_set_id: '',
+ utm_ad_id: '',
+ fb_ad_title: '',
+ amount_spent_usd: '',
+});
 // CSS class hook for a quality value's pill color (see `.lead-quality-select.quality-*` in
 // styles.css) -- lowercased, spaces to hyphens, e.g. "Awaiting Document and Payment" ->
 // "awaiting-document-and-payment".
@@ -6644,6 +6668,10 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const [boardBusy, setBoardBusy] = useState(false);
  const [bulkAction, setBulkAction] = useState<'rating' | 'deleting' | ''>('');
  const [exportingCsv, setExportingCsv] = useState(false);
+ const [addLeadOpen, setAddLeadOpen] = useState(false);
+ const [addLeadSaving, setAddLeadSaving] = useState(false);
+ const [addLeadError, setAddLeadError] = useState('');
+ const [manualLeadDraft, setManualLeadDraft] = useState<ManualLeadDraft>(() => newManualLeadDraft());
  const [boardError, setBoardError] = useState('');
  // Bumped after any write, to pull the funnel back in sync with the board. Rows are updated
  // optimistically, but the stage counts are a server-side aggregate over rows this page may
@@ -6657,6 +6685,15 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    .then(setOptions)
    .catch((err: any) => setBoardError(err.message || 'Failed to load filter options.'));
  }, []);
+
+ useEffect(() => {
+  if (!addLeadOpen) return;
+  const closeOnEscape = (event: KeyboardEvent) => {
+   if (event.key === 'Escape' && !addLeadSaving) setAddLeadOpen(false);
+  };
+  document.addEventListener('keydown', closeOnEscape);
+  return () => document.removeEventListener('keydown', closeOnEscape);
+ }, [addLeadOpen, addLeadSaving]);
 
  // Debounced so typing doesn't fire a request per keystroke -- same as the Dataset board.
  useEffect(() => {
@@ -6794,6 +6831,73 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const clearFilters = () => {
   setCampaignId(''); setAdSetId(''); setDateRange(null);
   setQualityFilter([]); setSearchDraft(''); setSearch(''); setBoardError('');
+ };
+
+ const updateManualLeadDraft = (field: keyof ManualLeadDraft, value: string) => {
+  setManualLeadDraft((current) => ({ ...current, [field]: value }));
+ };
+
+ const openAddLead = () => {
+  const draft = newManualLeadDraft();
+  const campaign = campaignId
+   ? options.campaigns.find((item: any) => String(item.campaign_id) === campaignId)
+   : null;
+  const adSet = adSetId
+   ? options.ad_sets.find((item: any) => String(item.ad_set_id) === adSetId)
+   : null;
+  if (campaign) {
+   draft.utm_campaign = String(campaign.campaign || '');
+   draft.utm_campaign_id = String(campaign.campaign_id || '');
+  }
+  if (adSet) {
+   draft.utm_ad_set_id = String(adSet.ad_set_id || '');
+   draft.fb_ad_title = String(adSet.ad_title || '');
+   if (adSet.campaign_id) draft.utm_campaign_id = String(adSet.campaign_id);
+   const adSetCampaign = options.campaigns.find((item: any) => String(item.campaign_id) === String(adSet.campaign_id));
+   if (adSetCampaign) draft.utm_campaign = String(adSetCampaign.campaign || '');
+  }
+  setManualLeadDraft(draft);
+  setAddLeadError('');
+  setAddLeadOpen(true);
+ };
+
+ const closeAddLead = () => {
+  if (addLeadSaving) return;
+  setAddLeadOpen(false);
+  setAddLeadError('');
+ };
+
+ const submitManualLead = async (event: FormEvent) => {
+  event.preventDefault();
+  if (isStaff || addLeadSaving) return;
+  const amountText = manualLeadDraft.amount_spent_usd.trim();
+  if (amountText && Number.isNaN(Number(amountText))) {
+   setAddLeadError('Amount spent must be a number.');
+   return;
+  }
+  setAddLeadSaving(true);
+  setAddLeadError('');
+  try {
+   await api('/leads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+     ...manualLeadDraft,
+     created_at: manualLeadDraft.created_at ? `${manualLeadDraft.created_at}:00` : '',
+     amount_spent_usd: amountText ? Number(amountText) : null,
+     platform: 'manual',
+    }),
+   });
+   setManualLeadDraft(newManualLeadDraft());
+   setAddLeadOpen(false);
+   setRowsOffset(0);
+   setRefreshKey((key) => key + 1);
+   watchRetrain();
+  } catch (err: any) {
+   setAddLeadError(err.message || 'Failed to add this lead.');
+  } finally {
+   setAddLeadSaving(false);
+  }
  };
 
  // --- Board behaviour ---------------------------------------------------------------------
@@ -7139,9 +7243,14 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         and carries a leading icon once something is. */}
     <div className="dataset-rows-controls lead-board-controls">
      <div className="lead-board-count">
-      {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
+     {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
      </div>
      <div className="dataset-rows-controls-right">
+      {!isStaff && (
+       <button type="button" className="lead-add-btn" disabled={addLeadSaving} onClick={openAddLead}>
+        <Plus size={14} />Add Leads
+       </button>
+      )}
       <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
        <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
       </button>
@@ -7361,6 +7470,102 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       </div>
       <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
      </div>
+    )}
+    {addLeadOpen && createPortal(
+     <div className="lead-add-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddLead(); }}>
+      <form className="lead-add-drawer" role="dialog" aria-modal="true" aria-labelledby="lead-add-title" onSubmit={(event) => void submitManualLead(event)}>
+       <header className="lead-add-head">
+        <div>
+         <span><Plus size={13} />Manual entry</span>
+         <h3 id="lead-add-title">Add Leads</h3>
+        </div>
+        <button type="button" className="lead-add-close" aria-label="Close add lead form" disabled={addLeadSaving} onClick={closeAddLead}>
+         <X size={16} />
+        </button>
+       </header>
+
+       <div className="lead-add-body">
+        {addLeadError && <div className="lead-add-error">{addLeadError}</div>}
+        <section className="lead-add-section">
+         <h4>Lead</h4>
+         <div className="lead-add-grid">
+          <label className="wide">
+           <span>Customer</span>
+           <input required value={manualLeadDraft.customer_name} onChange={(event) => updateManualLeadDraft('customer_name', event.target.value)} placeholder="Customer name" />
+          </label>
+          <label>
+           <span>Created</span>
+           <input required type="datetime-local" value={manualLeadDraft.created_at} onChange={(event) => updateManualLeadDraft('created_at', event.target.value)} />
+          </label>
+          <label>
+           <span>Status</span>
+           <MenuSelect
+            className={`lead-add-select status-${manualLeadDraft.status.toLowerCase()}`}
+            ariaLabel="Lead status"
+            value={manualLeadDraft.status}
+            options={[{ value: 'New', label: 'New' }, { value: 'Existing', label: 'Existing' }]}
+            onChange={(value) => updateManualLeadDraft('status', value)}
+           />
+          </label>
+          <label>
+           <span>Lead quality</span>
+           <MenuSelect
+            className={`lead-add-select quality-${leadQualitySlug(manualLeadDraft.lead_quality)}`}
+            ariaLabel="Lead quality"
+            value={manualLeadDraft.lead_quality}
+            options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+            onChange={(value) => updateManualLeadDraft('lead_quality', value)}
+           />
+          </label>
+         </div>
+        </section>
+
+        <section className="lead-add-section">
+         <h4>Campaign</h4>
+         <div className="lead-add-grid">
+          <label className="wide">
+           <span>Campaign</span>
+           <input required value={manualLeadDraft.utm_campaign} onChange={(event) => updateManualLeadDraft('utm_campaign', event.target.value)} placeholder="Leads | VISA | JP | FOR" />
+          </label>
+          <label className="wide">
+           <span>Campaign ID</span>
+           <input required value={manualLeadDraft.utm_campaign_id} onChange={(event) => updateManualLeadDraft('utm_campaign_id', event.target.value)} placeholder="120235..." />
+          </label>
+         </div>
+        </section>
+
+        <section className="lead-add-section">
+         <h4>Ad</h4>
+         <div className="lead-add-grid">
+          <label>
+           <span>Ad set ID</span>
+           <input required value={manualLeadDraft.utm_ad_set_id} onChange={(event) => updateManualLeadDraft('utm_ad_set_id', event.target.value)} placeholder="120235..." />
+          </label>
+          <label>
+           <span>Ad ID</span>
+           <input required value={manualLeadDraft.utm_ad_id} onChange={(event) => updateManualLeadDraft('utm_ad_id', event.target.value)} placeholder="120235..." />
+          </label>
+          <label className="wide">
+           <span>Ad title</span>
+           <input required value={manualLeadDraft.fb_ad_title} onChange={(event) => updateManualLeadDraft('fb_ad_title', event.target.value)} placeholder="VF008C1 - TAFVJ01" />
+          </label>
+          <label className="wide">
+           <span>Amount spent</span>
+           <input type="number" min="0" step="0.01" value={manualLeadDraft.amount_spent_usd} onChange={(event) => updateManualLeadDraft('amount_spent_usd', event.target.value)} placeholder="Optional" />
+          </label>
+         </div>
+        </section>
+       </div>
+
+       <footer className="lead-add-actions">
+        <button type="button" className="lead-add-secondary" disabled={addLeadSaving} onClick={closeAddLead}>Cancel</button>
+        <button type="submit" className="lead-add-primary" disabled={addLeadSaving}>
+         {addLeadSaving ? <RefreshCw size={14} /> : <Plus size={14} />}{addLeadSaving ? 'Saving' : 'Add lead'}
+        </button>
+       </footer>
+      </form>
+     </div>,
+     document.body
     )}
    </section>
   </div>

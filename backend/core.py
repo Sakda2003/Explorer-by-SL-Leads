@@ -9617,6 +9617,8 @@ LEAD_UPDATE_FIELDS = {
     "amount_spent_usd",
 }
 
+LEAD_STATUS_OPTIONS = {"New", "Existing"}
+
 LEAD_RAW_FIELD_MAP = {
     "status": "Status",
     "lead_quality": "Lead Quality",
@@ -9658,6 +9660,84 @@ def _clean_lead_update_value(field: str, value: object) -> object:
     if field == "utm_ad_set_id" and not cleaned:
         raise ValueError("Ad Set ID is required.")
     return cleaned
+
+
+def create_lead_event(values: dict, retrain: bool = True) -> dict:
+    """Insert one manually entered lead.
+
+    Manual leads use the same identity hash as imported CRM rows, so adding a duplicate by
+    hand fails the same way re-importing a duplicate does. They are flagged in raw_json because
+    upload deletion removes orphan imported rows; a hand-entered lead has no source upload and
+    must survive that cleanup.
+    """
+    def required_text(field: str, label: str) -> str:
+        cleaned = "" if values.get(field) is None else str(values.get(field)).strip()
+        if not cleaned:
+            raise ValueError(f"{label} is required.")
+        return cleaned
+
+    created_at = _clean_lead_update_value("created_at", values.get("created_at"))
+    customer_name = required_text("customer_name", "Customer name")
+    status = required_text("status", "Status")
+    if status not in LEAD_STATUS_OPTIONS:
+        raise ValueError("Status must be New or Existing.")
+    lead_quality = _clean_lead_update_value("lead_quality", values.get("lead_quality"))
+    utm_campaign = required_text("utm_campaign", "Campaign")
+    utm_campaign_id = required_text("utm_campaign_id", "Campaign ID")
+    utm_ad_set_id = _clean_lead_update_value("utm_ad_set_id", values.get("utm_ad_set_id"))
+    utm_ad_id = required_text("utm_ad_id", "Ad ID")
+    fb_ad_title = _clean_fb_ad_title(required_text("fb_ad_title", "Ad title"))
+    amount_spent_usd = _clean_lead_update_value("amount_spent_usd", values.get("amount_spent_usd"))
+    platform = ("" if values.get("platform") is None else str(values.get("platform")).strip()) or "manual"
+    updated_at = utc_now()
+
+    event_hash = _lead_identity_hash(
+        created_at, customer_name, status, utm_campaign_id, utm_ad_set_id, utm_ad_id, fb_ad_title
+    )
+    raw = {
+        "Manual Entry": True,
+        "Platform": platform,
+        "Status": status,
+        "Lead Quality": lead_quality,
+        "Created At": str(created_at),
+        "Updated At": updated_at,
+        "Customer Name": customer_name,
+        "UTM Campaign": utm_campaign,
+        "UTM Campaign ID": utm_campaign_id,
+        "UTM Ad Set ID": utm_ad_set_id,
+        "UTM Ad ID": utm_ad_id,
+        "FB Ad Title": fb_ad_title,
+        "Amount spent (USD)": "" if amount_spent_usd is None else str(amount_spent_usd),
+    }
+
+    with connect() as db:
+        try:
+            cur = db.execute(
+                """INSERT INTO lead_events(event_hash, platform, status, lead_quality, created_at, updated_at,
+                   customer_name, utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
+                   fb_ad_title, amount_spent_usd, raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    event_hash, platform, status, lead_quality, created_at, updated_at,
+                    customer_name, utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
+                    fb_ad_title, amount_spent_usd, json.dumps(raw, ensure_ascii=False),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("This lead already exists.") from exc
+        lead_id = int(cur.lastrowid)
+        created = dict(db.execute(
+            """SELECT id, platform, status, lead_quality, created_at, updated_at, customer_name,
+               utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
+               fb_ad_title, amount_spent_usd
+               FROM lead_events WHERE id=?""",
+            (lead_id,),
+        ).fetchone())
+
+    if not retrain:
+        return {"created": lead_id, "lead": created, "training_run": None}
+    rebuild_aggregates()
+    run = train_models()
+    return {"created": lead_id, "lead": created, "training_run": run}
 
 
 def update_lead_event(lead_id: int, changes: dict, retrain: bool = True) -> dict:
@@ -9888,7 +9968,11 @@ def delete_upload(upload_id: int) -> dict:
         brought_leads = upload["file_type"] in (CUSTOMER_TRAFFIC_TYPE, MODEL_DATASET_TYPE)
         db.execute("DELETE FROM raw_uploads WHERE id=?", (upload_id,))
         if brought_leads:
-            db.execute("DELETE FROM lead_events WHERE id NOT IN (SELECT lead_id FROM upload_lead_links)")
+            db.execute(
+                """DELETE FROM lead_events
+                   WHERE id NOT IN (SELECT lead_id FROM upload_lead_links)
+                     AND raw_json NOT LIKE '%"Manual Entry": true%'"""
+            )
     path.unlink(missing_ok=True)
     if file_type in (CHANGE_LOG_TYPE, MODEL_DATASET_TYPE, LEADLENS_DERIVED_TYPE):
         _clear_change_caches()
