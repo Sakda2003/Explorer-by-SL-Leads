@@ -2110,7 +2110,8 @@ td.num .lead-cell-input { text-align: right; }
 .board-table td:has(> .lead-quality-select) { padding: 0; background: var(--status-neutral-fill); }
 .board-table td:has(> .lead-status-select.status-new) { background: var(--status-new-fill); }
 .board-table td:has(> .lead-status-select.status-existing) { background: var(--status-existing-fill); }
-.board-table td:has(> .lead-quality-select.quality-intake) { background: var(--status-neutral-fill); }
+.board-table td:has(> .lead-quality-select.quality-pending-review) { background: var(--status-neutral-fill); }
+.board-table td:has(> .lead-quality-select.quality-intake) { background: var(--status-new-fill); }
 .board-table td:has(> .lead-quality-select.quality-not-qualified) { background: var(--status-bad-fill); }
 .board-table td:has(> .lead-quality-select.quality-qualified) { background: var(--status-info-fill); }
 .board-table td:has(> .lead-quality-select.quality-converted) { background: var(--status-good-fill); }
@@ -2128,6 +2129,8 @@ td.num .lead-cell-input { text-align: right; }
 /* The ink still has to come from the matching token — the trigger is transparent now. */
 .board-table td:has(> .lead-status-select.status-new) .menu-select-trigger { color: var(--status-new-ink); }
 .board-table td:has(> .lead-status-select.status-existing) .menu-select-trigger { color: var(--status-existing-ink); }
+.board-table td:has(> .lead-quality-select.quality-pending-review) .menu-select-trigger { color: var(--status-neutral-ink); }
+.board-table td:has(> .lead-quality-select.quality-intake) .menu-select-trigger { color: var(--status-new-ink); }
 .board-table td:has(> .lead-quality-select.quality-not-qualified) .menu-select-trigger { color: var(--status-bad-ink); }
 .board-table td:has(> .lead-quality-select.quality-qualified) .menu-select-trigger { color: var(--status-info-ink); }
 .board-table td:has(> .lead-quality-select.quality-converted) .menu-select-trigger { color: var(--status-good-ink); }
@@ -2136,13 +2139,13 @@ td.num .lead-cell-input { text-align: right; }
 
 /* Lead Quality pill -- same MenuSelect-as-colored-pill pattern as Status just above, on its
    own `quality-` class namespace (rather than reusing `.lead-status-select`'s `status-*`
-   modifiers) so a future status value can never collide with a quality one. Six pipeline
-   stages, colored to read as a sequence, not just "different": neutral (not started) ->
-   red (dropped early) / blue (actively progressing) -> amber (one step from done, matching
-   "New" status's existing pending-action amber) -> red again, stronger (Lost -- a later,
-   more terminal drop-out than Not Qualified, so it shares the color but not the intensity)
-   or green (Converted, the win). */
-.lead-quality-select.quality-intake .menu-select-trigger { background: var(--status-neutral-fill); color: var(--status-neutral-ink); }
+   modifiers) so a future status value can never collide with a quality one. Seven pipeline
+   stages, colored to read as a sequence, not just "different": neutral (fresh import) ->
+   amber (intake) -> red (dropped early) / blue (actively progressing) -> amber (one step
+   from done) -> red again, stronger (Lost -- a later, more terminal drop-out than Not
+   Qualified, so it shares the color but not the intensity) or green (Converted, the win). */
+.lead-quality-select.quality-pending-review .menu-select-trigger { background: var(--status-neutral-fill); color: var(--status-neutral-ink); }
+.lead-quality-select.quality-intake .menu-select-trigger { background: var(--status-new-fill); color: var(--status-new-ink); }
 .lead-quality-select.quality-not-qualified .menu-select-trigger { background: var(--status-bad-fill); color: var(--status-bad-ink); }
 .lead-quality-select.quality-qualified .menu-select-trigger { background: var(--status-info-fill); color: var(--status-info-ink); }
 .lead-quality-select.quality-converted .menu-select-trigger { background: var(--status-good-fill); color: var(--status-good-ink); }
@@ -6288,6 +6291,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
   background: color-mix(in srgb, var(--surface) 76%, var(--canvas));
   font-size: 12px;
 }
+.lead-add-select.quality-pending-review .menu-select-trigger { color: var(--status-neutral-ink); border-color: color-mix(in srgb, var(--status-neutral-fill) 55%, var(--line)); }
+.lead-add-select.quality-intake .menu-select-trigger { color: var(--status-new-ink); border-color: color-mix(in srgb, var(--status-new-fill) 50%, var(--line)); }
 .lead-add-select.quality-not-qualified .menu-select-trigger { color: var(--status-bad-ink); border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); }
 .lead-add-select.quality-qualified .menu-select-trigger { color: var(--status-info-ink); border-color: color-mix(in srgb, var(--status-info-fill) 48%, var(--line)); }
 .lead-add-select.quality-converted .menu-select-trigger { color: var(--status-good-ink); border-color: color-mix(in srgb, var(--success) 40%, var(--line)); }
@@ -6464,9 +6469,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
 
 /* --- Stage list -------------------------------------------------------------------------- */
 /* One column, in pipeline order. Two columns fit in less height but fill row-major, so
-   scanning DOWN the first column read Intake, Qualified, Lost -- three stages that are not
-   consecutive and not a sequence. A pipeline whose order only works when read boustrophedon
-   is not communicating an order at all. */
+   scanning DOWN the first column would skip across non-consecutive stages. A pipeline whose
+   order only works when read boustrophedon is not communicating an order at all. */
 .lead-stage-list {
   display: flex;
   flex-direction: column;
@@ -6527,7 +6531,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
 
 /* Each stage's colour, matching the pill it recolours in the board below (see the
    `.lead-quality-select.quality-*` rules) so a stage reads the same in both places. */
-.quality-intake { --stage-fill: var(--status-neutral-fill); }
+.quality-pending-review { --stage-fill: var(--status-neutral-fill); }
+.quality-intake { --stage-fill: var(--status-new-fill); }
 .quality-not-qualified { --stage-fill: var(--status-bad-fill); }
 .quality-qualified { --stage-fill: var(--status-info-fill); }
 .quality-converted { --stage-fill: var(--status-good-fill); }
@@ -6620,7 +6625,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .board-table td.lead-cell-quality { padding: 0; background: var(--status-neutral-fill); }
 .board-table td.lead-cell-status.status-new { background: var(--status-new-fill); }
 .board-table td.lead-cell-status.status-existing { background: var(--status-existing-fill); }
-.board-table td.lead-cell-quality.quality-intake { background: var(--status-neutral-fill); }
+.board-table td.lead-cell-quality.quality-pending-review { background: var(--status-neutral-fill); }
+.board-table td.lead-cell-quality.quality-intake { background: var(--status-new-fill); }
 .board-table td.lead-cell-quality.quality-not-qualified { background: var(--status-bad-fill); }
 .board-table td.lead-cell-quality.quality-qualified { background: var(--status-info-fill); }
 .board-table td.lead-cell-quality.quality-converted { background: var(--status-good-fill); }
@@ -6631,7 +6637,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
    the fill did -- restated here for the same invalidation reason as the backgrounds above. */
 .board-table td.lead-cell-status.status-new .menu-select-trigger { color: var(--status-new-ink); }
 .board-table td.lead-cell-status.status-existing .menu-select-trigger { color: var(--status-existing-ink); }
-.board-table td.lead-cell-quality.quality-intake .menu-select-trigger { color: var(--status-neutral-ink); }
+.board-table td.lead-cell-quality.quality-pending-review .menu-select-trigger { color: var(--status-neutral-ink); }
+.board-table td.lead-cell-quality.quality-intake .menu-select-trigger { color: var(--status-new-ink); }
 .board-table td.lead-cell-quality.quality-not-qualified .menu-select-trigger { color: var(--status-bad-ink); }
 .board-table td.lead-cell-quality.quality-qualified .menu-select-trigger { color: var(--status-info-ink); }
 .board-table td.lead-cell-quality.quality-converted .menu-select-trigger { color: var(--status-good-ink); }

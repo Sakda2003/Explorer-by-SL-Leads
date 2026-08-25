@@ -267,11 +267,11 @@ const dateTimeInputValue = (value: any) => {
  return local.toISOString().slice(0, 16);
 };
 
-// Mirrors LEAD_QUALITY_OPTIONS in backend/core.py -- a hand-recorded CRM pipeline stage with
-// no import source, so every lead starts at the first entry ("Intake") until moved. Order is
-// the pipeline's natural progression, which is also the dropdown's option order.
+// Mirrors LEAD_QUALITY_OPTIONS in backend/core.py. Imported rows start as Pending Review;
+// Intake is a deliberate next stage, not the import default. Order is the pipeline's natural
+// progression, which is also the dropdown's option order.
 const LEAD_QUALITY_OPTIONS = [
- 'Intake', 'Not Qualified', 'Qualified', 'Converted', 'Lost', 'Awaiting Document and Payment',
+ 'Pending Review', 'Intake', 'Not Qualified', 'Qualified', 'Converted', 'Lost', 'Awaiting Document and Payment',
 ];
 type ManualLeadDraft = {
  status: string;
@@ -298,9 +298,10 @@ const newManualLeadDraft = (): ManualLeadDraft => ({
  amount_spent_usd: '',
 });
 // CSS class hook for a quality value's pill color (see `.lead-quality-select.quality-*` in
-// styles.css) -- lowercased, spaces to hyphens, e.g. "Awaiting Document and Payment" ->
+// styles.css) -- lowercased, spaces to hyphens, e.g. "Pending Review" -> "pending-review".
+// "Awaiting Document and Payment" ->
 // "awaiting-document-and-payment".
-const leadQualitySlug = (value: string) => String(value || 'intake').toLowerCase().replace(/\s+/g, '-');
+const leadQualitySlug = (value: string) => String(value || 'pending-review').toLowerCase().replace(/\s+/g, '-');
 
 const withAuth = (options?: RequestInit): RequestInit => {
  const headers = new Headers(options?.headers);
@@ -6594,7 +6595,7 @@ const labelDisambiguator = (names: string[]) => {
 };
 
 const EMPTY_LEAD_SUMMARY = {
- total: 0, stages: [] as any[], statuses: {} as Record<string, number>, intake: 0, rated: 0,
+ total: 0, stages: [] as any[], statuses: {} as Record<string, number>, pending_review: 0, intake: 0, rated: 0,
  rated_share: 0, qualified: 0, dropped: 0, converted: 0, qualification_rate: null,
  conversion_rate: null, matched_spend_usd: 0, cost_per_lead: null, cost_per_qualified: null,
  cost_per_converted: null,
@@ -6602,7 +6603,8 @@ const EMPTY_LEAD_SUMMARY = {
 
 // The whole book as one segmented bar, so the shape of the pipeline is legible before a single
 // number is read. Zero-count stages contribute no segment rather than an invisible sliver -- with
-// six stages and most leads at Intake, drawing all six would produce hairlines nobody can see.
+// seven stages and most leads at Pending Review, drawing all seven would produce hairlines
+// nobody can see.
 function LeadPipelineBar({ stages, total, active }: { stages: any[]; total: number; active: string[] }) {
  const filled = stages.filter((stage) => Number(stage.count) > 0);
  if (!total || !filled.length) {
@@ -7166,10 +7168,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       <div className="lead-cell-head">
        <h3 id="lead-queue-heading">Awaiting review</h3>
       </div>
-      {/* Share reviewed, not the count still waiting. Until someone rates a lead, "leads still
-          at Intake" IS the pipeline total, and the two cells sat side by side printing the
-          same number, which reads as a bug rather than as arithmetic. A share is a different
-          kind of number from a count, so these two headlines can never echo each other. */}
+      {/* Share reviewed, not the count still waiting. Imported rows sit in Pending Review
+          until someone moves them to Intake, Qualified, or another real judgement. */}
       {showSkeleton ? <div className="skeleton skeleton-line lead-total-skeleton" /> : (
        <p className="lead-queue-figure">
         <strong>{percent(summary.rated_share)}</strong>
@@ -7184,9 +7184,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       <p className="lead-cell-foot">
        {summary.total === 0
         ? 'Nothing to review in this view.'
-        : summary.intake === 0
+        : (summary.pending_review ?? 0) === 0
          ? `All ${plural(summary.total, 'lead')} rated. Nothing waiting.`
-         : `${plural(summary.intake, 'lead')} still to review.`}
+         : `${plural(summary.pending_review, 'lead')} pending review.`}
       </p>
      </section>
 

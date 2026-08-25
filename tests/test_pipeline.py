@@ -244,7 +244,16 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         self.assertEqual([row[0] for row in rows[1:]], ["Jun 2, 2026", "Jun 3, 2026"])
         self.assertEqual([row[1] for row in rows[1:]], ["Customer 1", "Customer 2"])
-        self.assertTrue(all(row[3] == "Intake" for row in rows[1:]))
+        self.assertTrue(all(row[3] == "Pending Review" for row in rows[1:]))
+
+    def test_imported_leads_start_pending_review_not_rated(self):
+        self.import_frame(frame_for(3), "pending-review-default.csv")
+        summary = core.get_lead_pipeline_summary()
+        self.assertEqual(summary["total"], 3)
+        self.assertEqual(summary["pending_review"], 3)
+        self.assertEqual(summary["intake"], 0)
+        self.assertEqual(summary["rated"], 0)
+        self.assertEqual(summary["rated_share"], 0.0)
 
     def test_dashboard_insights_reconcile_status_and_campaign_mix(self):
         self.import_frame(frame_for(4), "dashboard-mix.csv")
@@ -1463,7 +1472,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
     def lead_payload(self, **overrides):
         payload = {
             "status": "New",
-            "lead_quality": "Intake",
+            "lead_quality": "Pending Review",
             "created_at": "2026-06-08T09:30:00",
             "customer_name": "Manual Customer",
             "utm_campaign": "Leads | VISA | JP | FOR",
@@ -1480,7 +1489,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
     def test_create_manual_lead_writes_the_board_fields_and_rejects_duplicates(self):
         created = core.create_lead_event(self.lead_payload(), retrain=False)
         self.assertEqual(created["lead"]["customer_name"], "Manual Customer")
-        self.assertEqual(created["lead"]["lead_quality"], "Intake")
+        self.assertEqual(created["lead"]["lead_quality"], "Pending Review")
         self.assertEqual(created["lead"]["utm_ad_set_id"], "120235942906970078")
         self.assertAlmostEqual(created["lead"]["amount_spent_usd"], 4.25)
 

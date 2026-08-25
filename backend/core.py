@@ -618,12 +618,10 @@ def init_db() -> None:
                 db.execute(f"ALTER TABLE model_backtest_metrics ADD COLUMN {name} REAL")
         existing_lead_columns = {row[1] for row in db.execute("PRAGMA table_info(lead_events)")}
         for name, definition in (
-            # A pipeline stage the CRM side records by hand, not derived from anything
-            # imported -- there's no data source for it yet, so every existing and new row
-            # starts at "Intake" (LEAD_QUALITY_OPTIONS[0]) until someone updates it via the
-            # board. NOT NULL + a constant DEFAULT means SQLite backfills every existing row
-            # with that value as part of the ALTER, not just future inserts.
-            ("lead_quality", "TEXT NOT NULL DEFAULT 'Intake'"),
+            # New imports start as "Pending Review" so they are distinct from a lead someone
+            # has deliberately moved into Intake. NOT NULL + a constant DEFAULT means SQLite
+            # backfills existing rows when the column is first introduced.
+            ("lead_quality", "TEXT NOT NULL DEFAULT 'Pending Review'"),
         ):
             if name not in existing_lead_columns:
                 db.execute(f"ALTER TABLE lead_events ADD COLUMN {name} {definition}")
@@ -3044,12 +3042,14 @@ def _write_lead_events(db: sqlite3.Connection, upload_id: int, frame: pd.DataFra
     for row_index, row in frame.iterrows():
         event_hash = _event_hash(row, int(row_index) + 2)
         raw = {k: (None if pd.isna(v) else str(v)) for k, v in row.items()}
+        raw["Lead Quality"] = DEFAULT_IMPORTED_LEAD_QUALITY
         before = db.total_changes
         db.execute(
-            """INSERT OR IGNORE INTO lead_events(event_hash, platform, status, created_at, updated_at,
+            """INSERT OR IGNORE INTO lead_events(event_hash, platform, status, lead_quality, created_at, updated_at,
                customer_name, utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
-               fb_ad_title, amount_spent_usd, raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (event_hash, str(row["Platform"]).strip(), str(row["Status"]).strip(), row["Created At"].isoformat(),
+               fb_ad_title, amount_spent_usd, raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (event_hash, str(row["Platform"]).strip(), str(row["Status"]).strip(),
+             DEFAULT_IMPORTED_LEAD_QUALITY, row["Created At"].isoformat(),
              row["Updated At"].isoformat() if pd.notna(row["Updated At"]) else None,
              str(row["Customer Name"]).strip(), str(row["UTM Campaign"]).strip(), row["UTM Campaign ID"],
              row["UTM Ad Set ID"], row["UTM Ad ID"], str(row["FB Ad Title"]).strip(),
@@ -6396,14 +6396,15 @@ def get_dataset_overview() -> dict:
     }
 
 
-# A CRM pipeline stage, hand-recorded via the board -- there is no import source for it, so
-# every lead starts at the first option ("Intake") until someone moves it. Order is the
+# CRM pipeline stages, hand-recorded via the board. Imported rows start at "Pending Review";
+# "Intake" is a deliberate stage someone moves a lead into after looking at it. Order is the
 # pipeline's natural progression, which is also the order the dropdown lists them in.
 # Defined here (ahead of _LEADS_FILTER_FIELDS below, which reads it) rather than down near
 # LEAD_UPDATE_FIELDS/_clean_lead_update_value where the rest of the lead-editing code lives --
 # Python evaluates module-level statements top to bottom, and this file's editing helpers
 # happen to sit thousands of lines below the dataset-rows table specs that also need this list.
 LEAD_QUALITY_OPTIONS = [
+    "Pending Review",
     "Intake",
     "Not Qualified",
     "Qualified",
@@ -6411,6 +6412,7 @@ LEAD_QUALITY_OPTIONS = [
     "Lost",
     "Awaiting Document and Payment",
 ]
+DEFAULT_IMPORTED_LEAD_QUALITY = "Pending Review"
 
 # Ad-performance's filter fields are shared by "ad_performance" and "ad_performance_export"
 # below -- both read the same `daily_ad_performance p` table under the same `p.` alias, just
@@ -6872,7 +6874,7 @@ def get_lead_pipeline_summary(
         stage_rows = db.execute(
             f"SELECT COALESCE(NULLIF(TRIM(lead_quality), ''), ?) AS stage, COUNT(*) AS n "
             f"FROM {table_sql} GROUP BY stage",
-            [LEAD_QUALITY_OPTIONS[0], *params],
+            [DEFAULT_IMPORTED_LEAD_QUALITY, *params],
         ).fetchall()
         status_rows = db.execute(
             f"SELECT COALESCE(NULLIF(TRIM(status), ''), 'Unknown') AS status, COUNT(*) AS n "
@@ -6912,26 +6914,27 @@ def get_lead_pipeline_summary(
     qualified = sum(counts.get(stage, 0) for stage in LEAD_QUALIFIED_STAGES)
     dropped = sum(counts.get(stage, 0) for stage in LEAD_DROPPED_STAGES)
     converted = counts.get("Converted", 0)
-    intake = counts.get(LEAD_QUALITY_OPTIONS[0], 0)
-    # "Rated" means someone has actually moved the lead off the default stage -- the honest
-    # denominator for a qualification rate, since an untouched Intake lead is an unanswered
-    # question, not a rejection.
-    rated = total - intake
+    pending_review = counts.get(DEFAULT_IMPORTED_LEAD_QUALITY, 0)
+    intake = counts.get("Intake", 0)
+    # "Rated" means someone has actually moved the lead off the imported default stage -- the
+    # honest denominator for a qualification rate, since a Pending Review lead is an
+    # unanswered question, not a rejection or an Intake judgement.
+    rated = total - pending_review
     spend_value = float(spend or 0.0)
 
     return {
         "total": total,
         "stages": stages,
         "statuses": {str(row["status"]): int(row["n"]) for row in status_rows},
+        "pending_review": pending_review,
         "intake": intake,
         "rated": rated,
         "rated_share": (rated / total) if total else 0.0,
         "qualified": qualified,
         "dropped": dropped,
         "converted": converted,
-        # Rates over the rated subset, not the whole match: with most leads still at Intake a
-        # whole-set denominator would report a conversion rate that only measures how much
-        # rating has been done so far.
+        # Rates over the rated subset, not the whole match: with most leads still Pending
+        # Review, a whole-set denominator would only measure how much rating has been done.
         "qualification_rate": (qualified / rated) if rated else None,
         "conversion_rate": (converted / rated) if rated else None,
         # Spend on the ad set days these leads came from -- an upper bound on what the matched
