@@ -6642,6 +6642,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const [selectedAllMatching, setSelectedAllMatching] = useState(false);
  const [selectAllMatchingBusy, setSelectAllMatchingBusy] = useState(false);
  const [boardBusy, setBoardBusy] = useState(false);
+ const [bulkAction, setBulkAction] = useState<'rating' | 'deleting' | ''>('');
  const [exportingCsv, setExportingCsv] = useState(false);
  const [boardError, setBoardError] = useState('');
  // Bumped after any write, to pull the funnel back in sync with the board. Rows are updated
@@ -6873,6 +6874,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const applyBulkQuality = async (quality: string) => {
   if (!selectedRowIds.length) return;
   setBoardBusy(true);
+  setBulkAction('rating');
   setBoardError('');
   try {
    const result = await api('/leads/bulk-quality', {
@@ -6899,7 +6901,69 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   } catch (err: any) {
    setBoardError(err.message || 'Failed to rate the selected leads.');
   } finally {
+   setBulkAction('');
    setBoardBusy(false);
+  }
+ };
+
+ const deleteSelectedLeads = async () => {
+  if (isStaff || !selectedRowIds.length) return;
+  const selectedCount = selectedRowIds.length;
+  if (!confirm(`Delete ${selectedCount} ${selectedCount === 1 ? 'lead' : 'leads'}? This updates the totals the forecast is built on.`)) return;
+
+  setBoardBusy(true);
+  setBulkAction('deleting');
+  setBoardError('');
+  const requestedIds = [...selectedRowIds];
+  const removedIds = new Set<string>();
+  let deletedCount = 0;
+  let missingCount = 0;
+
+  try {
+   // Keep SQLite writes sequential, matching the Dataset board's bulk delete. The backend
+   // collapses the shared rebuild/retrain work behind its debounce, so the loop only performs
+   // the row deletes.
+   for (const id of requestedIds) {
+    const response = await apiFetch(`/leads/${id}`, { method: 'DELETE' });
+    if (!response.ok) {
+     const body = await response.json().catch(() => ({ detail: 'Request failed' }));
+     if (response.status === 404) {
+      removedIds.add(id);
+      missingCount += 1;
+      continue;
+     }
+     throw new Error(body.detail || 'Unable to delete the selected leads.');
+    }
+    removedIds.add(id);
+    deletedCount += 1;
+   }
+  } catch (err: any) {
+   setBoardError(err.message || 'Unable to delete the selected leads.');
+  } finally {
+   if (removedIds.size) {
+    setRowsData((current) => ({
+     ...current,
+     total: Math.max(0, current.total - removedIds.size),
+     rows: current.rows.filter((item: any) => !removedIds.has(String(item.id))),
+    }));
+    setSelectedRowIds((current) => current.filter((id) => !removedIds.has(id)));
+    setSelectedAllMatching(false);
+    setRefreshKey((key) => key + 1);
+   }
+   if (deletedCount) watchRetrain();
+   if (missingCount && deletedCount + missingCount === requestedIds.length) {
+    setBoardError(
+     deletedCount
+      ? `${fmt(missingCount)} selected ${missingCount === 1 ? 'lead no longer exists' : 'leads no longer exist'}; the rest were deleted.`
+      : `${fmt(missingCount)} selected ${missingCount === 1 ? 'lead no longer exists' : 'leads no longer exist'}.`
+    );
+   }
+   if (deletedCount + missingCount === requestedIds.length) {
+    setSelectedRowIds([]);
+    setSelectedAllMatching(false);
+   }
+   setBoardBusy(false);
+   setBulkAction('');
   }
  };
  const exportLeadCsv = async () => {
@@ -7264,10 +7328,10 @@ function LeadManagementPage({ role }: { role: UserRole }) {
      </div>
     </div>
 
-    {/* The batch rater. Floats at the bottom of the viewport while anything is ticked, so it
-        stays reachable however far down the board you have scrolled. */}
+    {/* The batch action bar. Floats at the bottom of the viewport while anything is ticked, so
+        rating or deleting stays reachable however far down the board you have scrolled. */}
     {!!selectedRowIds.length && (
-     <div className="board-bulk-bar" role="region" aria-label="Rate selected leads">
+     <div className="board-bulk-bar" role="region" aria-label="Selected lead actions">
       <div className="board-bulk-count"><strong>{fmt(selectedRowIds.length)}</strong><span>{selectedRowIds.length === 1 ? 'lead' : 'leads'} selected</span></div>
       {allPageSelected && !selectedAllMatching && rowsData.total > pageRowIds.length && (
        <button type="button" className="board-bulk-link" disabled={selectAllMatchingBusy} onClick={() => void selectAllMatchingRows()}>
@@ -7283,11 +7347,17 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         ariaLabel="Set lead quality for the selected leads"
         value=""
         options={[
-         { value: '', label: boardBusy ? 'Rating...' : 'Choose stage' },
+         { value: '', label: bulkAction === 'rating' ? 'Rating...' : bulkAction === 'deleting' ? 'Deleting...' : 'Choose stage' },
          ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option })),
         ]}
+        disabled={boardBusy}
         onChange={(value) => { if (value) void applyBulkQuality(value); }}
        />
+       {!isStaff && (
+        <button type="button" className="board-bulk-btn danger" disabled={boardBusy} onClick={() => void deleteSelectedLeads()}>
+         <Trash2 size={14} />{bulkAction === 'deleting' ? 'Deleting...' : 'Delete'}
+        </button>
+       )}
       </div>
       <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
      </div>
