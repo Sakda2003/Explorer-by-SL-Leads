@@ -162,6 +162,18 @@ HOLIDAY_PROXIMITY_COLUMNS = ["date", "day", "is_holiday", "holiday_name", "holid
 HOLIDAY_PROXIMITY_REQUIRED = ["date", "holiday_proximity"]
 HOLIDAY_PROXIMITY_BASELINE_BUCKET = "60_plus_or_none"
 
+# The source exports still contain the historical combined KHM/FOR campaign name. Keep the
+# stored campaign and its IDs unchanged, but present the current FOR-only name in the webapp.
+DISPLAY_CAMPAIGN_RENAMES = {
+    "Leads | VISA | ALL | KHM & FOR": "Leads | VISA | ALL | FOR",
+}
+
+
+def display_campaign_name(value: object) -> str:
+    """Return the user-facing campaign name without changing the stored source value."""
+    name = str(value or "")
+    return DISPLAY_CAMPAIGN_RENAMES.get(name, name)
+
 DEFAULT_FORECAST_PARAMETERS = {
     "historical_signal_share": 0.65,
     "spend_signal_share": 0.20,
@@ -2369,7 +2381,7 @@ def preview_file(content: bytes, filename: str) -> dict:
             )
             budget_periods = derive_budget_periods(frame)
             for period in budget_periods:
-                period["campaign_name"] = str(campaign_names.get(period["ad_set_id"], "") or "")
+                period["campaign_name"] = display_campaign_name(campaign_names.get(period["ad_set_id"], ""))
             return {
                 "token": token,
                 "file_name": filename,
@@ -3531,6 +3543,8 @@ def get_dashboard_insights() -> dict:
         row["share"] = row["leads"] / total if total else 0.0
         campaign_rows.append(row)
     campaign_rows.sort(key=lambda item: (-item["leads"], item["campaign"]))
+    for row in campaign_rows:
+        row["campaign"] = display_campaign_name(row["campaign"])
 
     return {
         "total_leads": total,
@@ -3760,7 +3774,7 @@ def get_ad_spend_analytics() -> dict:
         item.update({
             "day": str(row["day"]),
             "campaign_id": str(row["campaign_id"]),
-            "campaign_name": str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}"),
+            "campaign_name": display_campaign_name(str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}")),
         })
         daily_campaigns.append(item)
 
@@ -3790,7 +3804,7 @@ def get_ad_spend_analytics() -> dict:
         item.update({
             "day": str(row["day"]),
             "campaign_id": str(row["campaign_id"]),
-            "campaign_name": str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}"),
+            "campaign_name": display_campaign_name(str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}")),
             "ad_set_id": str(row["ad_set_id"]),
         })
         daily_ad_sets.append(item)
@@ -3800,7 +3814,7 @@ def get_ad_spend_analytics() -> dict:
         item = summarize_frame(pd.DataFrame([row.to_dict()]))
         item.update({
             "campaign_id": str(row["campaign_id"]),
-            "campaign_name": str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}"),
+            "campaign_name": display_campaign_name(str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}")),
             "ad_set_count": int(row["ad_set_count"] or 0),
         })
         campaigns.append(item)
@@ -3812,7 +3826,7 @@ def get_ad_spend_analytics() -> dict:
         item.update({
             "ad_set_id": str(row["ad_set_id"]),
             "campaign_id": str(row["campaign_id"]),
-            "campaign_name": str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}"),
+            "campaign_name": display_campaign_name(str(row["campaign_name"] or f"Campaign {str(row['campaign_id'])[-6:]}")),
             "days": int(row["days"] or 0),
         })
         ad_sets.append(item)
@@ -4065,7 +4079,7 @@ def get_ad_decisions(window_days: int = DECISION_WINDOW_DAYS,
         else:
             suggested_delta = 0.0
 
-        campaign_name = item["campaign_name"] or f"Ad set {item['ad_set_id'][-6:]}"
+        campaign_name = display_campaign_name(item["campaign_name"] or f"Ad set {item['ad_set_id'][-6:]}")
         series = [item["series"][key] for key in sorted(item["series"])]
         for point in series:
             point["cpl"] = _safe_ratio(point["spend"], point["leads"])
@@ -6979,7 +6993,10 @@ def get_lead_filter_options() -> dict:
             "FROM lead_events"
         ).fetchone()
     return {
-        "campaigns": [dict(row) for row in campaign_rows],
+        "campaigns": [
+            {**dict(row), "campaign": display_campaign_name(row["campaign"])}
+            for row in campaign_rows
+        ],
         "ad_sets": [dict(row) for row in ad_set_rows],
         "qualities": list(LEAD_QUALITY_OPTIONS),
         "statuses": ["New", "Existing"],
@@ -9267,7 +9284,7 @@ def get_budget_optimization() -> dict:
             cpl_elasticity, fit["leads_elasticity_raw"]
         )
 
-        campaign_name = campaign_names.get(ad_set_id) or f"Ad set {ad_set_id[-6:]}"
+        campaign_name = display_campaign_name(campaign_names.get(ad_set_id) or f"Ad set {ad_set_id[-6:]}")
         periods = fit["periods"]
         results.append({
             "ad_set_id": ad_set_id,

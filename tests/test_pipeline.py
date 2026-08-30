@@ -268,6 +268,18 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(sum(row["leads"] for row in insights["campaigns"]), 4)
         self.assertEqual(insights["campaigns"][0]["campaign"], "Leads | VISA | JP | FOR")
 
+    def test_combined_khm_for_campaign_is_renamed_only_in_display_data(self):
+        frame = frame_for(2)
+        frame["UTM Campaign"] = "Leads | VISA | ALL | KHM & FOR"
+        self.import_frame(frame, "combined-campaign.csv")
+
+        insights = core.get_dashboard_insights()
+
+        self.assertEqual(insights["campaigns"][0]["campaign"], "Leads | VISA | ALL | FOR")
+        with core.connect() as db:
+            stored = db.execute("SELECT DISTINCT utm_campaign FROM lead_events").fetchall()
+        self.assertEqual([row[0] for row in stored], ["Leads | VISA | ALL | KHM & FOR"])
+
     def test_dashboard_campaign_mix_groups_by_name_and_avoids_placeholder_campaigns(self):
         rows = [
             {"Platform": "messenger", "Status": "New", "Created At": "2026-06-01 10:00:00", "Updated At": "2026-06-01 10:00:00",
