@@ -20,7 +20,7 @@ from . import auth
 from . import security
 
 from .core import (
-                   ROOT, bulk_delete_lead_events, change_event_coverage, connect, create_lead_event, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_duplicate_leads, get_forecast_realizations,
+                   ROOT, bulk_delete_lead_events, change_event_coverage, connect, create_lead_event, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_newer_duplicate_leads, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_duplicate_leads, get_forecast_realizations,
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
                    bulk_update_lead_quality, get_lead_filter_options, get_lead_pipeline_summary,
@@ -1054,6 +1054,14 @@ def bulk_lead_delete(payload: LeadBulkDelete):
         result = bulk_delete_lead_events(payload.lead_ids, retrain=False)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if result["deleted"]:
+        _request_retrain(rebuild_aggregates_first=True)
+    return result
+
+
+@app.post("/api/leads/delete-newer-duplicates")
+def delete_newer_duplicate_leads_endpoint():
+    result = delete_newer_duplicate_leads(retrain=False)
     if result["deleted"]:
         _request_retrain(rebuild_aggregates_first=True)
     return result

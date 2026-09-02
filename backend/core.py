@@ -6896,25 +6896,53 @@ def get_duplicate_leads() -> dict:
     for key, matches in grouped.items():
         if len(matches) < 2:
             continue
+        review_rows = []
+        for index, match in enumerate(matches):
+            review_rows.append({**match, "is_keeper": index == 0})
         # Preserve the earliest stored spelling as the human-facing group label; every exact
         # source spelling remains visible on its own row so capitalization differences are not
         # hidden from the reviewer.
         groups.append({
             "key": key,
-            "name": str(matches[0].get("customer_name") or "").strip(),
-            "count": len(matches),
-            "rows": matches,
+            "name": str(review_rows[0].get("customer_name") or "").strip(),
+            "count": len(review_rows),
+            "keeper_id": review_rows[0]["id"],
+            "delete_candidate_ids": [row["id"] for row in review_rows if not row["is_keeper"]],
+            "rows": review_rows,
         })
     groups.sort(key=lambda group: (-int(group["count"]), str(group["name"]).casefold()))
 
     duplicate_leads = sum(int(group["count"]) for group in groups)
+    delete_candidate_count = sum(len(group["delete_candidate_ids"]) for group in groups)
     return {
         "groups": groups,
         "group_count": len(groups),
         "duplicate_leads": duplicate_leads,
-        "extra_occurrences": duplicate_leads - len(groups),
+        "extra_occurrences": delete_candidate_count,
+        "delete_candidate_count": delete_candidate_count,
         "scanned_leads": len(rows),
     }
+
+
+def delete_newer_duplicate_leads(retrain: bool = True) -> dict:
+    """Delete every duplicate-name lead except the oldest row in each name group."""
+    duplicate_data = get_duplicate_leads()
+    delete_ids = [
+        int(lead_id)
+        for group in duplicate_data["groups"]
+        for lead_id in group["delete_candidate_ids"]
+    ]
+    if not delete_ids:
+        return {
+            "requested": 0,
+            "deleted": 0,
+            "missing": 0,
+            "deleted_ids": [],
+            "kept": int(duplicate_data["group_count"]),
+            "training_run": None,
+        }
+    result = bulk_delete_lead_events(delete_ids, retrain=retrain)
+    return {**result, "kept": int(duplicate_data["group_count"])}
 
 
 def bulk_delete_lead_events(lead_ids: list[int], retrain: bool = True) -> dict:

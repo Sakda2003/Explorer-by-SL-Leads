@@ -5593,14 +5593,14 @@ function BoardDensityMenu({ density, onChange }: { density: BoardDensity; onChan
 
 // Monday's board checkbox -- a real <input> underneath (keyboard + screen-reader behaviour
 // for free) with the visual drawn by the sibling <i>.
-function BoardCheckbox({ checked, indeterminate, onChange, label }: {
- checked: boolean; indeterminate?: boolean; onChange: () => void; label: string;
+function BoardCheckbox({ checked, indeterminate, onChange, label, disabled = false }: {
+ checked: boolean; indeterminate?: boolean; onChange: () => void; label: string; disabled?: boolean;
 }) {
  const ref = useRef<HTMLInputElement>(null);
  useEffect(() => { if (ref.current) ref.current.indeterminate = !!indeterminate && !checked; }, [indeterminate, checked]);
  return (
-  <label className="board-check">
-   <input ref={ref} type="checkbox" checked={checked} aria-label={label} onChange={onChange} />
+  <label className={`board-check${disabled ? ' is-disabled' : ''}`}>
+   <input ref={ref} type="checkbox" checked={checked} aria-label={label} disabled={disabled} onChange={onChange} />
    <i aria-hidden="true">{indeterminate && !checked ? <span className="board-check-dash" /> : <Check size={11} strokeWidth={3.5} />}</i>
   </label>
  );
@@ -6601,11 +6601,21 @@ const EMPTY_LEAD_SUMMARY = {
  cost_per_converted: null,
 };
 
+type DuplicateLeadRow = {
+ id: number;
+ created_at: string;
+ customer_name: string;
+ is_keeper?: boolean;
+ [key: string]: any;
+};
+
 type DuplicateLeadGroup = {
  key: string;
  name: string;
  count: number;
- rows: any[];
+ keeper_id?: number;
+ delete_candidate_ids?: number[];
+ rows: DuplicateLeadRow[];
 };
 
 type DuplicateLeadResult = {
@@ -6613,6 +6623,7 @@ type DuplicateLeadResult = {
  group_count: number;
  duplicate_leads: number;
  extra_occurrences: number;
+ delete_candidate_count?: number;
  scanned_leads: number;
 };
 
@@ -6696,6 +6707,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
  const [duplicatesBusy, setDuplicatesBusy] = useState(false);
  const [duplicatesDeleting, setDuplicatesDeleting] = useState(false);
+ const [duplicateDeleteMode, setDuplicateDeleteMode] = useState<'newer' | 'selected' | ''>('');
  const [duplicateData, setDuplicateData] = useState<DuplicateLeadResult>(EMPTY_DUPLICATE_LEADS);
  const [duplicateSelectedIds, setDuplicateSelectedIds] = useState<string[]>([]);
  const [duplicateSearch, setDuplicateSearch] = useState('');
@@ -6946,7 +6958,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    // A reload after deletion may remove selected rows or whole groups. Never leave an action
    // count referring to records the duplicate scan no longer contains.
    const available = new Set(
-    (result.groups || []).flatMap((group: DuplicateLeadGroup) => group.rows.map((row: any) => String(row.id))),
+    (result.groups || []).flatMap((group: DuplicateLeadGroup) => group.rows.filter((row) => !row.is_keeper).map((row) => String(row.id))),
    );
    setDuplicateSelectedIds((current) => current.filter((id) => available.has(id)));
   } catch (err: any) {
@@ -6983,22 +6995,33 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   ));
  }, [duplicateData.groups, duplicateSearch]);
 
+ const duplicateDeleteCandidateIds = useMemo(
+  () => duplicateData.groups.flatMap((group) => group.rows.filter((row) => !row.is_keeper).map((row) => String(row.id))),
+  [duplicateData.groups],
+ );
  const visibleDuplicateIds = useMemo(
-  () => filteredDuplicateGroups.flatMap((group) => group.rows.map((row: any) => String(row.id))),
+  () => filteredDuplicateGroups.flatMap((group) => group.rows.filter((row) => !row.is_keeper).map((row) => String(row.id))),
   [filteredDuplicateGroups],
  );
  const selectedVisibleDuplicateIds = visibleDuplicateIds.filter((id) => duplicateSelectedIds.includes(id));
  const allVisibleDuplicatesSelected = visibleDuplicateIds.length > 0
   && selectedVisibleDuplicateIds.length === visibleDuplicateIds.length;
 
- const toggleDuplicateLead = (id: string) => {
+ const selectNewerDuplicates = () => {
+  setDuplicateSelectedIds(Array.from(new Set(duplicateDeleteCandidateIds)));
+ };
+
+ const toggleDuplicateLead = (row: DuplicateLeadRow) => {
+  if (row.is_keeper) return;
+  const id = String(row.id);
   setDuplicateSelectedIds((current) => (
    current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
   ));
  };
 
  const toggleDuplicateGroup = (group: DuplicateLeadGroup) => {
-  const ids = group.rows.map((row: any) => String(row.id));
+  const ids = group.rows.filter((row) => !row.is_keeper).map((row) => String(row.id));
+  if (!ids.length) return;
   const everySelected = ids.every((id) => duplicateSelectedIds.includes(id));
   setDuplicateSelectedIds((current) => (
    everySelected
@@ -7011,8 +7034,35 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   setDuplicateSelectedIds((current) => (
    allVisibleDuplicatesSelected
     ? current.filter((id) => !visibleDuplicateIds.includes(id))
-    : Array.from(new Set([...current, ...visibleDuplicateIds]))
+   : Array.from(new Set([...current, ...visibleDuplicateIds]))
   ));
+ };
+
+ const deleteNewerDuplicates = async () => {
+  if (isStaff || !duplicateDeleteCandidateIds.length || duplicatesDeleting) return;
+  const count = duplicateData.delete_candidate_count ?? duplicateDeleteCandidateIds.length;
+  if (!confirm(
+   `Delete ${fmt(count)} newer duplicate ${count === 1 ? 'lead' : 'leads'} and keep the oldest record for each name? `
+   + 'This removes them from the dataset and updates the forecast totals.',
+  )) return;
+
+  setDuplicatesDeleting(true);
+  setDuplicateDeleteMode('newer');
+  setDuplicateError('');
+  try {
+   const result = await api('/leads/delete-newer-duplicates', { method: 'POST' });
+   setDuplicateSelectedIds([]);
+   setRowsOffset(0);
+   setRefreshKey((key) => key + 1);
+   if (result.deleted) watchRetrain();
+   await loadDuplicateLeads();
+   if (!result.deleted) setDuplicateError('No newer duplicate leads were found to delete.');
+  } catch (err: any) {
+   setDuplicateError(err.message || 'Failed to delete newer duplicate leads.');
+  } finally {
+   setDuplicatesDeleting(false);
+   setDuplicateDeleteMode('');
+  }
  };
 
  const deleteSelectedDuplicates = async () => {
@@ -7024,6 +7074,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   )) return;
 
   setDuplicatesDeleting(true);
+  setDuplicateDeleteMode('selected');
   setDuplicateError('');
   try {
    const result = await api('/leads/bulk-delete', {
@@ -7043,6 +7094,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    setDuplicateError(err.message || 'Failed to delete the selected duplicate leads.');
   } finally {
    setDuplicatesDeleting(false);
+   setDuplicateDeleteMode('');
   }
  };
 
@@ -7625,7 +7677,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <div>
          <span><Copy size={13} />Dataset cleanup</span>
          <h3 id="lead-duplicates-title">Duplicate leads</h3>
-         <p>Names match across the entire dataset after ignoring capitalization and extra spaces.</p>
+         <p>Names match across the entire dataset after ignoring capitalization and extra spaces. The oldest record is kept.</p>
         </div>
         <button type="button" className="lead-add-close" aria-label="Close duplicate leads" disabled={duplicatesDeleting} onClick={closeDuplicates}>
          <X size={16} />
@@ -7635,7 +7687,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
        <div className="lead-duplicates-summary">
         <div><strong>{fmt(duplicateData.group_count)}</strong><span>repeated {duplicateData.group_count === 1 ? 'name' : 'names'}</span></div>
         <div><strong>{fmt(duplicateData.duplicate_leads)}</strong><span>leads to review</span></div>
-        <div><strong>{fmt(duplicateData.extra_occurrences)}</strong><span>extra occurrences</span></div>
+        <div><strong>{fmt(duplicateData.delete_candidate_count ?? duplicateData.extra_occurrences)}</strong><span>newer duplicates</span></div>
         <div className="lead-duplicates-scan"><span>Scanned all {fmt(duplicateData.scanned_leads)} leads</span></div>
        </div>
 
@@ -7646,9 +7698,14 @@ function LeadManagementPage({ role }: { role: UserRole }) {
          {duplicateSearch && <button type="button" aria-label="Clear duplicate search" onClick={() => setDuplicateSearch('')}><X size={13} /></button>}
         </label>
         {!!visibleDuplicateIds.length && (
-         <button type="button" className="lead-duplicates-select-all" onClick={toggleAllVisibleDuplicates}>
-          {allVisibleDuplicatesSelected ? 'Deselect visible' : `Select all ${fmt(visibleDuplicateIds.length)} visible`}
-         </button>
+         <div className="lead-duplicates-tool-actions">
+          <button type="button" className="lead-duplicates-select-all" onClick={selectNewerDuplicates}>
+           Select all newer duplicates
+          </button>
+          <button type="button" className="lead-duplicates-select-all" onClick={toggleAllVisibleDuplicates}>
+           {allVisibleDuplicatesSelected ? 'Deselect visible' : `Select ${fmt(visibleDuplicateIds.length)} visible newer`}
+          </button>
+         </div>
         )}
        </div>
 
@@ -7665,32 +7722,33 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         ) : (
          <div className="lead-duplicate-groups">
           {filteredDuplicateGroups.map((group) => {
-           const groupIds = group.rows.map((row: any) => String(row.id));
+           const groupIds = group.rows.filter((row) => !row.is_keeper).map((row) => String(row.id));
            const selectedInGroup = groupIds.filter((id) => duplicateSelectedIds.includes(id));
-           const wholeGroupSelected = selectedInGroup.length === groupIds.length;
+           const wholeGroupSelected = groupIds.length > 0 && selectedInGroup.length === groupIds.length;
            return (
             <section className="lead-duplicate-group" key={group.key}>
              <header>
               <BoardCheckbox
                checked={wholeGroupSelected}
                indeterminate={selectedInGroup.length > 0}
-               label={`${wholeGroupSelected ? 'Deselect' : 'Select'} every lead named ${group.name}`}
+               label={`${wholeGroupSelected ? 'Deselect' : 'Select'} newer duplicate leads named ${group.name}`}
+               disabled={!groupIds.length}
                onChange={() => toggleDuplicateGroup(group)}
               />
-              <div><strong>{group.name}</strong><span>{plural(group.count, 'record')} with this name</span></div>
+              <div><strong>{group.name}</strong><span>{plural(group.count, 'record')} with this name; oldest one is kept</span></div>
               <b>{group.count}</b>
              </header>
              <div className="lead-duplicate-table-scroll">
               <table className="lead-duplicate-table">
                <thead><tr><th aria-label="Selection" /><th>Created</th><th>Customer</th><th>Status</th><th>Quality</th><th>Campaign</th><th>Ad set ID</th></tr></thead>
                <tbody>
-                {group.rows.map((row: any) => {
+                {group.rows.map((row) => {
                  const id = String(row.id);
                  const selected = duplicateSelectedIds.includes(id);
                  return (
-                  <tr key={id} className={selected ? 'is-selected' : ''}>
-                   <td><BoardCheckbox checked={selected} label={`Select ${row.customer_name}, created ${dateFmt(row.created_at)}`} onChange={() => toggleDuplicateLead(id)} /></td>
-                   <td>{dateFmt(row.created_at)}</td>
+                  <tr key={id} className={`${selected ? 'is-selected' : ''}${row.is_keeper ? ' is-keeper' : ''}`}>
+                   <td><BoardCheckbox checked={selected} disabled={!!row.is_keeper} label={`${row.is_keeper ? 'Keep' : 'Select'} ${row.customer_name}, created ${dateFmt(row.created_at)}`} onChange={() => toggleDuplicateLead(row)} /></td>
+                   <td>{dateFmt(row.created_at)}{row.is_keeper && <small className="lead-duplicate-keeper">Keep oldest</small>}</td>
                    <td><strong>{row.customer_name || '-'}</strong><small>Lead #{id}</small></td>
                    <td>{row.status || '-'}</td>
                    <td>{row.lead_quality || LEAD_QUALITY_OPTIONS[0]}</td>
@@ -7717,8 +7775,13 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <div>
          <button type="button" className="lead-add-secondary" disabled={duplicatesDeleting} onClick={closeDuplicates}>Close</button>
          {!isStaff && (
-          <button type="button" className={`lead-duplicates-delete${duplicatesDeleting ? ' is-busy' : ''}`} disabled={!duplicateSelectedIds.length || duplicatesDeleting} onClick={() => void deleteSelectedDuplicates()}>
-           {duplicatesDeleting ? <RefreshCw size={14} /> : <Trash2 size={14} />}{duplicatesDeleting ? 'Deleting' : 'Delete selected'}
+          <button type="button" className={`lead-duplicates-delete${duplicateDeleteMode === 'newer' ? ' is-busy' : ''}`} disabled={!duplicateDeleteCandidateIds.length || duplicatesDeleting} onClick={() => void deleteNewerDuplicates()}>
+           {duplicateDeleteMode === 'newer' ? <RefreshCw size={14} /> : <Trash2 size={14} />}{duplicateDeleteMode === 'newer' ? 'Deleting' : 'Delete newer duplicates'}
+          </button>
+         )}
+         {!isStaff && (
+          <button type="button" className={`lead-duplicates-delete is-secondary${duplicateDeleteMode === 'selected' ? ' is-busy' : ''}`} disabled={!duplicateSelectedIds.length || duplicatesDeleting} onClick={() => void deleteSelectedDuplicates()}>
+           {duplicateDeleteMode === 'selected' ? <RefreshCw size={14} /> : <Trash2 size={14} />}{duplicateDeleteMode === 'selected' ? 'Deleting' : 'Delete selected'}
           </button>
          )}
         </div>

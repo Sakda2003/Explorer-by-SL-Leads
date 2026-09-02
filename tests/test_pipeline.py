@@ -1559,10 +1559,45 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(result["duplicate_leads"], 2)
         self.assertEqual(result["extra_occurrences"], 1)
         self.assertEqual(result["groups"][0]["key"], "sam lee")
+        self.assertEqual(result["groups"][0]["keeper_id"], first["created"])
+        self.assertEqual(result["groups"][0]["delete_candidate_ids"], [second["created"]])
         self.assertEqual(
             [row["id"] for row in result["groups"][0]["rows"]],
             [first["created"], second["created"]],
         )
+        self.assertEqual(
+            [row["is_keeper"] for row in result["groups"][0]["rows"]],
+            [True, False],
+        )
+
+    def test_delete_newer_duplicate_leads_keeps_the_oldest_name_record(self):
+        oldest = core.create_lead_event(self.lead_payload(
+            customer_name="Heng", created_at="2026-08-01T10:00:00", utm_ad_id="oldest-ad",
+        ), retrain=False)
+        newest = core.create_lead_event(self.lead_payload(
+            customer_name="heng", created_at="2026-08-02T10:00:00", utm_ad_id="newest-ad",
+        ), retrain=False)
+        tied_oldest = core.create_lead_event(self.lead_payload(
+            customer_name="Tie Name", created_at="2026-08-03T10:00:00", utm_ad_id="tie-1",
+        ), retrain=False)
+        tied_newer_id = core.create_lead_event(self.lead_payload(
+            customer_name="tie name", created_at="2026-08-03T10:00:00", utm_ad_id="tie-2",
+        ), retrain=False)
+
+        result = core.delete_newer_duplicate_leads(retrain=False)
+
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(set(result["deleted_ids"]), {newest["created"], tied_newer_id["created"]})
+        self.assertEqual(result["kept"], 2)
+        with core.connect() as db:
+            remaining = [dict(row) for row in db.execute(
+                "SELECT id, customer_name FROM lead_events ORDER BY id",
+            ).fetchall()]
+        self.assertEqual(remaining, [
+            {"id": oldest["created"], "customer_name": "Heng"},
+            {"id": tied_oldest["created"], "customer_name": "Tie Name"},
+        ])
 
     def test_bulk_delete_leads_deduplicates_ids_and_reports_missing_rows(self):
         first = core.create_lead_event(self.lead_payload(), retrain=False)
@@ -1599,6 +1634,30 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertEqual(delete_response.json()["deleted"], 1)
         retrain.assert_called_once_with(rebuild_aggregates_first=True)
+
+    def test_duplicate_delete_newer_api_keeps_the_oldest_row_and_schedules_retrain(self):
+        from fastapi.testclient import TestClient
+        from backend import app as app_module
+
+        oldest = core.create_lead_event(self.lead_payload(
+            customer_name="API Keep", created_at="2026-08-01T10:00:00", utm_ad_id="oldest-ad",
+        ), retrain=False)
+        newer = core.create_lead_event(self.lead_payload(
+            customer_name="api keep", created_at="2026-08-02T10:00:00", utm_ad_id="newer-ad",
+        ), retrain=False)
+
+        client = TestClient(app_module.app)
+        with mock.patch("backend.app._request_retrain") as retrain:
+            delete_response = client.post("/api/leads/delete-newer-duplicates")
+
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.json()["deleted_ids"], [newer["created"]])
+        retrain.assert_called_once_with(rebuild_aggregates_first=True)
+        with core.connect() as db:
+            remaining = [dict(row) for row in db.execute(
+                "SELECT id, customer_name FROM lead_events ORDER BY id",
+            ).fetchall()]
+        self.assertEqual(remaining, [{"id": oldest["created"], "customer_name": "API Keep"}])
 
 
 class CurrencyParsingTests(IsolatedDbTestCase):

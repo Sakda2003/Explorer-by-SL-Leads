@@ -210,6 +210,7 @@ lifts the background and `--dim` fell to 4.03:1 in dark. That row's percentage n
 | `GET /api/lead-management/duplicates` | every repeated normalized customer name across the full lead dataset, with the matching lead rows grouped for review |
 | `POST /api/leads/bulk-quality` | one stage applied to a whole selection, `{lead_ids, lead_quality}` |
 | `POST /api/leads/bulk-delete` | delete a de-duplicated lead-id selection in one transaction and schedule one aggregate rebuild/retrain |
+| `POST /api/leads/delete-newer-duplicates` | recompute duplicate-name groups server-side, delete every non-oldest row, and schedule one aggregate rebuild/retrain |
 
 Rows come from the existing `/api/dataset/rows?table=leads`, and select-all-matching from
 `/api/dataset/row-ids` — neither needed a change. `_parse_filters_param` in `app.py` was
@@ -226,20 +227,26 @@ the entire dataset even when the board is scoped to one campaign, stage, or date
   order are not fuzzed, since a cleanup tool should surface plausible duplicates without
   inventing them.
 - The drawer groups every match by name and shows Created, Customer, Status, Quality, Campaign,
-  and Ad set ID side by side. Reviewers can select one row, a whole name group, or every group
-  visible after the drawer's local search.
-- Nothing is pre-selected and nothing is deleted automatically. The destructive action always
-  requires an explicit selection plus the app's confirmation dialog.
+  and Ad set ID side by side. The oldest record in each normalized-name group is marked
+  `is_keeper` by the backend, displayed as "Keep oldest", and protected from drawer selection.
+  "Oldest" means earliest `created_at`, with lower `id` winning a same-timestamp tie.
+- Reviewers can select newer duplicate rows individually, a whole name group's newer rows, every
+  visible newer row after local search, or all newer duplicates in the scan.
+- Nothing is deleted automatically. The destructive actions always require the app's confirmation
+  dialog. "Delete newer duplicates" calls `POST /api/leads/delete-newer-duplicates`, which
+  recomputes the groups before deleting so the keep-oldest rule is enforced at write time, not
+  only in the stale drawer state.
 - Deletion uses `POST /api/leads/bulk-delete`, not one DELETE request per row. The core function
   de-duplicates repeated ids, reports already-missing rows, deletes the selection in one SQLite
   transaction, and lets the route schedule one shared rebuild/retrain. This avoids N requests and
   N retrain schedules for one cleanup decision.
 - Staff can open and inspect the drawer but cannot delete; manager/admin write permissions cover
-  the bulk-delete route. The frontend also omits the action for staff.
+  both duplicate delete routes. The frontend also omits the action for staff.
 
 Verified against the real local dataset (3,801 leads): 394 repeated names / 919 leads rendered,
-one-row selection enabled the destructive action, closing returned to the unchanged board, and
-the browser console stayed clean. `pnpm build` passes; the full backend suite is 254 passing tests.
+525 newer duplicates selected without selecting any "Keep oldest" row, no delete POST was sent
+in the browser test, and the browser console stayed clean. `pnpm build` passes; the full
+backend suite is 256 passing tests.
 
 ## Gotchas found while building this
 
