@@ -6601,6 +6601,25 @@ const EMPTY_LEAD_SUMMARY = {
  cost_per_converted: null,
 };
 
+type DuplicateLeadGroup = {
+ key: string;
+ name: string;
+ count: number;
+ rows: any[];
+};
+
+type DuplicateLeadResult = {
+ groups: DuplicateLeadGroup[];
+ group_count: number;
+ duplicate_leads: number;
+ extra_occurrences: number;
+ scanned_leads: number;
+};
+
+const EMPTY_DUPLICATE_LEADS: DuplicateLeadResult = {
+ groups: [], group_count: 0, duplicate_leads: 0, extra_occurrences: 0, scanned_leads: 0,
+};
+
 // The whole book as one segmented bar, so the shape of the pipeline is legible before a single
 // number is read. Zero-count stages contribute no segment rather than an invisible sliver -- with
 // seven stages and most leads at Pending Review, drawing all seven would produce hairlines
@@ -6674,6 +6693,13 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const [addLeadSaving, setAddLeadSaving] = useState(false);
  const [addLeadError, setAddLeadError] = useState('');
  const [manualLeadDraft, setManualLeadDraft] = useState<ManualLeadDraft>(() => newManualLeadDraft());
+ const [duplicatesOpen, setDuplicatesOpen] = useState(false);
+ const [duplicatesBusy, setDuplicatesBusy] = useState(false);
+ const [duplicatesDeleting, setDuplicatesDeleting] = useState(false);
+ const [duplicateData, setDuplicateData] = useState<DuplicateLeadResult>(EMPTY_DUPLICATE_LEADS);
+ const [duplicateSelectedIds, setDuplicateSelectedIds] = useState<string[]>([]);
+ const [duplicateSearch, setDuplicateSearch] = useState('');
+ const [duplicateError, setDuplicateError] = useState('');
  const [boardError, setBoardError] = useState('');
  // Bumped after any write, to pull the funnel back in sync with the board. Rows are updated
  // optimistically, but the stage counts are a server-side aggregate over rows this page may
@@ -6696,6 +6722,15 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   document.addEventListener('keydown', closeOnEscape);
   return () => document.removeEventListener('keydown', closeOnEscape);
  }, [addLeadOpen, addLeadSaving]);
+
+ useEffect(() => {
+  if (!duplicatesOpen) return;
+  const closeOnEscape = (event: KeyboardEvent) => {
+   if (event.key === 'Escape' && !duplicatesDeleting) setDuplicatesOpen(false);
+  };
+  document.addEventListener('keydown', closeOnEscape);
+  return () => document.removeEventListener('keydown', closeOnEscape);
+ }, [duplicatesOpen, duplicatesDeleting]);
 
  // Debounced so typing doesn't fire a request per keystroke -- same as the Dataset board.
  useEffect(() => {
@@ -6899,6 +6934,115 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    setAddLeadError(err.message || 'Failed to add this lead.');
   } finally {
    setAddLeadSaving(false);
+  }
+ };
+
+ const loadDuplicateLeads = async () => {
+  setDuplicatesBusy(true);
+  setDuplicateError('');
+  try {
+   const result = await api('/lead-management/duplicates');
+   setDuplicateData(result);
+   // A reload after deletion may remove selected rows or whole groups. Never leave an action
+   // count referring to records the duplicate scan no longer contains.
+   const available = new Set(
+    (result.groups || []).flatMap((group: DuplicateLeadGroup) => group.rows.map((row: any) => String(row.id))),
+   );
+   setDuplicateSelectedIds((current) => current.filter((id) => available.has(id)));
+  } catch (err: any) {
+   setDuplicateData(EMPTY_DUPLICATE_LEADS);
+   setDuplicateError(err.message || 'Failed to scan for duplicate leads.');
+  } finally {
+   setDuplicatesBusy(false);
+  }
+ };
+
+ const openDuplicates = () => {
+  setDuplicateSearch('');
+  setDuplicateSelectedIds([]);
+  setDuplicateError('');
+  setDuplicatesOpen(true);
+  void loadDuplicateLeads();
+ };
+
+ const closeDuplicates = () => {
+  if (duplicatesDeleting) return;
+  setDuplicatesOpen(false);
+  setDuplicateError('');
+ };
+
+ const filteredDuplicateGroups = useMemo(() => {
+  const term = duplicateSearch.trim().toLocaleLowerCase();
+  if (!term) return duplicateData.groups;
+  return duplicateData.groups.filter((group) => (
+   group.name.toLocaleLowerCase().includes(term)
+   || group.rows.some((row: any) => [
+    row.customer_name, row.utm_campaign, row.utm_campaign_id, row.utm_ad_set_id,
+    row.utm_ad_id, row.fb_ad_title, row.status, row.lead_quality,
+   ].some((value) => String(value || '').toLocaleLowerCase().includes(term)))
+  ));
+ }, [duplicateData.groups, duplicateSearch]);
+
+ const visibleDuplicateIds = useMemo(
+  () => filteredDuplicateGroups.flatMap((group) => group.rows.map((row: any) => String(row.id))),
+  [filteredDuplicateGroups],
+ );
+ const selectedVisibleDuplicateIds = visibleDuplicateIds.filter((id) => duplicateSelectedIds.includes(id));
+ const allVisibleDuplicatesSelected = visibleDuplicateIds.length > 0
+  && selectedVisibleDuplicateIds.length === visibleDuplicateIds.length;
+
+ const toggleDuplicateLead = (id: string) => {
+  setDuplicateSelectedIds((current) => (
+   current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+  ));
+ };
+
+ const toggleDuplicateGroup = (group: DuplicateLeadGroup) => {
+  const ids = group.rows.map((row: any) => String(row.id));
+  const everySelected = ids.every((id) => duplicateSelectedIds.includes(id));
+  setDuplicateSelectedIds((current) => (
+   everySelected
+    ? current.filter((id) => !ids.includes(id))
+    : Array.from(new Set([...current, ...ids]))
+  ));
+ };
+
+ const toggleAllVisibleDuplicates = () => {
+  setDuplicateSelectedIds((current) => (
+   allVisibleDuplicatesSelected
+    ? current.filter((id) => !visibleDuplicateIds.includes(id))
+    : Array.from(new Set([...current, ...visibleDuplicateIds]))
+  ));
+ };
+
+ const deleteSelectedDuplicates = async () => {
+  if (isStaff || !duplicateSelectedIds.length || duplicatesDeleting) return;
+  const selectedCount = duplicateSelectedIds.length;
+  if (!confirm(
+   `Delete ${selectedCount} selected ${selectedCount === 1 ? 'lead' : 'leads'}? `
+   + 'This removes them from the dataset and updates the forecast totals.',
+  )) return;
+
+  setDuplicatesDeleting(true);
+  setDuplicateError('');
+  try {
+   const result = await api('/leads/bulk-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lead_ids: duplicateSelectedIds.map(Number) }),
+   });
+   setDuplicateSelectedIds([]);
+   setRowsOffset(0);
+   setRefreshKey((key) => key + 1);
+   if (result.deleted) watchRetrain();
+   await loadDuplicateLeads();
+   if (result.missing) {
+    setDuplicateError(`${fmt(result.missing)} selected ${result.missing === 1 ? 'lead was' : 'leads were'} already gone.`);
+   }
+  } catch (err: any) {
+   setDuplicateError(err.message || 'Failed to delete the selected duplicate leads.');
+  } finally {
+   setDuplicatesDeleting(false);
   }
  };
 
@@ -7251,6 +7395,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <Plus size={14} />Add Leads
        </button>
       )}
+      <button type="button" className="lead-duplicates-btn" disabled={duplicatesBusy} onClick={openDuplicates}>
+       <Copy size={14} />{duplicatesBusy ? 'Scanning' : 'Duplicates'}
+      </button>
       <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
        <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
       </button>
@@ -7468,8 +7615,117 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         </button>
        )}
       </div>
-      <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
+     <button type="button" className="board-bulk-close" aria-label="Clear selection" onClick={() => { setSelectedRowIds([]); setSelectedAllMatching(false); }}><X size={15} /></button>
      </div>
+    )}
+    {duplicatesOpen && createPortal(
+     <div className="lead-add-backdrop lead-duplicates-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDuplicates(); }}>
+      <section className="lead-duplicates-drawer" role="dialog" aria-modal="true" aria-labelledby="lead-duplicates-title">
+       <header className="lead-duplicates-head">
+        <div>
+         <span><Copy size={13} />Dataset cleanup</span>
+         <h3 id="lead-duplicates-title">Duplicate leads</h3>
+         <p>Names match across the entire dataset after ignoring capitalization and extra spaces.</p>
+        </div>
+        <button type="button" className="lead-add-close" aria-label="Close duplicate leads" disabled={duplicatesDeleting} onClick={closeDuplicates}>
+         <X size={16} />
+        </button>
+       </header>
+
+       <div className="lead-duplicates-summary">
+        <div><strong>{fmt(duplicateData.group_count)}</strong><span>repeated {duplicateData.group_count === 1 ? 'name' : 'names'}</span></div>
+        <div><strong>{fmt(duplicateData.duplicate_leads)}</strong><span>leads to review</span></div>
+        <div><strong>{fmt(duplicateData.extra_occurrences)}</strong><span>extra occurrences</span></div>
+        <div className="lead-duplicates-scan"><span>Scanned all {fmt(duplicateData.scanned_leads)} leads</span></div>
+       </div>
+
+       <div className="lead-duplicates-tools">
+        <label className="lead-duplicates-search">
+         <Search size={14} />
+         <input value={duplicateSearch} onChange={(event) => setDuplicateSearch(event.target.value)} placeholder="Find a name, campaign, or ID" aria-label="Search duplicate leads" />
+         {duplicateSearch && <button type="button" aria-label="Clear duplicate search" onClick={() => setDuplicateSearch('')}><X size={13} /></button>}
+        </label>
+        {!!visibleDuplicateIds.length && (
+         <button type="button" className="lead-duplicates-select-all" onClick={toggleAllVisibleDuplicates}>
+          {allVisibleDuplicatesSelected ? 'Deselect visible' : `Select all ${fmt(visibleDuplicateIds.length)} visible`}
+         </button>
+        )}
+       </div>
+
+       <div className="lead-duplicates-body">
+        {duplicateError && <div className="lead-add-error">{duplicateError}</div>}
+        {duplicatesBusy && !duplicateData.groups.length ? (
+         <div className="lead-duplicates-state is-loading"><RefreshCw size={18} /><strong>Scanning every lead</strong><span>Checking normalized customer names across the dataset.</span></div>
+        ) : duplicateError && !duplicateData.groups.length ? (
+         <div className="lead-duplicates-state"><AlertTriangle size={20} /><strong>Duplicate scan unavailable</strong><span>Close this panel and try again.</span></div>
+        ) : !duplicateData.groups.length ? (
+         <div className="lead-duplicates-state is-clean"><CircleCheckBig size={20} /><strong>No duplicate names found</strong><span>Every non-blank customer name appears only once.</span></div>
+        ) : !filteredDuplicateGroups.length ? (
+         <div className="lead-duplicates-state"><Search size={18} /><strong>No matches</strong><span>Try a different name, campaign, or ID.</span></div>
+        ) : (
+         <div className="lead-duplicate-groups">
+          {filteredDuplicateGroups.map((group) => {
+           const groupIds = group.rows.map((row: any) => String(row.id));
+           const selectedInGroup = groupIds.filter((id) => duplicateSelectedIds.includes(id));
+           const wholeGroupSelected = selectedInGroup.length === groupIds.length;
+           return (
+            <section className="lead-duplicate-group" key={group.key}>
+             <header>
+              <BoardCheckbox
+               checked={wholeGroupSelected}
+               indeterminate={selectedInGroup.length > 0}
+               label={`${wholeGroupSelected ? 'Deselect' : 'Select'} every lead named ${group.name}`}
+               onChange={() => toggleDuplicateGroup(group)}
+              />
+              <div><strong>{group.name}</strong><span>{plural(group.count, 'record')} with this name</span></div>
+              <b>{group.count}</b>
+             </header>
+             <div className="lead-duplicate-table-scroll">
+              <table className="lead-duplicate-table">
+               <thead><tr><th aria-label="Selection" /><th>Created</th><th>Customer</th><th>Status</th><th>Quality</th><th>Campaign</th><th>Ad set ID</th></tr></thead>
+               <tbody>
+                {group.rows.map((row: any) => {
+                 const id = String(row.id);
+                 const selected = duplicateSelectedIds.includes(id);
+                 return (
+                  <tr key={id} className={selected ? 'is-selected' : ''}>
+                   <td><BoardCheckbox checked={selected} label={`Select ${row.customer_name}, created ${dateFmt(row.created_at)}`} onChange={() => toggleDuplicateLead(id)} /></td>
+                   <td>{dateFmt(row.created_at)}</td>
+                   <td><strong>{row.customer_name || '-'}</strong><small>Lead #{id}</small></td>
+                   <td>{row.status || '-'}</td>
+                   <td>{row.lead_quality || LEAD_QUALITY_OPTIONS[0]}</td>
+                   <td><span>{row.utm_campaign || '-'}</span><small>{row.utm_campaign_id || ''}</small></td>
+                   <td>{row.utm_ad_set_id || '-'}</td>
+                  </tr>
+                 );
+                })}
+               </tbody>
+              </table>
+             </div>
+            </section>
+           );
+          })}
+         </div>
+        )}
+       </div>
+
+       <footer className="lead-duplicates-actions">
+        <div className="lead-duplicates-selected">
+         <strong>{fmt(duplicateSelectedIds.length)}</strong>
+         <span>{duplicateSelectedIds.length === 1 ? 'lead selected' : 'leads selected'}</span>
+        </div>
+        <div>
+         <button type="button" className="lead-add-secondary" disabled={duplicatesDeleting} onClick={closeDuplicates}>Close</button>
+         {!isStaff && (
+          <button type="button" className={`lead-duplicates-delete${duplicatesDeleting ? ' is-busy' : ''}`} disabled={!duplicateSelectedIds.length || duplicatesDeleting} onClick={() => void deleteSelectedDuplicates()}>
+           {duplicatesDeleting ? <RefreshCw size={14} /> : <Trash2 size={14} />}{duplicatesDeleting ? 'Deleting' : 'Delete selected'}
+          </button>
+         )}
+        </div>
+       </footer>
+      </section>
+     </div>,
+     document.body
     )}
     {addLeadOpen && createPortal(
      <div className="lead-add-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddLead(); }}>

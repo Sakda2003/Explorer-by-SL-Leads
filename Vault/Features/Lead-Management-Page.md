@@ -207,11 +207,39 @@ lifts the background and `--dim` fell to 4.03:1 in dark. That row's percentage n
 | --- | --- |
 | `GET /api/lead-management/options` | campaigns, ad sets, date bounds for the filter bar, all derived from `lead_events` so every option returns rows |
 | `GET /api/lead-management/summary` | stage counts, rates, and cost figures for the current filter set |
+| `GET /api/lead-management/duplicates` | every repeated normalized customer name across the full lead dataset, with the matching lead rows grouped for review |
 | `POST /api/leads/bulk-quality` | one stage applied to a whole selection, `{lead_ids, lead_quality}` |
+| `POST /api/leads/bulk-delete` | delete a de-duplicated lead-id selection in one transaction and schedule one aggregate rebuild/retrain |
 
 Rows come from the existing `/api/dataset/rows?table=leads`, and select-all-matching from
 `/api/dataset/row-ids` — neither needed a change. `_parse_filters_param` in `app.py` was
 factored out of the two Dataset endpoints while adding the third caller.
+
+## Duplicate lead review (2026-09-02)
+
+The board toolbar has a **Duplicates** button immediately after **Add Leads**. It opens a wide
+review drawer instead of changing the current board filters, because duplicate cleanup must scan
+the entire dataset even when the board is scoped to one campaign, stage, or date range.
+
+- A duplicate is a non-blank `customer_name` that matches after Unicode case-folding and
+  collapsing whitespace. This is intentionally conservative: punctuation, accents, and word
+  order are not fuzzed, since a cleanup tool should surface plausible duplicates without
+  inventing them.
+- The drawer groups every match by name and shows Created, Customer, Status, Quality, Campaign,
+  and Ad set ID side by side. Reviewers can select one row, a whole name group, or every group
+  visible after the drawer's local search.
+- Nothing is pre-selected and nothing is deleted automatically. The destructive action always
+  requires an explicit selection plus the app's confirmation dialog.
+- Deletion uses `POST /api/leads/bulk-delete`, not one DELETE request per row. The core function
+  de-duplicates repeated ids, reports already-missing rows, deletes the selection in one SQLite
+  transaction, and lets the route schedule one shared rebuild/retrain. This avoids N requests and
+  N retrain schedules for one cleanup decision.
+- Staff can open and inspect the drawer but cannot delete; manager/admin write permissions cover
+  the bulk-delete route. The frontend also omits the action for staff.
+
+Verified against the real local dataset (3,801 leads): 394 repeated names / 919 leads rendered,
+one-row selection enabled the destructive action, closing returned to the unchanged board, and
+the browser console stayed clean. `pnpm build` passes; the full backend suite is 254 passing tests.
 
 ## Gotchas found while building this
 

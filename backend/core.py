@@ -6859,6 +6859,96 @@ def get_dataset_row_ids(
 
 
 # --- Lead Management page ---------------------------------------------------------------
+
+def _duplicate_lead_name_key(value: object) -> str:
+    """Comparison key for the duplicate-name review surface.
+
+    Names are deliberately matched conservatively: Unicode case differences and repeated
+    whitespace do not make two people distinct, but punctuation, accents, and word order do.
+    Fuzzier matching would turn this cleanup tool into a source of false positives; the user
+    can still decide whether any exact normalized-name match is a legitimate repeat lead.
+    """
+    return " ".join(str(value or "").split()).casefold()
+
+
+def get_duplicate_leads() -> dict:
+    """Every non-blank customer name that occurs more than once across the complete lead set.
+
+    This intentionally has no campaign/date/stage parameters. The toolbar's current filters
+    describe the board view, while duplicate cleanup must catch records anywhere in the data.
+    """
+    with connect() as db:
+        rows = db.execute(
+            """SELECT id, platform, status, lead_quality, created_at, customer_name,
+                      utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id, fb_ad_title
+               FROM lead_events
+               ORDER BY datetime(created_at), id"""
+        ).fetchall()
+
+    grouped: dict[str, list[dict]] = {}
+    for source in rows:
+        row = dict(source)
+        key = _duplicate_lead_name_key(row.get("customer_name"))
+        if key:
+            grouped.setdefault(key, []).append(row)
+
+    groups = []
+    for key, matches in grouped.items():
+        if len(matches) < 2:
+            continue
+        # Preserve the earliest stored spelling as the human-facing group label; every exact
+        # source spelling remains visible on its own row so capitalization differences are not
+        # hidden from the reviewer.
+        groups.append({
+            "key": key,
+            "name": str(matches[0].get("customer_name") or "").strip(),
+            "count": len(matches),
+            "rows": matches,
+        })
+    groups.sort(key=lambda group: (-int(group["count"]), str(group["name"]).casefold()))
+
+    duplicate_leads = sum(int(group["count"]) for group in groups)
+    return {
+        "groups": groups,
+        "group_count": len(groups),
+        "duplicate_leads": duplicate_leads,
+        "extra_occurrences": duplicate_leads - len(groups),
+        "scanned_leads": len(rows),
+    }
+
+
+def bulk_delete_lead_events(lead_ids: list[int], retrain: bool = True) -> dict:
+    """Delete a de-duplicated id selection in one transaction and retrain at most once."""
+    requested_ids = list(dict.fromkeys(int(lead_id) for lead_id in lead_ids))
+    if not requested_ids:
+        raise ValueError("Select at least one lead to delete.")
+    if len(requested_ids) > SELECT_ALL_MATCHING_CAP:
+        raise ValueError(f"No more than {SELECT_ALL_MATCHING_CAP:,} leads can be deleted at once.")
+
+    found: set[int] = set()
+    with connect() as db:
+        # Stay below SQLite's bound-parameter limit even for a large selection.
+        for start in range(0, len(requested_ids), 500):
+            chunk = requested_ids[start:start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            found.update(int(row[0]) for row in db.execute(
+                f"SELECT id FROM lead_events WHERE id IN ({placeholders})", chunk
+            ).fetchall())
+        if found:
+            db.executemany("DELETE FROM lead_events WHERE id=?", [(lead_id,) for lead_id in found])
+
+    result = {
+        "requested": len(requested_ids),
+        "deleted": len(found),
+        "missing": len(requested_ids) - len(found),
+        "deleted_ids": [lead_id for lead_id in requested_ids if lead_id in found],
+    }
+    if not retrain or not found:
+        return {**result, "training_run": None}
+    rebuild_aggregates()
+    return {**result, "training_run": train_models()}
+
+
 # The pipeline stages that count as "made it past qualification". Kept as a named group
 # rather than inlined so the funnel card, the qualification rate, and the cost-per-qualified
 # figure can never drift apart on which stages they consider a pass. "Awaiting Document and

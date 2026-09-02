@@ -1543,6 +1543,63 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
             remaining = [dict(row) for row in db.execute("SELECT id, customer_name FROM lead_events ORDER BY id").fetchall()]
         self.assertEqual(remaining, [{"id": manual["created"], "customer_name": "Manual Customer"}])
 
+    def test_duplicate_review_normalizes_case_and_whitespace_across_all_leads(self):
+        first = core.create_lead_event(self.lead_payload(customer_name="  Sam   Lee  "), retrain=False)
+        second = core.create_lead_event(self.lead_payload(
+            customer_name="sam lee", created_at="2026-06-09T10:00:00", utm_ad_id="second-ad",
+        ), retrain=False)
+        core.create_lead_event(self.lead_payload(
+            customer_name="Someone Else", created_at="2026-06-10T10:00:00", utm_ad_id="unique-ad",
+        ), retrain=False)
+
+        result = core.get_duplicate_leads()
+
+        self.assertEqual(result["scanned_leads"], 3)
+        self.assertEqual(result["group_count"], 1)
+        self.assertEqual(result["duplicate_leads"], 2)
+        self.assertEqual(result["extra_occurrences"], 1)
+        self.assertEqual(result["groups"][0]["key"], "sam lee")
+        self.assertEqual(
+            [row["id"] for row in result["groups"][0]["rows"]],
+            [first["created"], second["created"]],
+        )
+
+    def test_bulk_delete_leads_deduplicates_ids_and_reports_missing_rows(self):
+        first = core.create_lead_event(self.lead_payload(), retrain=False)
+        second = core.create_lead_event(self.lead_payload(
+            customer_name="Second", created_at="2026-06-09T10:00:00", utm_ad_id="second-ad",
+        ), retrain=False)
+
+        result = core.bulk_delete_lead_events(
+            [first["created"], first["created"], second["created"], 999_999], retrain=False,
+        )
+
+        self.assertEqual(result["requested"], 3)
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["missing"], 1)
+        with core.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM lead_events").fetchone()[0], 0)
+
+    def test_duplicate_api_scans_and_deletes_the_selected_rows(self):
+        from fastapi.testclient import TestClient
+        from backend import app as app_module
+
+        first = core.create_lead_event(self.lead_payload(customer_name="API Match"), retrain=False)
+        core.create_lead_event(self.lead_payload(
+            customer_name="api match", created_at="2026-06-09T10:00:00", utm_ad_id="second-ad",
+        ), retrain=False)
+
+        client = TestClient(app_module.app)
+        duplicate_response = client.get("/api/lead-management/duplicates")
+        self.assertEqual(duplicate_response.status_code, 200)
+        self.assertEqual(duplicate_response.json()["group_count"], 1)
+
+        with mock.patch("backend.app._request_retrain") as retrain:
+            delete_response = client.post("/api/leads/bulk-delete", json={"lead_ids": [first["created"]]})
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.json()["deleted"], 1)
+        retrain.assert_called_once_with(rebuild_aggregates_first=True)
+
 
 class CurrencyParsingTests(IsolatedDbTestCase):
     """Accounting-formatted currency from exports that passed through Excel."""
