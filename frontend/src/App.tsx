@@ -6726,7 +6726,7 @@ function FollowupPage() {
   setSearchDraft(''); setSearch(''); setStage(''); setDue(''); setAssigned(''); setPlatform(''); setService('');
  };
  const hasFilters = !!(search || stage || due || assigned || platform || service);
- const activeFilterCount = [stage, due, platform, service].filter(Boolean).length;
+ const activeFilterCount = [stage, due, assigned, platform, service].filter(Boolean).length;
  const pageIds = rowsData.rows.map((row: any) => String(row.id));
  const allPageSelected = pageIds.length > 0 && pageIds.every((id: string) => selected.includes(id));
  const togglePage = () => setSelected((current) => allPageSelected
@@ -6761,34 +6761,45 @@ function FollowupPage() {
    </header>
 
    <section className="followup-board">
-    <div className="followup-toolbar">
-     <label className={`followup-search${searchDraft ? ' has-value' : ''}`}><Search size={17} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search" aria-label="Search name, phone, platform, service, or notes" /></label>
-     <MenuSelect ariaLabel="Filter by assigned person" value={assigned} className="followup-person-select" options={[{ value: '', label: 'Person', icon: UserCheck }, ...rowsData.facets.assigned_people.map((value: string) => ({ value, label: value, icon: UserCheck }))]} onChange={setAssigned} />
-     <details className="followup-filter-menu">
-      <summary><Filter size={17} /><span>Filter</span>{activeFilterCount > 0 && <b>{activeFilterCount}</b>}<ChevronDown size={13} /></summary>
+    <div className="followup-toolbar followup-compact-filters">
+     <BoardSearch value={searchDraft} onChange={setSearchDraft} />
+     <MenuSelect
+      ariaLabel="Filter by lead status"
+      value={stage}
+      className={`followup-pill-select${stage ? ' is-scoped' : ''}`}
+      options={[{ value: '', label: 'Any status', icon: CircleCheckBig }, ...FOLLOWUP_STAGES.map((value) => ({ value, label: value, icon: CircleCheckBig }))]}
+      onChange={setStage}
+     />
+     <MenuSelect
+      ariaLabel="Filter by contact platform"
+      value={platform}
+      className={`followup-pill-select${platform ? ' is-scoped' : ''}`}
+      options={[{ value: '', label: 'All platforms', icon: Megaphone }, ...rowsData.facets.platforms.map((value: string) => ({ value, label: value, icon: Megaphone }))]}
+      onChange={setPlatform}
+     />
+     <details className={`followup-filter-menu followup-service-filter${service || assigned ? ' is-scoped' : ''}`}>
+      <summary><Layers3 size={15} /><span>{service || assigned || 'Any service'}</span>{activeFilterCount > 0 && <b>{activeFilterCount}</b>}<ChevronDown size={13} /></summary>
       <div className="followup-filter-panel">
-       <label><span>Status</span><select aria-label="Filter by pipeline status" value={stage} onChange={(event) => setStage(event.target.value)}><option value="">All statuses</option>{FOLLOWUP_STAGES.map((value) => <option key={value}>{value}</option>)}</select></label>
-       <label><span>Contact platform</span><select aria-label="Filter by platform" value={platform} onChange={(event) => setPlatform(event.target.value)}><option value="">All platforms</option>{rowsData.facets.platforms.map((value: string) => <option key={value}>{value}</option>)}</select></label>
        <label><span>Service requested</span><input value={service} onChange={(event) => setService(event.target.value)} placeholder="Any service" aria-label="Filter by service requested" /></label>
+       <label><span>Assigned person</span><select aria-label="Filter by assigned person" value={assigned} onChange={(event) => setAssigned(event.target.value)}><option value="">Anyone</option>{rowsData.facets.assigned_people.map((value: string) => <option key={value}>{value}</option>)}</select></label>
        <div className="followup-filter-actions"><button type="button" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button></div>
       </div>
      </details>
-     <MenuSelect ariaLabel="Sort follow-ups" value={`${sort}:${direction}`} className="followup-sort-select" options={[
-      { value: 'next_follow_up_at:asc', label: 'Follow-up date', icon: ArrowUpDown },
+     <MenuSelect
+      ariaLabel="Filter by follow-up date"
+      value={due}
+      className={`followup-pill-select followup-date-select${due ? ' is-scoped' : ''}`}
+      options={FOLLOWUP_DUE_VIEWS.map((view) => ({ value: view.value, label: view.value ? view.label : 'All time', icon: CalendarDays }))}
+      onChange={setDue}
+     />
+     <span className="followup-toolbar-rule" aria-hidden="true" />
+     <MenuSelect ariaLabel="Sort follow-ups" value={`${sort}:${direction}`} className="followup-sort-select followup-pill-select" options={[
+      { value: 'next_follow_up_at:asc', label: 'Follow-up date', short: 'Sort', icon: ArrowUpDown },
       { value: 'next_follow_up_at:desc', label: 'Follow-up date, latest', short: 'Sort', icon: ArrowUpDown },
-      { value: 'updated_at:desc', label: 'Recently updated', short: 'Sort', icon: ArrowUpDown },
-      { value: 'customer_name:asc', label: 'Lead name', short: 'Sort', icon: ArrowUpDown },
+     { value: 'updated_at:desc', label: 'Recently updated', short: 'Sort', icon: ArrowUpDown },
+     { value: 'customer_name:asc', label: 'Lead name', short: 'Sort', icon: ArrowUpDown },
      ]} onChange={(value) => { const [field, dir] = value.split(':'); setSort(field); setDirection(dir as 'asc' | 'desc'); }} />
-     <button type="button" className={`followup-tool-button${compact ? ' is-active' : ''}`} onClick={() => setCompact((value) => !value)}><Columns3 size={17} /><span>Hide</span></button>
-     <button type="button" className={`followup-tool-button${grouped ? ' is-active' : ''}`} onClick={() => setGrouped((value) => !value)}><Layers3 size={17} /><span>Group by</span></button>
-     <button type="button" className="followup-tool-button icon-only" aria-label="Refresh follow-ups" title="Refresh" onClick={() => setRefreshKey((key) => key + 1)}><RefreshCw size={16} /></button>
-    </div>
-
-    <div className="followup-views" aria-label="Follow-up date presets">
-     <span>Follow-up views</span>
-     {FOLLOWUP_DUE_VIEWS.map((view) => (
-      <button key={view.value || 'all'} type="button" className={due === view.value ? 'active' : ''} onClick={() => setDue(view.value)}>{view.label}</button>
-     ))}
+     <button type="button" className={`followup-tool-button icon-only${compact ? ' is-active' : ''}`} aria-label="Toggle compact table columns" title="Hide columns" onClick={() => setCompact((value) => !value)}><Rows3 size={16} /></button>
     </div>
 
     {message && <div className="followup-alert success" role="status"><CircleCheckBig size={15} />{message}</div>}
