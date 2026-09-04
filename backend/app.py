@@ -24,6 +24,7 @@ from .core import (
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
                    bulk_update_lead_quality, get_lead_filter_options, get_lead_pipeline_summary,
+                   get_followup_lead, get_followup_leads, save_followup,
                    list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
 
 # Refuse to boot open on a deployment that declares itself public (Render, or an explicit
@@ -174,6 +175,22 @@ class LeadCreate(BaseModel):
     fb_ad_title: str
     amount_spent_usd: float | None = None
     platform: str | None = "manual"
+
+
+class FollowupUpdate(BaseModel):
+    outcome: str
+    note: str | None = None
+    next_follow_up_at: str | None = None
+    last_contacted_at: str | None = None
+    contact_method: str | None = None
+    assigned_to: str | None = None
+    lost_reason: str | None = None
+    required_documents: str | None = None
+    expected_payment_date: str | None = None
+    converted_at: str | None = None
+    selected_service: str | None = None
+    payment_status: str | None = None
+    conversion_remarks: str | None = None
 
 
 # Mirrors AD_PERFORMANCE_UPDATE_FIELDS in core.py. `leads` and
@@ -1040,6 +1057,38 @@ def lead_management_export(
 # `utm_ad_set_id`, or `amount_spent_usd`, all of which really do feed the aggregates; this
 # endpoint can only ever write the one column that doesn't. Scheduling ~31s of
 # rebuild+train per rating batch would burn the CPU to recompute an identical model.
+@app.get("/api/follow-up/leads")
+def followup_leads(
+    limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
+    search: str = "", statuses: str = "", due: str = "", assigned_to: str = "",
+    platform: str = "", service: str = "", sort: str = "next_follow_up_at",
+    direction: str = "asc",
+):
+    return get_followup_leads(
+        limit=limit, offset=offset, search=search,
+        statuses=[value for value in statuses.split(",") if value], due=due,
+        assigned_to=assigned_to, platform=platform, service=service,
+        sort=sort, direction=direction,
+    )
+
+
+@app.get("/api/follow-up/leads/{lead_id}")
+def followup_lead(lead_id: int):
+    try:
+        return get_followup_lead(lead_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/follow-up/leads/{lead_id}")
+def update_followup_lead(lead_id: int, payload: FollowupUpdate, request: Request):
+    try:
+        return save_followup(lead_id, payload.dict(exclude_unset=True), _current_user(request))
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(404 if message == "Lead not found." else 422, message) from exc
+
+
 @app.post("/api/leads/bulk-quality")
 def bulk_lead_quality(payload: LeadQualityBulkUpdate):
     try:

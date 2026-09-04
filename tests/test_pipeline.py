@@ -1615,6 +1615,53 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         with core.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM lead_events").fetchone()[0], 0)
 
+    def test_followup_queue_shares_lead_quality_and_records_activity(self):
+        created = core.create_lead_event(
+            self.lead_payload(lead_quality="Qualified", customer_name="Follow Me"),
+            retrain=False,
+        )
+
+        queue = core.get_followup_leads(search="Follow Me")
+        self.assertEqual(queue["total"], 1)
+        self.assertEqual(queue["rows"][0]["id"], created["created"])
+
+        saved = core.save_followup(created["created"], {
+            "outcome": "still_deciding",
+            "note": "Customer will decide after speaking with family.",
+            "next_follow_up_at": "2026-09-08T10:00:00",
+            "contact_method": "Telegram",
+            "assigned_to": "Dara",
+        }, "sales@example.com")
+
+        self.assertEqual(saved["lead"]["lead_quality"], "Qualified")
+        self.assertEqual(saved["lead"]["assigned_to"], "Dara")
+        self.assertEqual(saved["activities"][0]["actor"], "sales@example.com")
+        self.assertEqual(saved["activities"][0]["action"], "still_deciding")
+        self.assertEqual(saved["activities"][0]["from_status"], "Qualified")
+
+    def test_followup_terminal_outcomes_validate_and_leave_the_active_queue(self):
+        created = core.create_lead_event(
+            self.lead_payload(lead_quality="Awaiting Payment", customer_name="Decision Made"),
+            retrain=False,
+        )
+        with self.assertRaisesRegex(ValueError, "lost reason"):
+            core.save_followup(created["created"], {"outcome": "lost"}, "sales@example.com")
+
+        saved = core.save_followup(created["created"], {
+            "outcome": "converted",
+            "note": "Deposit received.",
+            "selected_service": "Visa consultation",
+            "payment_status": "Partial",
+        }, "sales@example.com")
+
+        self.assertEqual(saved["lead"]["lead_quality"], "Converted")
+        self.assertEqual(core.get_followup_leads()["total"], 0)
+        with core.connect() as db:
+            raw = json.loads(db.execute(
+                "SELECT raw_json FROM lead_events WHERE id=?", (created["created"],),
+            ).fetchone()[0])
+        self.assertEqual(raw["Lead Quality"], "Converted")
+
     def test_duplicate_api_scans_and_deletes_the_selected_rows(self):
         from fastapi.testclient import TestClient
         from backend import app as app_module

@@ -37,6 +37,7 @@ codebase.
 - [[CPL-Trend-Chart]] — the daily spend-per-day chart on the Forecast page
 - [[Forecast-Page-OLS-Panel]] — the OLS cards under the forecast chart; scoped to the selected campaign/ad set, and why thin scopes refuse to fit
 - [[Lead-Management-Page]] — the CRM workspace for rating leads; four-cell bento, why the funnel describes the scope and not the stage selection, and why rating skips the retrain
+- [[Follow-up-Page]] — the active sales queue for Qualified / Awaiting leads, follow-up history, scheduling, and terminal Converted/Lost outcomes
 - [[Lead-Drilldown-Inline-Edit]] — the date-click lead table now edits inline per cell, Monday.com-style, instead of a separate edit-panel form
 - [[Spend-Leads-Scatter]] — spend-vs-leads scatter with a benchmark-CPL ray; why $0-spend ad sets are held out
 - [[Sign-In-Sessions]] — opaque server-issued sessions; what the browser stores is no longer the

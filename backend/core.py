@@ -344,6 +344,36 @@ def init_db() -> None:
           lead_id INTEGER NOT NULL REFERENCES lead_events(id) ON DELETE CASCADE,
           PRIMARY KEY(upload_id, lead_id)
         );
+        CREATE TABLE IF NOT EXISTS lead_followups (
+          lead_id INTEGER PRIMARY KEY REFERENCES lead_events(id) ON DELETE CASCADE,
+          next_follow_up_at TEXT,
+          last_contacted_at TEXT,
+          contact_method TEXT,
+          assigned_to TEXT,
+          follow_up_result TEXT,
+          latest_note TEXT,
+          lost_reason TEXT,
+          required_documents TEXT,
+          expected_payment_date TEXT,
+          converted_at TEXT,
+          selected_service TEXT,
+          payment_status TEXT,
+          conversion_remarks TEXT,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS lead_followup_activity (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          lead_id INTEGER NOT NULL REFERENCES lead_events(id) ON DELETE CASCADE,
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL,
+          from_status TEXT,
+          to_status TEXT,
+          note TEXT,
+          details_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_lead_followup_due ON lead_followups(next_follow_up_at);
+        CREATE INDEX IF NOT EXISTS ix_lead_followup_activity_lead ON lead_followup_activity(lead_id, created_at DESC);
         CREATE TABLE IF NOT EXISTS daily_ad_set_aggregates (
           aggregate_date TEXT NOT NULL, utm_ad_set_id TEXT NOT NULL,
           utm_campaign_id TEXT, lead_count INTEGER NOT NULL, ad_id_count INTEGER NOT NULL,
@@ -6422,6 +6452,8 @@ LEAD_QUALITY_OPTIONS = [
     "Intake",
     "Not Qualified",
     "Qualified",
+    "Awaiting Document",
+    "Awaiting Payment",
     "Converted",
     "Lost",
     "Awaiting Document and Payment",
@@ -9985,6 +10017,197 @@ def bulk_update_lead_quality(lead_ids: Iterable[int], quality: str, retrain: boo
     # selection made before someone else deleted a row) sees the shortfall instead of a
     # success message that silently covered fewer leads than it named.
     return {"requested": len(ids), "updated": updated, "lead_quality": cleaned_quality}
+
+
+# Follow-up is a CRM view over the same lead_events rows, not a second lead store.  The
+# combined stage is retained here for records created before the workflow split document and
+# payment into separate checkpoints.
+FOLLOWUP_ACTIVE_STAGES = (
+    "Qualified",
+    "Awaiting Document",
+    "Awaiting Payment",
+    "Awaiting Document and Payment",
+)
+FOLLOWUP_OUTCOMES = {
+    "still_deciding",
+    "converted",
+    "lost",
+    "awaiting_document",
+    "awaiting_payment",
+}
+
+
+def _followup_text(value: object, limit: int = 4000) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def get_followup_leads(
+    *, limit: int = 50, offset: int = 0, search: str = "", statuses: Iterable[str] = (),
+    due: str = "", assigned_to: str = "", platform: str = "", service: str = "",
+    sort: str = "next_follow_up_at", direction: str = "asc",
+) -> dict:
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    requested_stages = [str(value).strip() for value in statuses if str(value).strip()]
+    active_stages = [value for value in requested_stages if value in FOLLOWUP_ACTIVE_STAGES] or list(FOLLOWUP_ACTIVE_STAGES)
+    placeholders = ",".join("?" for _ in active_stages)
+    where = [f"l.lead_quality IN ({placeholders})"]
+    params: list[object] = list(active_stages)
+
+    if search.strip():
+        needle = f"%{search.strip()}%"
+        where.append("(l.customer_name LIKE ? OR l.platform LIKE ? OR l.utm_campaign LIKE ? OR l.fb_ad_title LIKE ? OR f.latest_note LIKE ?)")
+        params.extend([needle] * 5)
+    if assigned_to.strip():
+        where.append("COALESCE(f.assigned_to, '') = ?")
+        params.append(assigned_to.strip())
+    if platform.strip():
+        where.append("COALESCE(l.platform, '') = ?")
+        params.append(platform.strip())
+    if service.strip():
+        where.append("COALESCE(f.selected_service, l.fb_ad_title, '') LIKE ?")
+        params.append(f"%{service.strip()}%")
+
+    today = datetime.now().date().isoformat()
+    if due == "overdue":
+        where.append("f.next_follow_up_at IS NOT NULL AND date(f.next_follow_up_at) < date(?)")
+        params.append(today)
+    elif due == "today":
+        where.append("date(f.next_follow_up_at) = date(?)")
+        params.append(today)
+    elif due == "week":
+        where.append("date(f.next_follow_up_at) BETWEEN date(?) AND date(?, '+7 days')")
+        params.extend([today, today])
+    elif due == "upcoming":
+        where.append("date(f.next_follow_up_at) > date(?, '+7 days')")
+        params.append(today)
+    elif due == "none":
+        where.append("f.next_follow_up_at IS NULL")
+
+    sort_fields = {
+        "customer_name": "l.customer_name", "lead_quality": "l.lead_quality",
+        "platform": "l.platform", "service": "COALESCE(f.selected_service, l.fb_ad_title)",
+        "last_contacted_at": "f.last_contacted_at", "next_follow_up_at": "f.next_follow_up_at",
+        "assigned_to": "f.assigned_to", "updated_at": "COALESCE(f.updated_at, l.updated_at, l.created_at)",
+    }
+    sort_sql = sort_fields.get(sort, sort_fields["next_follow_up_at"])
+    direction_sql = "DESC" if str(direction).lower() == "desc" else "ASC"
+    where_sql = " AND ".join(where)
+    select_sql = """SELECT l.id, l.customer_name, l.platform, l.status, l.lead_quality,
+                      l.created_at, l.updated_at AS lead_updated_at, l.utm_campaign,
+                      l.fb_ad_title, f.next_follow_up_at, f.last_contacted_at,
+                      f.contact_method, f.assigned_to, f.follow_up_result, f.latest_note,
+                      f.required_documents, f.expected_payment_date,
+                      COALESCE(f.selected_service, l.fb_ad_title) AS service_requested,
+                      COALESCE(f.updated_at, l.updated_at, l.created_at) AS updated_at
+                   FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id"""
+    with connect() as db:
+        total = int(db.execute(
+            f"SELECT COUNT(*) FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id WHERE {where_sql}",
+            params,
+        ).fetchone()[0])
+        rows = [dict(row) for row in db.execute(
+            f"{select_sql} WHERE {where_sql} ORDER BY {sort_sql} {direction_sql}, l.id ASC LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()]
+        facets = {
+            "assigned_people": [row[0] for row in db.execute("SELECT DISTINCT assigned_to FROM lead_followups WHERE TRIM(COALESCE(assigned_to,'')) <> '' ORDER BY assigned_to")],
+            "platforms": [row[0] for row in db.execute(
+                f"SELECT DISTINCT COALESCE(platform,'') FROM lead_events WHERE lead_quality IN ({','.join('?' for _ in FOLLOWUP_ACTIVE_STAGES)}) AND TRIM(COALESCE(platform,'')) <> '' ORDER BY platform",
+                FOLLOWUP_ACTIVE_STAGES,
+            )],
+        }
+    return {"rows": rows, "total": total, "limit": limit, "offset": offset, "facets": facets}
+
+
+def get_followup_lead(lead_id: int) -> dict:
+    with connect() as db:
+        lead = db.execute(
+            """SELECT l.*, f.next_follow_up_at, f.last_contacted_at, f.contact_method,
+                      f.assigned_to, f.follow_up_result, f.latest_note, f.lost_reason,
+                      f.required_documents, f.expected_payment_date, f.converted_at,
+                      f.selected_service, f.payment_status, f.conversion_remarks
+               FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id WHERE l.id=?""",
+            (lead_id,),
+        ).fetchone()
+        if not lead:
+            raise ValueError("Lead not found.")
+        activities = [dict(row) for row in db.execute(
+            "SELECT id, actor, action, from_status, to_status, note, details_json, created_at FROM lead_followup_activity WHERE lead_id=? ORDER BY created_at DESC, id DESC",
+            (lead_id,),
+        ).fetchall()]
+    for activity in activities:
+        try:
+            activity["details"] = json.loads(activity.pop("details_json") or "{}")
+        except json.JSONDecodeError:
+            activity["details"] = {}
+    return {"lead": dict(lead), "activities": activities}
+
+
+def save_followup(lead_id: int, values: dict, actor: str) -> dict:
+    outcome = _followup_text(values.get("outcome"), 40).lower()
+    if outcome not in FOLLOWUP_OUTCOMES:
+        raise ValueError("Choose a valid follow-up outcome.")
+    note = _followup_text(values.get("note"))
+    next_follow_up_at = _followup_text(values.get("next_follow_up_at"), 40) or None
+    if outcome == "still_deciding" and not note and not next_follow_up_at:
+        raise ValueError("Add a note or schedule the next follow-up.")
+    lost_reason = _followup_text(values.get("lost_reason"), 200)
+    if outcome == "lost" and not lost_reason:
+        raise ValueError("A lost reason is required.")
+
+    target_status = {
+        "converted": "Converted", "lost": "Lost",
+        "awaiting_document": "Awaiting Document", "awaiting_payment": "Awaiting Payment",
+    }.get(outcome)
+    now = utc_now()
+    last_contacted_at = _followup_text(values.get("last_contacted_at"), 40) or now
+    fields = {
+        "next_follow_up_at": next_follow_up_at,
+        "last_contacted_at": last_contacted_at,
+        "contact_method": _followup_text(values.get("contact_method"), 100),
+        "assigned_to": _followup_text(values.get("assigned_to"), 200),
+        "follow_up_result": outcome,
+        "latest_note": note,
+        "lost_reason": lost_reason,
+        "required_documents": _followup_text(values.get("required_documents")),
+        "expected_payment_date": _followup_text(values.get("expected_payment_date"), 40) or None,
+        "converted_at": (_followup_text(values.get("converted_at"), 40) or now) if outcome == "converted" else None,
+        "selected_service": _followup_text(values.get("selected_service"), 500),
+        "payment_status": _followup_text(values.get("payment_status"), 100),
+        "conversion_remarks": _followup_text(values.get("conversion_remarks")),
+        "updated_at": now,
+    }
+    with connect() as db:
+        lead = db.execute("SELECT lead_quality, raw_json FROM lead_events WHERE id=?", (lead_id,)).fetchone()
+        if not lead:
+            raise ValueError("Lead not found.")
+        previous_status = str(lead["lead_quality"] or "")
+        if target_status:
+            raw = {}
+            try:
+                raw = json.loads(lead["raw_json"] or "{}")
+            except json.JSONDecodeError:
+                pass
+            raw["Lead Quality"] = target_status
+            db.execute(
+                "UPDATE lead_events SET lead_quality=?, updated_at=?, raw_json=? WHERE id=?",
+                (target_status, now, json.dumps(raw, ensure_ascii=False), lead_id),
+            )
+        columns = list(fields)
+        db.execute(
+            f"""INSERT INTO lead_followups(lead_id,{','.join(columns)}) VALUES(?,{','.join('?' for _ in columns)})
+                ON CONFLICT(lead_id) DO UPDATE SET {','.join(f'{column}=excluded.{column}' for column in columns)}""",
+            [lead_id, *fields.values()],
+        )
+        details = {key: value for key, value in fields.items() if value not in (None, "") and key not in {"latest_note", "updated_at"}}
+        db.execute(
+            """INSERT INTO lead_followup_activity(lead_id, actor, action, from_status, to_status, note, details_json, created_at)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (lead_id, actor or "Unknown user", outcome, previous_status, target_status or previous_status,
+             note, json.dumps(details, ensure_ascii=False), now),
+        )
+    return get_followup_lead(lead_id)
 
 
 

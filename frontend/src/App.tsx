@@ -50,7 +50,7 @@ import {
 } from 'lucide-react';
 
 const API = '/api';
-type Page = 'Forecast' | 'Optimization' | 'Lead Management' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
+type Page = 'Forecast' | 'Optimization' | 'Lead Management' | 'Follow-up' | 'Upload Data' | 'Data History' | 'Dataset' | 'Settings' | 'Admin';
 type UserRole = 'admin' | 'manager' | 'staff' | '';
 const AUTH_STORAGE_KEY = 'leadlens-basic-auth';
 
@@ -139,6 +139,7 @@ const navGroups: { label: string; items: [Page, any][] }[] = [
    ['Forecast', BarChart3],
    ['Optimization', TrendingUp],
    ['Lead Management', UserCheck],
+   ['Follow-up', CalendarDays],
   ],
  },
  {
@@ -271,7 +272,7 @@ const dateTimeInputValue = (value: any) => {
 // Intake is a deliberate next stage, not the import default. Order is the pipeline's natural
 // progression, which is also the dropdown's option order.
 const LEAD_QUALITY_OPTIONS = [
- 'Pending Review', 'Intake', 'Not Qualified', 'Qualified', 'Converted', 'Lost', 'Awaiting Document and Payment',
+ 'Pending Review', 'Intake', 'Not Qualified', 'Qualified', 'Awaiting Document', 'Awaiting Payment', 'Converted', 'Lost', 'Awaiting Document and Payment',
 ];
 type ManualLeadDraft = {
  status: string;
@@ -6553,6 +6554,285 @@ function DatasetPage({ role }: { role: UserRole }) {
 }
 
 
+// --- Follow-up -----------------------------------------------------------------------------
+// A focused CRM queue over lead_events. Follow-up metadata lives beside the imported lead,
+// while pipeline changes write the same lead_quality field that Lead Management reads.
+const FOLLOWUP_STAGES = ['Qualified', 'Awaiting Document', 'Awaiting Payment', 'Awaiting Document and Payment'];
+const FOLLOWUP_DUE_VIEWS = [
+ { value: '', label: 'All active' }, { value: 'overdue', label: 'Overdue' },
+ { value: 'today', label: 'Due today' }, { value: 'week', label: 'Due this week' },
+ { value: 'upcoming', label: 'Upcoming' }, { value: 'none', label: 'No follow-up date' },
+];
+const FOLLOWUP_OUTCOMES = [
+ { value: 'still_deciding', label: 'Still deciding' },
+ { value: 'awaiting_document', label: 'Awaiting Document' },
+ { value: 'awaiting_payment', label: 'Awaiting Payment' },
+ { value: 'converted', label: 'Converted' },
+ { value: 'lost', label: 'Lost' },
+];
+const LOST_REASONS = ['Price', 'No longer interested', 'Chose a competitor', 'No response', 'Postponed', 'Other'];
+
+type FollowupDraft = {
+ outcome: string; note: string; next_follow_up_at: string; last_contacted_at: string;
+ contact_method: string; assigned_to: string; lost_reason: string; required_documents: string;
+ expected_payment_date: string; converted_at: string; selected_service: string;
+ payment_status: string; conversion_remarks: string;
+};
+
+const followupDateInput = (value: any) => {
+ if (!value) return '';
+ const date = new Date(value);
+ if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+ const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+ return local.toISOString().slice(0, 16);
+};
+
+const newFollowupDraft = (lead: any = {}, outcome = 'still_deciding'): FollowupDraft => ({
+ outcome,
+ note: '',
+ next_follow_up_at: followupDateInput(lead.next_follow_up_at),
+ last_contacted_at: followupDateInput(lead.last_contacted_at) || followupDateInput(new Date().toISOString()),
+ contact_method: lead.contact_method || '',
+ assigned_to: lead.assigned_to || '',
+ lost_reason: lead.lost_reason || '',
+ required_documents: lead.required_documents || '',
+ expected_payment_date: String(lead.expected_payment_date || '').slice(0, 10),
+ converted_at: followupDateInput(lead.converted_at),
+ selected_service: lead.selected_service || lead.fb_ad_title || '',
+ payment_status: lead.payment_status || '',
+ conversion_remarks: lead.conversion_remarks || '',
+});
+
+function FollowupPage() {
+ const [rowsData, setRowsData] = useState<any>({ rows: [], total: 0, limit: 50, facets: { assigned_people: [], platforms: [] } });
+ const [offset, setOffset] = useState(0);
+ const [searchDraft, setSearchDraft] = useState('');
+ const [search, setSearch] = useState('');
+ const [stage, setStage] = useState('');
+ const [due, setDue] = useState('');
+ const [assigned, setAssigned] = useState('');
+ const [platform, setPlatform] = useState('');
+ const [service, setService] = useState('');
+ const [sort, setSort] = useState('next_follow_up_at');
+ const [direction, setDirection] = useState<'asc' | 'desc'>('asc');
+ const [grouped, setGrouped] = useState(true);
+ const [compact, setCompact] = useState(false);
+ const [selected, setSelected] = useState<string[]>([]);
+ const [loading, setLoading] = useState(true);
+ const [error, setError] = useState('');
+ const [message, setMessage] = useState('');
+ const [refreshKey, setRefreshKey] = useState(0);
+ const [detail, setDetail] = useState<any>(null);
+ const [detailLoading, setDetailLoading] = useState(false);
+ const [saving, setSaving] = useState(false);
+ const [draft, setDraft] = useState<FollowupDraft>(() => newFollowupDraft());
+
+ useEffect(() => {
+  const timer = window.setTimeout(() => setSearch(searchDraft.trim()), 350);
+  return () => window.clearTimeout(timer);
+ }, [searchDraft]);
+
+ const query = useMemo(() => {
+  const params = new URLSearchParams({ limit: '50', offset: String(offset), sort, direction });
+  if (search) params.set('search', search);
+  if (stage) params.set('statuses', stage);
+  if (due) params.set('due', due);
+  if (assigned) params.set('assigned_to', assigned);
+  if (platform) params.set('platform', platform);
+  if (service.trim()) params.set('service', service.trim());
+  return params.toString();
+ }, [offset, search, stage, due, assigned, platform, service, sort, direction]);
+
+ useEffect(() => {
+  let cancelled = false;
+  setLoading(true);
+  setError('');
+  api(`/follow-up/leads?${query}`)
+   .then((result) => { if (!cancelled) setRowsData(result); })
+   .catch((err: any) => { if (!cancelled) setError(err.message || 'Failed to load follow-ups.'); })
+   .finally(() => { if (!cancelled) setLoading(false); });
+  return () => { cancelled = true; };
+ }, [query, refreshKey]);
+
+ useEffect(() => { setOffset(0); }, [search, stage, due, assigned, platform, service, sort, direction]);
+
+ const openLead = async (row: any, outcome = '') => {
+  setDetailLoading(true);
+  setError('');
+  try {
+   const result = await api(`/follow-up/leads/${row.id}`);
+   setDetail(result);
+   setDraft(newFollowupDraft(result.lead, outcome || 'still_deciding'));
+  } catch (err: any) {
+   setError(err.message || 'Failed to open this lead.');
+  } finally {
+   setDetailLoading(false);
+  }
+ };
+
+ const closeDetail = () => { if (!saving) setDetail(null); };
+ const updateDraft = (field: keyof FollowupDraft, value: string) => setDraft((current) => ({ ...current, [field]: value }));
+
+ const submitFollowup = async (event: FormEvent) => {
+  event.preventDefault();
+  if (!detail || saving) return;
+  if ((draft.outcome === 'converted' || draft.outcome === 'lost') && !confirm(
+   `Mark ${detail.lead.customer_name || 'this lead'} as ${draft.outcome === 'converted' ? 'Converted' : 'Lost'}? The lead will leave this active queue.`
+  )) return;
+  setSaving(true);
+  setError('');
+  try {
+   await api(`/follow-up/leads/${detail.lead.id}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft),
+   });
+   setMessage(`${detail.lead.customer_name || 'Lead'} updated successfully.`);
+   setDetail(null);
+   setSelected((current) => current.filter((id) => id !== String(detail.lead.id)));
+   setRefreshKey((key) => key + 1);
+   window.setTimeout(() => setMessage(''), 3200);
+  } catch (err: any) {
+   setError(err.message || 'Failed to save this follow-up.');
+  } finally {
+   setSaving(false);
+  }
+ };
+
+ const applyBulkStage = async (outcome: 'awaiting_document' | 'awaiting_payment') => {
+  if (!selected.length || saving) return;
+  setSaving(true);
+  setError('');
+  try {
+   await Promise.all(selected.map((id) => api(`/follow-up/leads/${id}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outcome, note: 'Bulk stage update' }),
+   })));
+   setMessage(`${selected.length} ${selected.length === 1 ? 'lead' : 'leads'} updated.`);
+   setSelected([]);
+   setRefreshKey((key) => key + 1);
+  } catch (err: any) {
+   setError(err.message || 'The bulk update could not be completed.');
+  } finally {
+   setSaving(false);
+  }
+ };
+
+ const clearFilters = () => {
+  setSearchDraft(''); setSearch(''); setStage(''); setDue(''); setAssigned(''); setPlatform(''); setService('');
+ };
+ const hasFilters = !!(search || stage || due || assigned || platform || service);
+ const pageIds = rowsData.rows.map((row: any) => String(row.id));
+ const allPageSelected = pageIds.length > 0 && pageIds.every((id: string) => selected.includes(id));
+ const togglePage = () => setSelected((current) => allPageSelected
+  ? current.filter((id) => !pageIds.includes(id)) : Array.from(new Set([...current, ...pageIds])));
+ const toggleRow = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+ const groupedRows = useMemo(() => {
+  if (!grouped) return [{ label: '', rows: rowsData.rows }];
+  const groups = new Map<string, any[]>();
+  FOLLOWUP_STAGES.forEach((value) => groups.set(value, []));
+  rowsData.rows.forEach((row: any) => {
+   const key = row.lead_quality || 'Other';
+   groups.set(key, [...(groups.get(key) || []), row]);
+  });
+  return Array.from(groups.entries()).filter(([, rows]) => rows.length).map(([label, rows]) => ({ label, rows }));
+ }, [grouped, rowsData.rows]);
+ const today = new Date().toISOString().slice(0, 10);
+ const isOverdue = (value: any) => value && String(value).slice(0, 10) < today;
+ const totalPages = Math.max(1, Math.ceil(rowsData.total / rowsData.limit));
+ const currentPage = Math.floor(offset / rowsData.limit) + 1;
+
+ return (
+  <div className="page-content followup-page">
+   <section className="dataset-heading followup-heading">
+    <div><span>Sales workspace</span><h2>Follow-up</h2><p>Move qualified leads toward a decision, one useful conversation at a time.</p></div>
+    <div className="followup-heading-count"><strong>{fmt(rowsData.total)}</strong><span>active leads</span></div>
+   </section>
+
+   <section className="followup-views" aria-label="Follow-up date views">
+    {FOLLOWUP_DUE_VIEWS.map((view) => (
+     <button key={view.value || 'all'} type="button" className={due === view.value ? 'active' : ''} onClick={() => setDue(view.value)}>
+      {view.label}
+     </button>
+    ))}
+   </section>
+
+   <section className="followup-board">
+    <div className="followup-toolbar">
+     <label className="followup-search"><Search size={14} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search name, platform, service, or notes" /></label>
+     <select aria-label="Filter by pipeline status" value={stage} onChange={(event) => setStage(event.target.value)}><option value="">All statuses</option>{FOLLOWUP_STAGES.map((value) => <option key={value}>{value}</option>)}</select>
+     <select aria-label="Filter by assigned person" value={assigned} onChange={(event) => setAssigned(event.target.value)}><option value="">Anyone assigned</option>{rowsData.facets.assigned_people.map((value: string) => <option key={value}>{value}</option>)}</select>
+     <select aria-label="Filter by platform" value={platform} onChange={(event) => setPlatform(event.target.value)}><option value="">All platforms</option>{rowsData.facets.platforms.map((value: string) => <option key={value}>{value}</option>)}</select>
+     <input className="followup-service-filter" value={service} onChange={(event) => setService(event.target.value)} placeholder="Service requested" aria-label="Filter by service requested" />
+     {hasFilters && <button type="button" className="followup-clear" onClick={clearFilters}><X size={13} />Clear</button>}
+     <span className="followup-tool-rule" />
+     <select aria-label="Sort follow-ups" value={`${sort}:${direction}`} onChange={(event) => { const [field, dir] = event.target.value.split(':'); setSort(field); setDirection(dir as 'asc' | 'desc'); }}>
+      <option value="next_follow_up_at:asc">Follow-up date</option><option value="next_follow_up_at:desc">Follow-up date, latest</option>
+      <option value="updated_at:desc">Recently updated</option><option value="customer_name:asc">Lead name</option>
+     </select>
+     <button type="button" className={grouped ? 'is-active' : ''} onClick={() => setGrouped((value) => !value)}><Layers3 size={14} />Group</button>
+     <button type="button" className={compact ? 'is-active' : ''} onClick={() => setCompact((value) => !value)}><Columns3 size={14} />Columns</button>
+    </div>
+
+    {message && <div className="followup-alert success" role="status"><CircleCheckBig size={15} />{message}</div>}
+    {error && <div className="followup-alert error" role="alert"><AlertTriangle size={15} />{error}</div>}
+    <div className={`followup-table-wrap${loading ? ' is-loading' : ''}`}>
+     <table className="followup-table">
+      <thead><tr>
+       <th><BoardCheckbox checked={allPageSelected} indeterminate={selected.some((id) => pageIds.includes(id)) && !allPageSelected} label="Select every lead on this page" onChange={togglePage} /></th>
+       <th>Lead</th><th>Status</th><th>Platform</th><th>Service requested</th><th>Last contacted</th><th>Next follow-up</th>
+       {!compact && <th>Assigned</th>}<th>Result</th>{!compact && <th>Notes</th>}<th>Updated</th><th aria-label="Actions" />
+      </tr></thead>
+      <tbody>
+       {groupedRows.map((group) => <Fragment key={group.label || 'all'}>
+        {group.label && <tr className="followup-group-row"><td colSpan={compact ? 10 : 12}><span className={`quality-dot quality-${leadQualitySlug(group.label)}`} />{group.label}<b>{group.rows.length}</b></td></tr>}
+        {group.rows.map((row: any) => <tr key={row.id} className={isOverdue(row.next_follow_up_at) ? 'is-overdue' : ''}>
+         <td><BoardCheckbox checked={selected.includes(String(row.id))} label={`Select ${row.customer_name || 'lead'}`} onChange={() => toggleRow(String(row.id))} /></td>
+         <td><button type="button" className="followup-lead-link" onClick={() => void openLead(row)}><strong>{row.customer_name || `Lead #${row.id}`}</strong><small>{row.utm_campaign || `Lead #${row.id}`}</small></button></td>
+         <td><span className={`followup-stage quality-${leadQualitySlug(row.lead_quality)}`}>{row.lead_quality}</span></td>
+         <td>{row.platform || '-'}</td><td className="followup-service">{row.service_requested || '-'}</td>
+         <td>{row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'}</td>
+         <td><span className={isOverdue(row.next_follow_up_at) ? 'followup-due overdue' : 'followup-due'}>{row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'}</span></td>
+         {!compact && <td>{row.assigned_to || '-'}</td>}<td>{String(row.follow_up_result || '-').split('_').join(' ')}</td>
+         {!compact && <td className="followup-note">{row.latest_note || '-'}</td>}<td>{dateFmt(row.updated_at)}</td>
+         <td><MenuSelect ariaLabel={`Update ${row.customer_name || 'lead'} status`} value="" className="followup-row-action" options={[{ value: '', label: 'Update' }, ...FOLLOWUP_OUTCOMES.map((item) => ({ value: item.value, label: item.label }))]} onChange={(value) => { if (value) void openLead(row, value); }} /></td>
+        </tr>)}
+       </Fragment>)}
+       {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={12}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another view or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
+      </tbody>
+     </table>
+    </div>
+    <footer className="followup-pager"><span>{rowsData.total ? `${offset + 1}-${Math.min(offset + rowsData.limit, rowsData.total)} of ${fmt(rowsData.total)}` : '0 leads'}</span><div><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - rowsData.limit))}><ChevronLeft size={15} />Previous</button><b>{currentPage} / {totalPages}</b><button disabled={offset + rowsData.limit >= rowsData.total} onClick={() => setOffset(offset + rowsData.limit)}>Next<ChevronRight size={15} /></button></div></footer>
+   </section>
+
+   {!!selected.length && <div className="followup-bulk" role="region" aria-label="Selected follow-up actions"><strong>{selected.length}</strong><span>{selected.length === 1 ? 'lead selected' : 'leads selected'}</span><button onClick={() => void applyBulkStage('awaiting_document')}>Awaiting document</button><button onClick={() => void applyBulkStage('awaiting_payment')}>Awaiting payment</button><button className="close" aria-label="Clear selection" onClick={() => setSelected([])}><X size={15} /></button></div>}
+
+   {(detail || detailLoading) && createPortal(<div className="followup-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail(); }}>
+    <form className="followup-drawer" role="dialog" aria-modal="true" aria-labelledby="followup-detail-title" onSubmit={(event) => void submitFollowup(event)}>
+     {detailLoading && !detail ? <div className="followup-detail-loading"><RefreshCw size={20} />Loading lead</div> : detail && <>
+      <header><div><span>Lead #{detail.lead.id}</span><h3 id="followup-detail-title">{detail.lead.customer_name || 'Unnamed lead'}</h3><p>{detail.lead.selected_service || detail.lead.fb_ad_title || 'No service recorded'}</p></div><button type="button" aria-label="Close follow-up" onClick={closeDetail}><X size={17} /></button></header>
+      <div className="followup-drawer-body">
+       <section className="followup-lead-summary"><div><span>Pipeline</span><strong>{detail.lead.lead_quality}</strong></div><div><span>Platform</span><strong>{detail.lead.platform || '-'}</strong></div><div><span>Campaign</span><strong>{detail.lead.utm_campaign || '-'}</strong></div></section>
+       <section className="followup-form-section"><h4>Record this follow-up</h4><div className="followup-form-grid">
+        <label><span>Outcome</span><select value={draft.outcome} onChange={(event) => updateDraft('outcome', event.target.value)}>{FOLLOWUP_OUTCOMES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
+        <label><span>Last contacted</span><input type="datetime-local" value={draft.last_contacted_at} onChange={(event) => updateDraft('last_contacted_at', event.target.value)} /></label>
+        <label><span>Contact method</span><select value={draft.contact_method} onChange={(event) => updateDraft('contact_method', event.target.value)}><option value="">Select method</option><option>Phone</option><option>Telegram</option><option>Messenger</option><option>WhatsApp</option><option>Email</option><option>In person</option></select></label>
+        <label><span>Assigned person</span><input value={draft.assigned_to} onChange={(event) => updateDraft('assigned_to', event.target.value)} placeholder="Team member" /></label>
+        <label className="wide"><span>Follow-up note</span><textarea value={draft.note} onChange={(event) => updateDraft('note', event.target.value)} placeholder="What did the lead say, and what should happen next?" /></label>
+        {draft.outcome === 'still_deciding' && <label><span>Next follow-up</span><input type="datetime-local" value={draft.next_follow_up_at} onChange={(event) => updateDraft('next_follow_up_at', event.target.value)} /></label>}
+        {draft.outcome === 'lost' && <label><span>Lost reason</span><select required value={draft.lost_reason} onChange={(event) => updateDraft('lost_reason', event.target.value)}><option value="">Choose a reason</option>{LOST_REASONS.map((value) => <option key={value}>{value}</option>)}</select></label>}
+        {draft.outcome === 'awaiting_document' && <label className="wide"><span>Documents still required</span><textarea value={draft.required_documents} onChange={(event) => updateDraft('required_documents', event.target.value)} placeholder="List the outstanding documents" /></label>}
+        {draft.outcome === 'awaiting_payment' && <label><span>Expected payment date</span><input type="date" value={draft.expected_payment_date} onChange={(event) => updateDraft('expected_payment_date', event.target.value)} /></label>}
+        {draft.outcome === 'converted' && <><label><span>Conversion date</span><input type="datetime-local" value={draft.converted_at} onChange={(event) => updateDraft('converted_at', event.target.value)} /></label><label><span>Payment status</span><select value={draft.payment_status} onChange={(event) => updateDraft('payment_status', event.target.value)}><option value="">Not recorded</option><option>Pending</option><option>Partial</option><option>Paid</option></select></label><label className="wide"><span>Selected service</span><input value={draft.selected_service} onChange={(event) => updateDraft('selected_service', event.target.value)} /></label><label className="wide"><span>Conversion remarks</span><textarea value={draft.conversion_remarks} onChange={(event) => updateDraft('conversion_remarks', event.target.value)} /></label></>}
+       </div></section>
+       <section className="followup-history"><h4>Activity history</h4>{detail.activities.length ? detail.activities.map((activity: any) => <article key={activity.id}><i /><div><strong>{String(activity.action).split('_').join(' ')}</strong><span>{activity.actor} · {dateFmt(activity.created_at)}</span>{activity.note && <p>{activity.note}</p>}<small>{activity.from_status} → {activity.to_status}</small></div></article>) : <p className="followup-history-empty">No previous follow-up activity.</p>}</section>
+      </div>
+      <footer><button type="button" className="secondary" disabled={saving} onClick={closeDetail}>Cancel</button><button type="submit" className={`primary${draft.outcome === 'lost' ? ' danger' : ''}`} disabled={saving}>{saving ? <RefreshCw size={14} /> : <Check size={14} />}{saving ? 'Saving' : 'Save follow-up'}</button></footer>
+     </>}
+    </form>
+   </div>, document.body)}
+  </div>
+ );
+}
+
 // --- Lead Management ---------------------------------------------------------------------
 // The board's columns. Only Status and Lead Quality are editable here: this page exists to
 // record a judgement about a lead, and every other column is imported identity the rater is
@@ -8683,7 +8963,7 @@ export function App() {
 
  return (
  <Shell page={page} setPage={setPage} role={role} onSignOut={auth.required ? signOut : undefined}>
- {page === 'Forecast' ? <ForecastPage role={role} /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Lead Management' ? <LeadManagementPage role={role} /> : page === 'Upload Data' ? <UploadPage role={role} /> : page === 'Data History' ? <HistoryPage role={role} /> : page === 'Dataset' ? <DatasetPage role={role} /> : page === 'Admin' && role === 'admin' ? <AdminPage /> : <SettingsPage />}
+ {page === 'Forecast' ? <ForecastPage role={role} /> : page === 'Optimization' ? <OptimizationPage /> : page === 'Lead Management' ? <LeadManagementPage role={role} /> : page === 'Follow-up' ? <FollowupPage /> : page === 'Upload Data' ? <UploadPage role={role} /> : page === 'Data History' ? <HistoryPage role={role} /> : page === 'Dataset' ? <DatasetPage role={role} /> : page === 'Admin' && role === 'admin' ? <AdminPage /> : <SettingsPage />}
  </Shell>
  );
 }

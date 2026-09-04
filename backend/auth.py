@@ -242,6 +242,8 @@ def _staff_may_write_request(request) -> bool:
         request.method == "PATCH" and path.startswith("/api/leads/") and path.count("/") == 3
     ) or (
         request.method == "POST" and path == "/api/leads/bulk-quality"
+    ) or (
+        request.method == "POST" and path.startswith("/api/follow-up/leads/") and path.count("/") == 4
     )
 
 
