@@ -7072,7 +7072,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .followup-search:focus-within { border-color: color-mix(in srgb, var(--gold) 56%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 9%, transparent); }
 .followup-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 11px; }
 .followup-toolbar select, .followup-toolbar > input { height: 35px; min-width: 130px; padding: 0 29px 0 10px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: var(--canvas); color: var(--muted); font: inherit; font-size: 11px; font-weight: 650; }
-.followup-service-filter { width: 142px; }
+.followup-service-filter, .followup-campaign-select { width: 142px; }
 .followup-clear { color: var(--danger) !important; }
 .followup-tool-rule { width: 1px; height: 24px; margin: 0 2px; background: var(--line); }
 .followup-alert { display: flex; align-items: center; gap: 8px; margin: 10px 12px 0; padding: 9px 11px; border: 1px solid; border-radius: 8px; font-size: 11px; font-weight: 700; }
@@ -7297,7 +7297,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   color: #c7cdda;
 }
 .followup-compact-filters .followup-date-select .menu-select-trigger > svg:first-child,
-.followup-compact-filters .followup-service-filter > summary > svg:first-child { color: #d5ad50; }
+.followup-compact-filters .followup-campaign-select .menu-select-trigger > svg:first-child { color: #d5ad50; }
 .followup-compact-filters .menu-select-trigger span,
 .followup-compact-filters .followup-filter-menu > summary span {
   overflow: hidden;
@@ -7317,7 +7317,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   color: #ffffff;
 }
 .followup-compact-filters .followup-pill-select.is-scoped .menu-select-trigger,
-.followup-compact-filters .followup-service-filter.is-scoped > summary,
+.followup-compact-filters .followup-person-filter.is-scoped > summary,
 .followup-compact-filters .followup-tool-button.icon-only.is-active {
   border-color: #8f763e;
   background: #242117;
@@ -7325,7 +7325,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 }
 .followup-compact-filters .followup-pill-select.is-scoped .menu-select-trigger > svg:first-child,
 .followup-compact-filters .followup-pill-select.is-scoped .menu-select-caret,
-.followup-compact-filters .followup-service-filter.is-scoped > summary > svg,
+.followup-compact-filters .followup-person-filter.is-scoped > summary > svg,
 .followup-compact-filters .followup-tool-button.icon-only.is-active > svg {
   color: #f0c66a;
 }

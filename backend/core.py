@@ -10043,7 +10043,7 @@ def _followup_text(value: object, limit: int = 4000) -> str:
 
 def get_followup_leads(
     *, limit: int = 50, offset: int = 0, search: str = "", statuses: Iterable[str] = (),
-    due: str = "", assigned_to: str = "", platform: str = "", service: str = "",
+    due: str = "", assigned_to: str = "", platform: str = "", campaign: str = "",
     sort: str = "next_follow_up_at", direction: str = "asc",
 ) -> dict:
     limit = max(1, min(int(limit), 200))
@@ -10064,9 +10064,9 @@ def get_followup_leads(
     if platform.strip():
         where.append("COALESCE(l.platform, '') = ?")
         params.append(platform.strip())
-    if service.strip():
-        where.append("COALESCE(f.selected_service, l.fb_ad_title, '') LIKE ?")
-        params.append(f"%{service.strip()}%")
+    if campaign.strip():
+        where.append("COALESCE(l.utm_campaign, '') = ?")
+        params.append(campaign.strip())
 
     today = datetime.now().date().isoformat()
     if due == "overdue":
@@ -10086,7 +10086,7 @@ def get_followup_leads(
 
     sort_fields = {
         "customer_name": "l.customer_name", "lead_quality": "l.lead_quality",
-        "platform": "l.platform", "service": "COALESCE(f.selected_service, l.fb_ad_title)",
+        "platform": "l.platform", "campaign": "l.utm_campaign",
         "last_contacted_at": "f.last_contacted_at", "next_follow_up_at": "f.next_follow_up_at",
         "assigned_to": "f.assigned_to", "updated_at": "COALESCE(f.updated_at, l.updated_at, l.created_at)",
     }
@@ -10095,6 +10095,7 @@ def get_followup_leads(
     where_sql = " AND ".join(where)
     select_sql = """SELECT l.id, l.customer_name, l.platform, l.status, l.lead_quality,
                       l.created_at, l.updated_at AS lead_updated_at, l.utm_campaign,
+                      l.utm_campaign_id,
                       l.fb_ad_title, f.next_follow_up_at, f.last_contacted_at,
                       f.contact_method, f.assigned_to, f.follow_up_result, f.latest_note,
                       f.required_documents, f.expected_payment_date,
@@ -10116,6 +10117,17 @@ def get_followup_leads(
                 f"SELECT DISTINCT COALESCE(platform,'') FROM lead_events WHERE lead_quality IN ({','.join('?' for _ in FOLLOWUP_ACTIVE_STAGES)}) AND TRIM(COALESCE(platform,'')) <> '' ORDER BY platform",
                 FOLLOWUP_ACTIVE_STAGES,
             )],
+            "campaigns": [
+                {"value": row["value"], "label": display_campaign_name(row["value"])}
+                for row in db.execute(
+                    f"""SELECT DISTINCT COALESCE(utm_campaign,'') AS value
+                        FROM lead_events
+                        WHERE lead_quality IN ({','.join('?' for _ in FOLLOWUP_ACTIVE_STAGES)})
+                          AND TRIM(COALESCE(utm_campaign,'')) <> ''
+                        ORDER BY value""",
+                    FOLLOWUP_ACTIVE_STAGES,
+                )
+            ],
         }
     return {"rows": rows, "total": total, "limit": limit, "offset": offset, "facets": facets}
 

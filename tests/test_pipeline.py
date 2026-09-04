@@ -1639,6 +1639,40 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(saved["activities"][0]["action"], "still_deciding")
         self.assertEqual(saved["activities"][0]["from_status"], "Qualified")
 
+    def test_followup_queue_filters_by_campaign_name(self):
+        first = core.create_lead_event(
+            self.lead_payload(
+                lead_quality="Qualified",
+                customer_name="Campaign Match",
+                utm_campaign="Leads | VISA | JP | FOR",
+                utm_campaign_id="campaign-jp",
+                utm_ad_set_id="adset-jp",
+                utm_ad_id="ad-jp",
+            ),
+            retrain=False,
+        )
+        core.create_lead_event(
+            self.lead_payload(
+                lead_quality="Awaiting Payment",
+                customer_name="Other Campaign",
+                utm_campaign="Leads | VISA | AU | KHM",
+                utm_campaign_id="campaign-au",
+                utm_ad_set_id="adset-au",
+                utm_ad_id="ad-au",
+            ),
+            retrain=False,
+        )
+
+        queue = core.get_followup_leads(campaign="Leads | VISA | JP | FOR")
+
+        self.assertEqual(queue["total"], 1)
+        self.assertEqual(queue["rows"][0]["id"], first["created"])
+        self.assertEqual(queue["rows"][0]["utm_campaign"], "Leads | VISA | JP | FOR")
+        self.assertIn(
+            {"value": "Leads | VISA | JP | FOR", "label": "Leads | VISA | JP | FOR"},
+            queue["facets"]["campaigns"],
+        )
+
     def test_followup_terminal_outcomes_validate_and_leave_the_active_queue(self):
         created = core.create_lead_event(
             self.lead_payload(lead_quality="Awaiting Payment", customer_name="Decision Made"),

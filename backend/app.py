@@ -1061,13 +1061,13 @@ def lead_management_export(
 def followup_leads(
     limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     search: str = "", statuses: str = "", due: str = "", assigned_to: str = "",
-    platform: str = "", service: str = "", sort: str = "next_follow_up_at",
+    platform: str = "", campaign: str = "", sort: str = "next_follow_up_at",
     direction: str = "asc",
 ):
     return get_followup_leads(
         limit=limit, offset=offset, search=search,
         statuses=[value for value in statuses.split(",") if value], due=due,
-        assigned_to=assigned_to, platform=platform, service=service,
+        assigned_to=assigned_to, platform=platform, campaign=campaign,
         sort=sort, direction=direction,
     )
 
