@@ -6450,13 +6450,10 @@ def get_dataset_overview() -> dict:
 LEAD_QUALITY_OPTIONS = [
     "Pending Review",
     "Intake",
-    "Not Qualified",
     "Qualified",
-    "Awaiting Document",
-    "Awaiting Payment",
-    "Converted",
-    "Lost",
     "Awaiting Document and Payment",
+    "Lost",
+    "Converted",
 ]
 DEFAULT_IMPORTED_LEAD_QUALITY = "Pending Review"
 
@@ -7011,11 +7008,10 @@ def bulk_delete_lead_events(lead_ids: list[int], retrain: bool = True) -> dict:
 
 # The pipeline stages that count as "made it past qualification". Kept as a named group
 # rather than inlined so the funnel card, the qualification rate, and the cost-per-qualified
-# figure can never drift apart on which stages they consider a pass. "Awaiting Document and
-# Payment" is included: the lead has been qualified and is mid-handover, not still in triage.
+# figure can never drift apart on which stages they consider a pass.
 LEAD_QUALIFIED_STAGES = ("Qualified", "Converted", "Awaiting Document and Payment")
 # Stages that ended the pipeline without a sale. Named for the same reason.
-LEAD_DROPPED_STAGES = ("Not Qualified", "Lost")
+LEAD_DROPPED_STAGES = ("Lost",)
 
 
 def get_lead_pipeline_summary(
@@ -10020,20 +10016,18 @@ def bulk_update_lead_quality(lead_ids: Iterable[int], quality: str, retrain: boo
 
 
 # Follow-up is a CRM view over the same lead_events rows, not a second lead store.  The
-# combined stage is retained here for records created before the workflow split document and
-# payment into separate checkpoints.
+# active stages mirror the simplified lead-quality workflow exposed in the UI.
 FOLLOWUP_ACTIVE_STAGES = (
+    "Intake",
     "Qualified",
-    "Awaiting Document",
-    "Awaiting Payment",
     "Awaiting Document and Payment",
 )
 FOLLOWUP_OUTCOMES = {
-    "still_deciding",
+    "intake",
+    "qualified",
+    "awaiting_document_and_payment",
     "converted",
     "lost",
-    "awaiting_document",
-    "awaiting_payment",
 }
 
 
@@ -10162,15 +10156,16 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
         raise ValueError("Choose a valid follow-up outcome.")
     note = _followup_text(values.get("note"))
     next_follow_up_at = _followup_text(values.get("next_follow_up_at"), 40) or None
-    if outcome == "still_deciding" and not note and not next_follow_up_at:
+    if outcome in {"intake", "qualified", "awaiting_document_and_payment"} and not note and not next_follow_up_at:
         raise ValueError("Add a note or schedule the next follow-up.")
     lost_reason = _followup_text(values.get("lost_reason"), 200)
     if outcome == "lost" and not lost_reason:
         raise ValueError("A lost reason is required.")
 
     target_status = {
+        "intake": "Intake", "qualified": "Qualified",
+        "awaiting_document_and_payment": "Awaiting Document and Payment",
         "converted": "Converted", "lost": "Lost",
-        "awaiting_document": "Awaiting Document", "awaiting_payment": "Awaiting Payment",
     }.get(outcome)
     now = utc_now()
     last_contacted_at = _followup_text(values.get("last_contacted_at"), 40) or now

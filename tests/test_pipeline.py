@@ -1626,7 +1626,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(queue["rows"][0]["id"], created["created"])
 
         saved = core.save_followup(created["created"], {
-            "outcome": "still_deciding",
+            "outcome": "qualified",
             "note": "Customer will decide after speaking with family.",
             "next_follow_up_at": "2026-09-08T10:00:00",
             "contact_method": "Telegram",
@@ -1636,7 +1636,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(saved["lead"]["lead_quality"], "Qualified")
         self.assertEqual(saved["lead"]["assigned_to"], "Dara")
         self.assertEqual(saved["activities"][0]["actor"], "sales@example.com")
-        self.assertEqual(saved["activities"][0]["action"], "still_deciding")
+        self.assertEqual(saved["activities"][0]["action"], "qualified")
         self.assertEqual(saved["activities"][0]["from_status"], "Qualified")
 
     def test_followup_queue_filters_by_campaign_name(self):
@@ -1653,7 +1653,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         )
         core.create_lead_event(
             self.lead_payload(
-                lead_quality="Awaiting Payment",
+                lead_quality="Awaiting Document and Payment",
                 customer_name="Other Campaign",
                 utm_campaign="Leads | VISA | AU | KHM",
                 utm_campaign_id="campaign-au",
@@ -1675,7 +1675,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
 
     def test_followup_terminal_outcomes_validate_and_leave_the_active_queue(self):
         created = core.create_lead_event(
-            self.lead_payload(lead_quality="Awaiting Payment", customer_name="Decision Made"),
+            self.lead_payload(lead_quality="Awaiting Document and Payment", customer_name="Decision Made"),
             retrain=False,
         )
         with self.assertRaisesRegex(ValueError, "lost reason"):

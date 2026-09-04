@@ -268,12 +268,15 @@ const dateTimeInputValue = (value: any) => {
  return local.toISOString().slice(0, 16);
 };
 
-// Mirrors LEAD_QUALITY_OPTIONS in backend/core.py. Imported rows start as Pending Review;
-// Intake is a deliberate next stage, not the import default. Order is the pipeline's natural
-// progression, which is also the dropdown's option order.
+// Mirrors the editable lead-quality workflow in backend/core.py. Imported rows can still sit
+// at Pending Review, but menus only offer the deliberate pipeline stages.
 const LEAD_QUALITY_OPTIONS = [
- 'Pending Review', 'Intake', 'Not Qualified', 'Qualified', 'Awaiting Document', 'Awaiting Payment', 'Converted', 'Lost', 'Awaiting Document and Payment',
+ 'Intake', 'Qualified', 'Awaiting Document and Payment', 'Lost', 'Converted',
 ];
+const LEAD_QUALITY_LABELS: Record<string, string> = {
+ 'Awaiting Document and Payment': 'Awaiting Document & Payment',
+};
+const leadQualityLabel = (value: string) => LEAD_QUALITY_LABELS[value] || value;
 type ManualLeadDraft = {
  status: string;
  lead_quality: string;
@@ -4007,7 +4010,8 @@ function ForecastPage({ role }: { role: UserRole }) {
  className={`lead-quality-select quality-${leadQualitySlug(lead.lead_quality)}`}
  ariaLabel={`Lead quality for lead ${lead.id}`}
  value={lead.lead_quality || LEAD_QUALITY_OPTIONS[0]}
- options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+ triggerLabel={leadQualityLabel(lead.lead_quality || LEAD_QUALITY_OPTIONS[0])}
+ options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: leadQualityLabel(option) }))}
  disabled={!canWrite}
  onChange={(value) => commitLeadField(lead, 'lead_quality', value)}
  />
@@ -6558,24 +6562,27 @@ function DatasetPage({ role }: { role: UserRole }) {
 // --- Follow-up -----------------------------------------------------------------------------
 // A focused CRM queue over lead_events. Follow-up metadata lives beside the imported lead,
 // while pipeline changes write the same lead_quality field that Lead Management reads.
-const FOLLOWUP_STAGES = ['Qualified', 'Awaiting Document', 'Awaiting Payment', 'Awaiting Document and Payment'];
+const FOLLOWUP_STAGES = ['Intake', 'Qualified', 'Awaiting Document and Payment'];
 const FOLLOWUP_DUE_VIEWS = [
  { value: '', label: 'All active' }, { value: 'overdue', label: 'Overdue' },
  { value: 'today', label: 'Due today' }, { value: 'week', label: 'Due this week' },
  { value: 'upcoming', label: 'Upcoming' }, { value: 'none', label: 'No follow-up date' },
 ];
 const FOLLOWUP_OUTCOMES = [
- { value: 'still_deciding', label: 'Still deciding' },
- { value: 'awaiting_document', label: 'Awaiting Document' },
- { value: 'awaiting_payment', label: 'Awaiting Payment' },
- { value: 'converted', label: 'Converted' },
+ { value: 'intake', label: 'Intake' },
+ { value: 'qualified', label: 'Qualified' },
+ { value: 'awaiting_document_and_payment', label: 'Awaiting Document & Payment' },
  { value: 'lost', label: 'Lost' },
+ { value: 'converted', label: 'Converted' },
 ];
 const LOST_REASONS = ['Price', 'No longer interested', 'Chose a competitor', 'No response', 'Postponed', 'Other'];
 const followupStageOutcome = (stage: string) => {
- if (stage === 'Awaiting Document') return 'awaiting_document';
- if (stage === 'Awaiting Payment' || stage === 'Awaiting Document and Payment') return 'awaiting_payment';
- return 'still_deciding';
+ if (stage === 'Intake') return 'intake';
+ if (stage === 'Qualified') return 'qualified';
+ if (stage === 'Awaiting Document' || stage === 'Awaiting Payment' || stage === 'Awaiting Document and Payment') return 'awaiting_document_and_payment';
+ if (stage === 'Lost') return 'lost';
+ if (stage === 'Converted') return 'converted';
+ return 'intake';
 };
 
 type FollowupDraft = {
@@ -6593,7 +6600,7 @@ const followupDateInput = (value: any) => {
  return local.toISOString().slice(0, 16);
 };
 
-const newFollowupDraft = (lead: any = {}, outcome = 'still_deciding'): FollowupDraft => ({
+const newFollowupDraft = (lead: any = {}, outcome = 'intake'): FollowupDraft => ({
  outcome,
  note: '',
  next_follow_up_at: followupDateInput(lead.next_follow_up_at),
@@ -6668,7 +6675,7 @@ function FollowupPage() {
   try {
    const result = await api(`/follow-up/leads/${row.id}`);
    setDetail(result);
-   setDraft(newFollowupDraft(result.lead, outcome || 'still_deciding'));
+   setDraft(newFollowupDraft(result.lead, outcome || followupStageOutcome(result.lead.lead_quality)));
   } catch (err: any) {
    setError(err.message || 'Failed to open this lead.');
   } finally {
@@ -6703,7 +6710,7 @@ function FollowupPage() {
   }
  };
 
- const applyBulkStage = async (outcome: 'awaiting_document' | 'awaiting_payment') => {
+ const applyBulkStage = async (outcome: 'qualified' | 'awaiting_document_and_payment') => {
   if (!selected.length || saving) return;
   setSaving(true);
   setError('');
@@ -6767,7 +6774,7 @@ function FollowupPage() {
       ariaLabel="Filter by lead status"
       value={stage}
       className={`followup-pill-select${stage ? ' is-scoped' : ''}`}
-      options={[{ value: '', label: 'Any status', icon: CircleCheckBig }, ...FOLLOWUP_STAGES.map((value) => ({ value, label: value, icon: CircleCheckBig }))]}
+      options={[{ value: '', label: 'Any status', icon: CircleCheckBig }, ...FOLLOWUP_STAGES.map((value) => ({ value, label: leadQualityLabel(value), icon: CircleCheckBig }))]}
       onChange={setStage}
      />
      <MenuSelect
@@ -6824,10 +6831,10 @@ function FollowupPage() {
         {group.rows.map((row: any) => <tr key={row.id} className={`${isOverdue(row.next_follow_up_at) ? 'is-overdue ' : ''}${selected.includes(String(row.id)) ? 'is-selected' : ''}`}>
          <td><BoardCheckbox checked={selected.includes(String(row.id))} label={`Select ${row.customer_name || 'lead'}`} onChange={() => toggleRow(String(row.id))} /></td>
          <td><button type="button" className="followup-lead-link" onClick={() => void openLead(row)}><strong>{row.customer_name || `Lead #${row.id}`}</strong><small>{row.utm_campaign || `Lead #${row.id}`}</small></button></td>
-         <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><MenuSelect ariaLabel={`Update ${row.customer_name || 'lead'} status`} value={followupStageOutcome(row.lead_quality)} triggerLabel={row.lead_quality} className="followup-status-select" menuClassName="followup-status-menu" options={FOLLOWUP_OUTCOMES.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => void openLead(row, value)} /></td>
+         <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><MenuSelect ariaLabel={`Update ${row.customer_name || 'lead'} status`} value={followupStageOutcome(row.lead_quality)} triggerLabel={leadQualityLabel(row.lead_quality)} className="followup-status-select" menuClassName="followup-status-menu" options={FOLLOWUP_OUTCOMES.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => void openLead(row, value)} /></td>
          <td className={`followup-platform-cell platform-${leadQualitySlug(row.platform || 'unknown')}`}><span>{row.platform || '-'}</span></td><td className="followup-service"><span>{row.utm_campaign || '-'}</span></td>
          <td>{row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'}</td>
-         <td><button type="button" className={isOverdue(row.next_follow_up_at) ? 'followup-due overdue' : 'followup-due'} onClick={() => void openLead(row, 'still_deciding')}>{row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'}</button></td>
+         <td><button type="button" className={isOverdue(row.next_follow_up_at) ? 'followup-due overdue' : 'followup-due'} onClick={() => void openLead(row, followupStageOutcome(row.lead_quality))}>{row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'}</button></td>
          {!compact && <td>{row.assigned_to || '-'}</td>}<td>{String(row.follow_up_result || '-').split('_').join(' ')}</td>
          {!compact && <td className="followup-note">{row.latest_note || '-'}</td>}<td>{dateFmt(row.updated_at)}</td>
          <td><button type="button" className="followup-row-open" aria-label={`Open ${row.customer_name || 'lead'} follow-up`} onClick={() => void openLead(row)}><Plus size={18} /></button></td>
@@ -6840,7 +6847,7 @@ function FollowupPage() {
     <footer className="followup-pager"><span>{rowsData.total ? `${offset + 1}-${Math.min(offset + rowsData.limit, rowsData.total)} of ${fmt(rowsData.total)}` : '0 leads'}</span><div><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - rowsData.limit))}><ChevronLeft size={15} />Previous</button><b>{currentPage} / {totalPages}</b><button disabled={offset + rowsData.limit >= rowsData.total} onClick={() => setOffset(offset + rowsData.limit)}>Next<ChevronRight size={15} /></button></div></footer>
    </section>
 
-   {!!selected.length && <div className="followup-bulk" role="region" aria-label="Selected follow-up actions"><strong>{selected.length}</strong><span>{selected.length === 1 ? 'lead selected' : 'leads selected'}</span><button onClick={() => void applyBulkStage('awaiting_document')}>Awaiting document</button><button onClick={() => void applyBulkStage('awaiting_payment')}>Awaiting payment</button><button className="close" aria-label="Clear selection" onClick={() => setSelected([])}><X size={15} /></button></div>}
+   {!!selected.length && <div className="followup-bulk" role="region" aria-label="Selected follow-up actions"><strong>{selected.length}</strong><span>{selected.length === 1 ? 'lead selected' : 'leads selected'}</span><button onClick={() => void applyBulkStage('qualified')}>Qualified</button><button onClick={() => void applyBulkStage('awaiting_document_and_payment')}>Awaiting document & payment</button><button className="close" aria-label="Clear selection" onClick={() => setSelected([])}><X size={15} /></button></div>}
 
    {(detail || detailLoading) && createPortal(<div className="followup-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail(); }}>
     <form className="followup-drawer" role="dialog" aria-modal="true" aria-labelledby="followup-detail-title" onSubmit={(event) => void submitFollowup(event)}>
@@ -6854,10 +6861,10 @@ function FollowupPage() {
         <label><span>Contact method</span><select value={draft.contact_method} onChange={(event) => updateDraft('contact_method', event.target.value)}><option value="">Select method</option><option>Phone</option><option>Telegram</option><option>Messenger</option><option>WhatsApp</option><option>Email</option><option>In person</option></select></label>
         <label><span>Assigned person</span><input value={draft.assigned_to} onChange={(event) => updateDraft('assigned_to', event.target.value)} placeholder="Team member" /></label>
         <label className="wide"><span>Follow-up note</span><textarea value={draft.note} onChange={(event) => updateDraft('note', event.target.value)} placeholder="What did the lead say, and what should happen next?" /></label>
-        {draft.outcome === 'still_deciding' && <label><span>Next follow-up</span><input type="datetime-local" value={draft.next_follow_up_at} onChange={(event) => updateDraft('next_follow_up_at', event.target.value)} /></label>}
+        {(draft.outcome === 'intake' || draft.outcome === 'qualified' || draft.outcome === 'awaiting_document_and_payment') && <label><span>Next follow-up</span><input type="datetime-local" value={draft.next_follow_up_at} onChange={(event) => updateDraft('next_follow_up_at', event.target.value)} /></label>}
         {draft.outcome === 'lost' && <label><span>Lost reason</span><select required value={draft.lost_reason} onChange={(event) => updateDraft('lost_reason', event.target.value)}><option value="">Choose a reason</option>{LOST_REASONS.map((value) => <option key={value}>{value}</option>)}</select></label>}
-        {draft.outcome === 'awaiting_document' && <label className="wide"><span>Documents still required</span><textarea value={draft.required_documents} onChange={(event) => updateDraft('required_documents', event.target.value)} placeholder="List the outstanding documents" /></label>}
-        {draft.outcome === 'awaiting_payment' && <label><span>Expected payment date</span><input type="date" value={draft.expected_payment_date} onChange={(event) => updateDraft('expected_payment_date', event.target.value)} /></label>}
+        {draft.outcome === 'awaiting_document_and_payment' && <label className="wide"><span>Documents still required</span><textarea value={draft.required_documents} onChange={(event) => updateDraft('required_documents', event.target.value)} placeholder="List the outstanding documents" /></label>}
+        {draft.outcome === 'awaiting_document_and_payment' && <label><span>Expected payment date</span><input type="date" value={draft.expected_payment_date} onChange={(event) => updateDraft('expected_payment_date', event.target.value)} /></label>}
         {draft.outcome === 'converted' && <><label><span>Conversion date</span><input type="datetime-local" value={draft.converted_at} onChange={(event) => updateDraft('converted_at', event.target.value)} /></label><label><span>Payment status</span><select value={draft.payment_status} onChange={(event) => updateDraft('payment_status', event.target.value)}><option value="">Not recorded</option><option>Pending</option><option>Partial</option><option>Paid</option></select></label><label className="wide"><span>Selected service</span><input value={draft.selected_service} onChange={(event) => updateDraft('selected_service', event.target.value)} /></label><label className="wide"><span>Conversion remarks</span><textarea value={draft.conversion_remarks} onChange={(event) => updateDraft('conversion_remarks', event.target.value)} /></label></>}
        </div></section>
        <section className="followup-history"><h4>Activity history</h4>{detail.activities.length ? detail.activities.map((activity: any) => <article key={activity.id}><i /><div><strong>{String(activity.action).split('_').join(' ')}</strong><span>{activity.actor} · {dateFmt(activity.created_at)}</span>{activity.note && <p>{activity.note}</p>}<small>{activity.from_status} → {activity.to_status}</small></div></article>) : <p className="followup-history-empty">No previous follow-up activity.</p>}</section>
@@ -6898,7 +6905,7 @@ const LEAD_MANAGEMENT_SORT_FIELDS = LEAD_MANAGEMENT_COLUMNS.map((column) => colu
 // LEAD_QUALIFIED_STAGES / LEAD_DROPPED_STAGES in backend/core.py -- used here only to band
 // the funnel cards; the rates themselves are computed server-side off the same two lists.
 const LEAD_QUALIFIED_STAGES = ['Qualified', 'Converted', 'Awaiting Document and Payment'];
-const LEAD_DROPPED_STAGES = ['Not Qualified', 'Lost'];
+const LEAD_DROPPED_STAGES = ['Lost'];
 
 // Campaign names and ad titles are not unique. This account already has two campaigns called
 // "Engagement | VISA | ALL | KHM", and the lead count used to be the only thing telling those
@@ -7830,7 +7837,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
          short: qualityFilter.length > 1 ? `${fmt(qualityFilter.length)} stages` : 'Any quality',
          icon: CircleCheckBig,
         },
-        ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option, icon: CircleCheckBig })),
+        ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: leadQualityLabel(option), icon: CircleCheckBig })),
        ]}
       />
       <PresetDateRangePicker
@@ -7921,7 +7928,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
                className={`lead-quality-select quality-${leadQualitySlug(quality)}`}
                ariaLabel={`Lead quality for ${who}`}
                value={quality}
-               options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+               triggerLabel={leadQualityLabel(quality)}
+               options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: leadQualityLabel(option) }))}
                onChange={(value) => void commitLeadField(row, 'lead_quality', value)}
               />
              </td>
@@ -7973,7 +7981,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         value=""
         options={[
          { value: '', label: bulkAction === 'rating' ? 'Rating...' : bulkAction === 'deleting' ? 'Deleting...' : 'Choose stage' },
-         ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option })),
+         ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: leadQualityLabel(option) })),
         ]}
         disabled={boardBusy}
         onChange={(value) => { if (value) void applyBulkQuality(value); }}
@@ -8149,7 +8157,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
             className={`lead-add-select quality-${leadQualitySlug(manualLeadDraft.lead_quality)}`}
             ariaLabel="Lead quality"
             value={manualLeadDraft.lead_quality}
-            options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+            triggerLabel={leadQualityLabel(manualLeadDraft.lead_quality)}
+            options={LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: leadQualityLabel(option) }))}
             onChange={(value) => updateManualLeadDraft('lead_quality', value)}
            />
           </label>
