@@ -5069,11 +5069,12 @@ const FILTER_TYPE_ICON: Record<FilterFieldType, typeof Pencil> = {
 // a menu rendered in place would get clipped by `.filter-menu`'s own `overflow: auto` box
 // the moment a filter row sits low in that scrolling panel, which is exactly where a filter
 // row usually is once you've added more than one.
-function MenuSelect({ value, options, onChange, className, ariaLabel, disabled = false }: {
+function MenuSelect({ value, options, onChange, className, menuClassName, triggerLabel, ariaLabel, disabled = false }: {
  // `short` is what the closed trigger shows when the full `label` is too long for a toolbar
  // button -- the menu always renders `label`. Optional, so every existing caller is unaffected.
  value: string; options: { value: string; label: string; short?: string; icon?: typeof Pencil }[];
- onChange: (value: string) => void; className?: string; ariaLabel: string; disabled?: boolean;
+ onChange: (value: string) => void; className?: string; menuClassName?: string; triggerLabel?: string;
+ ariaLabel: string; disabled?: boolean;
 }) {
  const [open, setOpen] = useState(false);
  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 0, openUp: false });
@@ -5135,13 +5136,13 @@ function MenuSelect({ value, options, onChange, className, ariaLabel, disabled =
   <div className={`menu-select${open ? ' open' : ''}${className ? ` ${className}` : ''}`} ref={wrapRef}>
    <button ref={triggerRef} type="button" className="menu-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} disabled={disabled} onClick={() => { if (!disabled) setOpen((v) => !v); }}>
     {current?.icon && <current.icon size={13} />}
-    <span>{current?.short ?? current?.label}</span>
+    <span>{triggerLabel ?? current?.short ?? current?.label}</span>
     <ChevronDown size={13} className="menu-select-caret" />
    </button>
    {open && !disabled && createPortal(
     <div
      ref={menuRef}
-     className={`menu-select-menu${menuPos.openUp ? ' opens-upward' : ''}`}
+     className={`menu-select-menu${menuClassName ? ` ${menuClassName}` : ''}${menuPos.openUp ? ' opens-upward' : ''}`}
      role="listbox"
      aria-label={ariaLabel}
      style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, minWidth: menuPos.width }}
@@ -6571,6 +6572,11 @@ const FOLLOWUP_OUTCOMES = [
  { value: 'lost', label: 'Lost' },
 ];
 const LOST_REASONS = ['Price', 'No longer interested', 'Chose a competitor', 'No response', 'Postponed', 'Other'];
+const followupStageOutcome = (stage: string) => {
+ if (stage === 'Awaiting Document') return 'awaiting_document';
+ if (stage === 'Awaiting Payment' || stage === 'Awaiting Document and Payment') return 'awaiting_payment';
+ return 'still_deciding';
+};
 
 type FollowupDraft = {
  outcome: string; note: string; next_follow_up_at: string; last_contacted_at: string;
@@ -6720,6 +6726,7 @@ function FollowupPage() {
   setSearchDraft(''); setSearch(''); setStage(''); setDue(''); setAssigned(''); setPlatform(''); setService('');
  };
  const hasFilters = !!(search || stage || due || assigned || platform || service);
+ const activeFilterCount = [stage, due, platform, service].filter(Boolean).length;
  const pageIds = rowsData.rows.map((row: any) => String(row.id));
  const allPageSelected = pageIds.length > 0 && pageIds.every((id: string) => selected.includes(id));
  const togglePage = () => setSelected((current) => allPageSelected
@@ -6742,34 +6749,46 @@ function FollowupPage() {
 
  return (
   <div className="page-content followup-page">
-   <section className="dataset-heading followup-heading">
-    <div><span>Sales workspace</span><h2>Follow-up</h2><p>Move qualified leads toward a decision, one useful conversation at a time.</p></div>
-    <div className="followup-heading-count"><strong>{fmt(rowsData.total)}</strong><span>active leads</span></div>
-   </section>
-
-   <section className="followup-views" aria-label="Follow-up date views">
-    {FOLLOWUP_DUE_VIEWS.map((view) => (
-     <button key={view.value || 'all'} type="button" className={due === view.value ? 'active' : ''} onClick={() => setDue(view.value)}>
-      {view.label}
-     </button>
-    ))}
-   </section>
+   <header className="followup-workspace-head">
+    <div className="followup-title-row">
+     <div className="followup-title"><h2>Follow-up</h2><ChevronDown size={18} strokeWidth={2} /></div>
+     <div className="followup-heading-count"><strong>{fmt(rowsData.total)}</strong><span>active leads</span></div>
+    </div>
+    <nav className="followup-tabs" aria-label="Follow-up views">
+     <button type="button" className="active">Main table</button>
+     <button type="button" onClick={() => setGrouped((value) => !value)}>{grouped ? 'Grouped by status' : 'Ungrouped'}</button>
+    </nav>
+   </header>
 
    <section className="followup-board">
     <div className="followup-toolbar">
-     <label className="followup-search"><Search size={14} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search name, platform, service, or notes" /></label>
-     <select aria-label="Filter by pipeline status" value={stage} onChange={(event) => setStage(event.target.value)}><option value="">All statuses</option>{FOLLOWUP_STAGES.map((value) => <option key={value}>{value}</option>)}</select>
-     <select aria-label="Filter by assigned person" value={assigned} onChange={(event) => setAssigned(event.target.value)}><option value="">Anyone assigned</option>{rowsData.facets.assigned_people.map((value: string) => <option key={value}>{value}</option>)}</select>
-     <select aria-label="Filter by platform" value={platform} onChange={(event) => setPlatform(event.target.value)}><option value="">All platforms</option>{rowsData.facets.platforms.map((value: string) => <option key={value}>{value}</option>)}</select>
-     <input className="followup-service-filter" value={service} onChange={(event) => setService(event.target.value)} placeholder="Service requested" aria-label="Filter by service requested" />
-     {hasFilters && <button type="button" className="followup-clear" onClick={clearFilters}><X size={13} />Clear</button>}
-     <span className="followup-tool-rule" />
-     <select aria-label="Sort follow-ups" value={`${sort}:${direction}`} onChange={(event) => { const [field, dir] = event.target.value.split(':'); setSort(field); setDirection(dir as 'asc' | 'desc'); }}>
-      <option value="next_follow_up_at:asc">Follow-up date</option><option value="next_follow_up_at:desc">Follow-up date, latest</option>
-      <option value="updated_at:desc">Recently updated</option><option value="customer_name:asc">Lead name</option>
-     </select>
-     <button type="button" className={grouped ? 'is-active' : ''} onClick={() => setGrouped((value) => !value)}><Layers3 size={14} />Group</button>
-     <button type="button" className={compact ? 'is-active' : ''} onClick={() => setCompact((value) => !value)}><Columns3 size={14} />Columns</button>
+     <label className={`followup-search${searchDraft ? ' has-value' : ''}`}><Search size={17} /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search" aria-label="Search name, phone, platform, service, or notes" /></label>
+     <MenuSelect ariaLabel="Filter by assigned person" value={assigned} className="followup-person-select" options={[{ value: '', label: 'Person', icon: UserCheck }, ...rowsData.facets.assigned_people.map((value: string) => ({ value, label: value, icon: UserCheck }))]} onChange={setAssigned} />
+     <details className="followup-filter-menu">
+      <summary><Filter size={17} /><span>Filter</span>{activeFilterCount > 0 && <b>{activeFilterCount}</b>}<ChevronDown size={13} /></summary>
+      <div className="followup-filter-panel">
+       <label><span>Status</span><select aria-label="Filter by pipeline status" value={stage} onChange={(event) => setStage(event.target.value)}><option value="">All statuses</option>{FOLLOWUP_STAGES.map((value) => <option key={value}>{value}</option>)}</select></label>
+       <label><span>Contact platform</span><select aria-label="Filter by platform" value={platform} onChange={(event) => setPlatform(event.target.value)}><option value="">All platforms</option>{rowsData.facets.platforms.map((value: string) => <option key={value}>{value}</option>)}</select></label>
+       <label><span>Service requested</span><input value={service} onChange={(event) => setService(event.target.value)} placeholder="Any service" aria-label="Filter by service requested" /></label>
+       <div className="followup-filter-actions"><button type="button" onClick={clearFilters} disabled={!hasFilters}>Clear filters</button></div>
+      </div>
+     </details>
+     <MenuSelect ariaLabel="Sort follow-ups" value={`${sort}:${direction}`} className="followup-sort-select" options={[
+      { value: 'next_follow_up_at:asc', label: 'Follow-up date', icon: ArrowUpDown },
+      { value: 'next_follow_up_at:desc', label: 'Follow-up date, latest', short: 'Sort', icon: ArrowUpDown },
+      { value: 'updated_at:desc', label: 'Recently updated', short: 'Sort', icon: ArrowUpDown },
+      { value: 'customer_name:asc', label: 'Lead name', short: 'Sort', icon: ArrowUpDown },
+     ]} onChange={(value) => { const [field, dir] = value.split(':'); setSort(field); setDirection(dir as 'asc' | 'desc'); }} />
+     <button type="button" className={`followup-tool-button${compact ? ' is-active' : ''}`} onClick={() => setCompact((value) => !value)}><Columns3 size={17} /><span>Hide</span></button>
+     <button type="button" className={`followup-tool-button${grouped ? ' is-active' : ''}`} onClick={() => setGrouped((value) => !value)}><Layers3 size={17} /><span>Group by</span></button>
+     <button type="button" className="followup-tool-button icon-only" aria-label="Refresh follow-ups" title="Refresh" onClick={() => setRefreshKey((key) => key + 1)}><RefreshCw size={16} /></button>
+    </div>
+
+    <div className="followup-views" aria-label="Follow-up date presets">
+     <span>Follow-up views</span>
+     {FOLLOWUP_DUE_VIEWS.map((view) => (
+      <button key={view.value || 'all'} type="button" className={due === view.value ? 'active' : ''} onClick={() => setDue(view.value)}>{view.label}</button>
+     ))}
     </div>
 
     {message && <div className="followup-alert success" role="status"><CircleCheckBig size={15} />{message}</div>}
@@ -6778,22 +6797,22 @@ function FollowupPage() {
      <table className="followup-table">
       <thead><tr>
        <th><BoardCheckbox checked={allPageSelected} indeterminate={selected.some((id) => pageIds.includes(id)) && !allPageSelected} label="Select every lead on this page" onChange={togglePage} /></th>
-       <th>Lead</th><th>Status</th><th>Platform</th><th>Service requested</th><th>Last contacted</th><th>Next follow-up</th>
+       <th>Lead name</th><th>Current status</th><th>Contact platform</th><th>Service requested</th><th>Last contacted</th><th>Next follow-up date</th>
        {!compact && <th>Assigned</th>}<th>Result</th>{!compact && <th>Notes</th>}<th>Updated</th><th aria-label="Actions" />
       </tr></thead>
       <tbody>
        {groupedRows.map((group) => <Fragment key={group.label || 'all'}>
-        {group.label && <tr className="followup-group-row"><td colSpan={compact ? 10 : 12}><span className={`quality-dot quality-${leadQualitySlug(group.label)}`} />{group.label}<b>{group.rows.length}</b></td></tr>}
-        {group.rows.map((row: any) => <tr key={row.id} className={isOverdue(row.next_follow_up_at) ? 'is-overdue' : ''}>
+        {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 10 : 12}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
+        {group.rows.map((row: any) => <tr key={row.id} className={`${isOverdue(row.next_follow_up_at) ? 'is-overdue ' : ''}${selected.includes(String(row.id)) ? 'is-selected' : ''}`}>
          <td><BoardCheckbox checked={selected.includes(String(row.id))} label={`Select ${row.customer_name || 'lead'}`} onChange={() => toggleRow(String(row.id))} /></td>
          <td><button type="button" className="followup-lead-link" onClick={() => void openLead(row)}><strong>{row.customer_name || `Lead #${row.id}`}</strong><small>{row.utm_campaign || `Lead #${row.id}`}</small></button></td>
-         <td><span className={`followup-stage quality-${leadQualitySlug(row.lead_quality)}`}>{row.lead_quality}</span></td>
-         <td>{row.platform || '-'}</td><td className="followup-service">{row.service_requested || '-'}</td>
+         <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><MenuSelect ariaLabel={`Update ${row.customer_name || 'lead'} status`} value={followupStageOutcome(row.lead_quality)} triggerLabel={row.lead_quality} className="followup-status-select" menuClassName="followup-status-menu" options={FOLLOWUP_OUTCOMES.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => void openLead(row, value)} /></td>
+         <td className={`followup-platform-cell platform-${leadQualitySlug(row.platform || 'unknown')}`}><span>{row.platform || '-'}</span></td><td className="followup-service"><span>{row.service_requested || '-'}</span></td>
          <td>{row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'}</td>
-         <td><span className={isOverdue(row.next_follow_up_at) ? 'followup-due overdue' : 'followup-due'}>{row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'}</span></td>
+         <td><button type="button" className={isOverdue(row.next_follow_up_at) ? 'followup-due overdue' : 'followup-due'} onClick={() => void openLead(row, 'still_deciding')}>{row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'}</button></td>
          {!compact && <td>{row.assigned_to || '-'}</td>}<td>{String(row.follow_up_result || '-').split('_').join(' ')}</td>
          {!compact && <td className="followup-note">{row.latest_note || '-'}</td>}<td>{dateFmt(row.updated_at)}</td>
-         <td><MenuSelect ariaLabel={`Update ${row.customer_name || 'lead'} status`} value="" className="followup-row-action" options={[{ value: '', label: 'Update' }, ...FOLLOWUP_OUTCOMES.map((item) => ({ value: item.value, label: item.label }))]} onChange={(value) => { if (value) void openLead(row, value); }} /></td>
+         <td><button type="button" className="followup-row-open" aria-label={`Open ${row.customer_name || 'lead'} follow-up`} onClick={() => void openLead(row)}><Plus size={18} /></button></td>
         </tr>)}
        </Fragment>)}
        {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={12}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another view or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
