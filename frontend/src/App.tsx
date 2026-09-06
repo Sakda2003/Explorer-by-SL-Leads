@@ -271,7 +271,7 @@ const dateTimeInputValue = (value: any) => {
 // Mirrors the editable lead-quality workflow in backend/core.py. Imported rows can still sit
 // at Pending Review, but menus only offer the deliberate pipeline stages.
 const LEAD_QUALITY_OPTIONS = [
- 'Intake', 'Qualified', 'Awaiting Document and Payment', 'Lost', 'Converted',
+ 'Intake', 'Not Qualified', 'Qualified', 'Awaiting Document and Payment', 'Lost', 'Converted',
 ];
 const LEAD_QUALITY_LABELS: Record<string, string> = {
  'Awaiting Document and Payment': 'Awaiting Document & Payment',

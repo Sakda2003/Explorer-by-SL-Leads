@@ -6450,6 +6450,7 @@ def get_dataset_overview() -> dict:
 LEAD_QUALITY_OPTIONS = [
     "Pending Review",
     "Intake",
+    "Not Qualified",
     "Qualified",
     "Awaiting Document and Payment",
     "Lost",
