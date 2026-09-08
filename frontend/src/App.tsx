@@ -1306,6 +1306,21 @@ function PageSkeleton({ variant = 'analytics', label = 'Loading page' }: { varia
  );
 }
 
+function SectionSkeleton({ variant = 'panel', label = 'Loading section', rows = 6 }: { variant?: 'metrics' | 'panel' | 'table'; label?: string; rows?: number }) {
+ return (
+  <div className={`section-loading-skeleton is-${variant}`} role="status" aria-label={label} aria-live="polite">
+   <span className="sr-only">{label}</span>
+   {variant === 'metrics' && Array.from({ length: 5 }, (_, index) => (
+    <article key={index} aria-hidden="true"><i className="skeleton" /><b className="skeleton" /><span className="skeleton" /></article>
+   ))}
+   {variant === 'panel' && <div className="section-skeleton-panel" aria-hidden="true"><i className="skeleton" /><b className="skeleton" /><span className="skeleton" /></div>}
+   {variant === 'table' && <div className="section-skeleton-table" aria-hidden="true">
+    {Array.from({ length: rows }, (_, index) => <div key={index}>{Array.from({ length: 6 }, (__, cell) => <i className="skeleton" key={cell} />)}</div>)}
+   </div>}
+  </div>
+ );
+}
+
 function AppBootSkeleton() {
  return (
   <div className="app-shell app-boot-skeleton" role="status" aria-label="Loading workspace">
@@ -2446,6 +2461,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  const [forecastTracking, setForecastTracking] = useState<any>({ summary: {}, timeline: [] });
  const [trackingReady, setTrackingReady] = useState(false);
  const [adSpend, setAdSpend] = useState<any>({ available: false, summary: {}, daily: [], campaigns: [], ad_sets: [] });
+ const [adSpendReady, setAdSpendReady] = useState(false);
  const [sets, setSets] = useState<any[]>([]);
  const [query, setQuery] = useState('');
  const [selectedId, setSelectedId] = useState('');
@@ -2500,29 +2516,29 @@ function ForecastPage({ role }: { role: UserRole }) {
 
  const load = async () => {
  setBusy(true);
- try {
- const [summaryData, insightData, adSets, adSpendData] = await Promise.all([
- api('/dashboard/summary'),
- api('/dashboard/insights'),
- api('/ad-sets'),
- api('/dashboard/ad-spend').catch(() => ({ available: false, summary: {}, daily: [], campaigns: [], ad_sets: [] })),
- ]);
- const nextCampaignId = insightData.campaigns?.some((item: any) => item.campaign_id === selectedCampaignId)
- ? selectedCampaignId
- : insightData.campaigns?.[0]?.campaign_id || '';
- setSummary(summaryData);
- setInsights(insightData);
- setSets(adSets);
- setAdSpend(adSpendData);
- setSelectedCampaignId(String(nextCampaignId));
- setSelectedId((current) => {
- if (!current) return '';
- if (adSets.some((item: any) => String(item.utm_ad_set_id) === String(current))) return current;
- return '';
+ const summaryRequest = api('/dashboard/summary').then(setSummary).catch(() => setSummary({}));
+ const insightsRequest = api('/dashboard/insights').then((insightData) => {
+  const nextCampaignId = insightData.campaigns?.some((item: any) => item.campaign_id === selectedCampaignId)
+   ? selectedCampaignId
+   : insightData.campaigns?.[0]?.campaign_id || '';
+  setInsights(insightData);
+  setSelectedCampaignId(String(nextCampaignId));
+  if (!nextCampaignId) setTrackingReady(true);
+ }).catch(() => {
+  setInsights({ statuses: [], campaigns: [] });
+  setTrackingReady(true);
  });
- } finally {
+ void api('/ad-sets').then((adSets) => {
+  setSets(adSets);
+  setSelectedId((current) => !current || adSets.some((item: any) => String(item.utm_ad_set_id) === String(current)) ? current : '');
+ }).catch(() => setSets([]));
+ setAdSpendReady(false);
+ void api('/dashboard/ad-spend')
+  .then(setAdSpend)
+  .catch(() => setAdSpend({ available: false, summary: {}, daily: [], campaigns: [], ad_sets: [] }))
+  .finally(() => setAdSpendReady(true));
+ await Promise.allSettled([summaryRequest, insightsRequest]);
  setBusy(false);
- }
  };
 
  useEffect(() => { void load(); }, []);
@@ -2645,6 +2661,7 @@ function ForecastPage({ role }: { role: UserRole }) {
 
  useEffect(() => {
  if (!selectedCampaignId) return;
+ setTrackingReady(false);
  setSelectedLeadPoint(null);
  setLeadDrilldownRows([]);
  setLeadDrilldownError('');
@@ -3594,10 +3611,6 @@ function ForecastPage({ role }: { role: UserRole }) {
  },
  ];
 
- if ((busy && !Object.keys(summary).length) || (!!selectedCampaignId && !trackingReady)) {
-  return <PageSkeleton variant="analytics" label="Loading forecast" />;
- }
-
  return (
  <div className="page-content dashboard-page forecast-v2-page">
  <section className="forecast-v2-header hero-heading">
@@ -3612,7 +3625,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  <article className="forecast-v2-kpi" key={metric.label}>
  <span>{metric.label}</span>
  <div className="forecast-v2-kpi-value">
- {busy ? <strong>-</strong> : <strong>{metric.value}</strong>}
+ {busy ? <strong className="forecast-kpi-loading"><span className="skeleton" /></strong> : <strong>{metric.value}</strong>}
  {!busy && typeof metric.delta === 'number' && Number.isFinite(metric.delta) && (
  <em className={`delta-chip${metric.delta > 0 ? ' is-up' : metric.delta < 0 ? ' is-down' : ' is-flat'}`}>
  {metric.delta > 0 ? <ArrowUp size={11} /> : metric.delta < 0 ? <ArrowDown size={11} /> : null}
@@ -3827,6 +3840,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  </div>
  </div>
 
+ {!adSpendReady && <SectionSkeleton variant="panel" label="Loading spend analytics" />}
  {adSpend.available && (
  <div className="performance-subsection spend-performance-block" aria-label="Ad spend and CPL analytics">
  <article className="spend-chart-card spend-cpl-chart-card">
@@ -3893,7 +3907,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  )}
 
  <div className="performance-subsection forecast-performance-block">
- {trackingTimeline.length ? (
+ {!trackingReady ? <SectionSkeleton variant="panel" label="Loading forecast tracking" /> : trackingTimeline.length ? (
  <div className="tracking-chart-block">
  {/* Inside the chart's own bordered container, so the fit statistics read as part of the
      chart rather than a separate panel that happens to sit near it. */}
@@ -4889,7 +4903,13 @@ function HistoryPage({ role }: { role: UserRole }) {
    load();
   }
  };
- if (initialLoading) return <PageSkeleton variant="table" label="Loading import history" />;
+ if (initialLoading) return (
+  <div className="page-content imports-page progressive-page-shell">
+   <section className="imports-heading"><h2>Imports</h2><p>Every file that's landed in this workspace, traced row by row.</p></section>
+   <SectionSkeleton variant="metrics" label="Loading import totals" />
+   <SectionSkeleton variant="table" label="Loading import history" rows={8} />
+  </div>
+ );
  return (
  <div className="page-content imports-page">
  <section className="imports-heading">
@@ -6231,8 +6251,6 @@ function DatasetPage({ role }: { role: UserRole }) {
  const rowStart = rowsData.total ? rowsOffset + 1 : 0;
  const rowEnd = Math.min(rowsOffset + rowsData.limit, rowsData.total);
 
- if (!diagnosticsReady || !rowsReady || !campaignsReady) return <PageSkeleton variant="table" label="Loading dataset" />;
-
  return (
   <div className="page-content dataset-page">
    <section className="dataset-heading">
@@ -6245,7 +6263,9 @@ function DatasetPage({ role }: { role: UserRole }) {
    {error && <div className="error-banner">{error}</div>}
 
    <section className="dataset-section">
-    <OlsResultCards ols={ols} coefficients={false} className="dataset-ols" selectionPathTitle={selectionPathTitle} emptyCopy="Upload ad performance data with spend before OLS regression results are available." />
+    {!diagnosticsReady
+     ? <SectionSkeleton variant="metrics" label="Loading model diagnostics" />
+     : <OlsResultCards ols={ols} coefficients={false} className="dataset-ols" selectionPathTitle={selectionPathTitle} emptyCopy="Upload ad performance data with spend before OLS regression results are available." />}
    </section>
 
    <section className="dataset-section dataset-scope-section" aria-label="Filter by campaign or ad set">
@@ -6254,6 +6274,7 @@ function DatasetPage({ role }: { role: UserRole }) {
       <button
        type="button"
        className="selector campaign-selector"
+       disabled={!campaignsReady}
        aria-haspopup="listbox"
        aria-expanded={campaignPickerOpen}
        onClick={() => setCampaignPickerOpen((open) => !open)}
@@ -6345,7 +6366,8 @@ function DatasetPage({ role }: { role: UserRole }) {
       )}
      </div>
     </div>
-    {correlationView === 'declared' ? (
+    {!diagnosticsReady && <SectionSkeleton variant="panel" label="Loading correlation matrix" />}
+    {diagnosticsReady && correlationView === 'declared' ? (
      !declaredCorrelation ? (
       <div className="table-empty">Not enough data yet for a correlation matrix.</div>
      ) : (
@@ -6389,7 +6411,7 @@ function DatasetPage({ role }: { role: UserRole }) {
       </div>
      )
     ) : null}
-    {correlationView === 'declared' && !!undefinedDeclaredVariables.length && (
+    {diagnosticsReady && correlationView === 'declared' && !!undefinedDeclaredVariables.length && (
      <div className="dataset-correlation-missing" aria-label="Declared variables with undefined correlations">
       <span className="dataset-correlation-missing-head"><Info size={13} /> Undefined correlations ({undefinedDeclaredVariables.length} of the eight):</span>
       {undefinedDeclaredVariables.map((v) => (
@@ -6400,7 +6422,7 @@ function DatasetPage({ role }: { role: UserRole }) {
       ))}
      </div>
     )}
-    {correlationView === 'expanded' && (
+    {diagnosticsReady && correlationView === 'expanded' && (
      !correlation?.variables?.length ? (
       <div className="table-empty">Not enough data yet for a correlation matrix.</div>
      ) : (
@@ -6442,7 +6464,7 @@ function DatasetPage({ role }: { role: UserRole }) {
 
    <section className="dataset-section">
     <div className="dataset-section-head"><div><span>Calculation</span><h3>How the correlation matrix is calculated</h3></div></div>
-    {!declaredCorrelation ? (
+    {!diagnosticsReady ? <SectionSkeleton variant="panel" label="Loading calculation details" /> : !declaredCorrelation ? (
      <div className="table-empty">Not enough data yet to explain — no matrix above to describe.</div>
     ) : (
      <div className="dataset-formula-card">
@@ -6514,7 +6536,8 @@ function DatasetPage({ role }: { role: UserRole }) {
      </div>
     </div>
     {boardError && <div className="lead-action-error board-error">{boardError}</div>}
-    <div className={`dataset-rows-scroll board-scroll density-${density}${boardBusy ? ' is-busy' : ''}`}>
+    {!rowsReady && <SectionSkeleton variant="table" label="Loading dataset rows" rows={8} />}
+    <div className={`dataset-rows-scroll board-scroll density-${density}${boardBusy ? ' is-busy' : ''}${!rowsReady ? ' is-initial-loading' : ''}`}>
      {/* Column widths live on the header cells rather than a parallel <colgroup>, which
          under `table-layout: fixed` is equivalent and one less structure to keep in sync
          with the hidden-column set. */}
@@ -6833,7 +6856,12 @@ function FollowupPage() {
  const totalPages = Math.max(1, Math.ceil(rowsData.total / rowsData.limit));
  const currentPage = Math.floor(offset / rowsData.limit) + 1;
 
- if (!hasLoaded) return <PageSkeleton variant="table" label="Loading follow-ups" />;
+ if (!hasLoaded) return (
+  <div className="page-content followup-page progressive-page-shell">
+   <header className="followup-workspace-head"><div className="followup-title-row"><div className="followup-title"><h2>Follow-up</h2><ChevronDown size={18} strokeWidth={2} /></div></div></header>
+   <SectionSkeleton variant="table" label="Loading follow-ups" rows={9} />
+  </div>
+ );
 
  return (
   <div className="page-content followup-page">
@@ -7720,11 +7748,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   }
  };
 
- if (!summaryReady || !rowsReady || !optionsReady) return <PageSkeleton variant="analytics" label="Loading lead management" />;
-
  // Skeletons only on the very first load. Once a total exists, a refetch swaps numbers in
  // place rather than blanking cells the reader is mid-sentence on.
- const showSkeleton = summaryBusy && !summary.total;
+ const showSkeleton = !summaryReady || (summaryBusy && !summary.total);
  const stages: any[] = summary.stages?.length
   ? summary.stages
   : LEAD_QUALITY_OPTIONS.map((quality) => ({ quality, count: 0, share: 0 }));
@@ -7772,6 +7798,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       className={`lead-scope-select lead-heading-campaign${campaignId ? ' is-scoped' : ''}`}
       ariaLabel="Filter by campaign"
       value={campaignId}
+      disabled={!optionsReady}
       onChange={pickCampaign}
       options={[
        { value: '', label: 'All campaigns', icon: Megaphone },
@@ -7957,7 +7984,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         grouped, or displayed. Campaign scope and export live in the overview above. */}
     <div className="dataset-rows-controls lead-board-controls">
      <div className="lead-board-count">
-     {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
+     {!rowsReady ? <span className="skeleton lead-count-skeleton" /> : rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
      </div>
      <div className="dataset-rows-controls-right">
       {!isStaff && (
@@ -8029,7 +8056,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
 
     {boardError && <div className="lead-action-error board-error">{boardError}</div>}
 
-    <div className={`dataset-rows-scroll board-scroll density-${density}${boardBusy ? ' is-busy' : ''}`}>
+    {!rowsReady && <SectionSkeleton variant="table" label="Loading leads" rows={8} />}
+    <div className={`dataset-rows-scroll board-scroll density-${density}${boardBusy ? ' is-busy' : ''}${!rowsReady ? ' is-initial-loading' : ''}`}>
      <table className="dataset-rows-table board-table" style={{ width: boardTableWidth }}>
       <thead>
        <tr>
@@ -8517,8 +8545,6 @@ function OptimizationPage() {
   { label: 'Net leads if applied', value: `${netLeads > 0 ? '+' : ''}${fmt(netLeads)}`, suffix: '/day', note: `${fmt(leadStart)} -> ${fmt(leadEnd)} leads`, positive: netLeads > 0 },
  ];
 
- if (loading && !data) return <PageSkeleton variant="table" label="Loading optimization" />;
-
  return (
   <div className="page-content optimization-page optimization-design-clarity">
    <div className="page-heading">
@@ -8543,6 +8569,8 @@ function OptimizationPage() {
    </div>
 
    {error && <div className="decision-error" role="alert">{error}</div>}
+
+   {loading && !data && <SectionSkeleton variant="table" label="Loading optimization recommendations" rows={8} />}
 
    {!loading && data && !data.available && (
     <div className="card-empty-state glass-panel"><TrendingUp /><b>No ad spend yet</b>
@@ -8785,7 +8813,6 @@ function AdminPage() {
  const [users, setUsers] = useState<AdminUser[]>([]);
  const [activity, setActivity] = useState<AdminActivity[]>([]);
  const [loading, setLoading] = useState(true);
- const [hasLoaded, setHasLoaded] = useState(false);
  const [saving, setSaving] = useState(false);
  const [error, setError] = useState('');
  const [message, setMessage] = useState('');
@@ -8806,7 +8833,6 @@ function AdminPage() {
    setError(loadError.message || 'Could not load admin users');
   } finally {
    setLoading(false);
-   setHasLoaded(true);
   }
  };
 
@@ -8900,8 +8926,6 @@ function AdminPage() {
   ['Staff', 'Can sort and rate Lead Management quality. Everything else is view-only, with no Admin page access.'],
  ];
 
- if (!hasLoaded) return <PageSkeleton variant="form" label="Loading administration" />;
-
  return (
   <div className="page-content admin-page">
    <div className="admin-tabs" role="tablist" aria-label="Admin sections">
@@ -8969,7 +8993,7 @@ function AdminPage() {
         </thead>
         <tbody>
          {loading ? (
-          <tr><td colSpan={8} className="admin-empty">Loading users...</td></tr>
+          <tr><td colSpan={8} className="admin-empty"><SectionSkeleton variant="table" label="Loading users" rows={5} /></td></tr>
          ) : users.length ? users.map((user) => (
           <tr key={user.id}>
            <td><b>{user.email}</b></td>
