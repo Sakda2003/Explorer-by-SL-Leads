@@ -6700,23 +6700,17 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-duplicates-delete { width: 100%; min-width: 0; }
 }
 
-/* --- Bento ---------------------------------------------------------------------------------
-   Named areas rather than six equal tiles. The pipeline is the one object that leads, because
-   "where is my book stuck" is the question this page answers; the review queue and outcomes
-   stack beside it, and acquisition cost runs the full width underneath. Four areas for four
-   cells -- the grid has no slot without content to put in it. */
+/* --- Lead overview ----------------------------------------------------------------------- */
 .lead-bento {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas:
-    "pipeline queue"
-    "pipeline outcomes"
+    "queue    outcomes"
     "kpis     kpis"
     "cost     cost";
   gap: 12px;
   margin-bottom: 22px;
 }
-.lead-cell-pipeline { grid-area: pipeline; }
 .lead-cell-queue { grid-area: queue; }
 .lead-cell-outcomes { grid-area: outcomes; }
 .lead-kpis { grid-area: kpis; }
@@ -6772,15 +6766,14 @@ tr:hover .benchmark-bar span { opacity: 1; }
   line-height: 1.6;
 }
 
-/* The two headline counts. Mono because they are measurements read against each other across
-   cells, and the unit is a step down so the digits own the line. */
-.lead-total, .lead-queue-figure {
+/* Mono because the review rate is a measurement read against the outcome figures beside it. */
+.lead-queue-figure {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin: 0 0 12px;
 }
-.lead-total strong, .lead-queue-figure strong {
+.lead-queue-figure strong {
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 34px;
@@ -6789,95 +6782,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
   letter-spacing: -.03em;
   line-height: 1;
 }
-.lead-total span, .lead-queue-figure span { color: var(--dim); font-size: 11.5px; font-weight: 600; }
+.lead-queue-figure span { color: var(--dim); font-size: 11.5px; font-weight: 600; }
 .lead-total-skeleton { width: 46%; height: 34px; margin-bottom: 12px; border-radius: var(--r-sm); }
-
-/* --- Pipeline bar ------------------------------------------------------------------------ */
-.lead-pipeline-bar {
-  display: flex;
-  gap: 2px;
-  height: 12px;
-  margin-bottom: 16px;
-  border-radius: var(--r-pill);
-  overflow: hidden;
-}
-.lead-pipeline-bar.is-empty { background: var(--line-2); }
-.lead-pipeline-seg {
-  /* A stage with a handful of leads out of thousands still gets a visible mark; without the
-     floor its segment rounds to a sub-pixel and the stage silently disappears from the bar. */
-  min-width: 3px;
-  background: var(--stage-fill, var(--status-neutral-fill));
-  /* No width transition. A single rating moves these by a fraction of a percent (invisible),
-     and a filter change swaps in a different population altogether, where morphing one
-     distribution into the other would imply a continuity that isn't there. Only the muting
-     below animates, because that one really is the same bar changing emphasis. */
-  transition: opacity .16s ease;
-}
-/* Filtering to a stage dims the rest instead of hiding them, so the bar keeps showing the
-   whole book while saying which slice the board below is listing. */
-.lead-pipeline-seg.is-muted { opacity: .22; }
-
-/* --- Stage list -------------------------------------------------------------------------- */
-/* One column, in pipeline order. Two columns fit in less height but fill row-major, so
-   scanning DOWN the first column would skip across non-consecutive stages. A pipeline whose
-   order only works when read boustrophedon is not communicating an order at all. */
-.lead-stage-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.lead-stage-row {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background .14s ease;
-}
-.lead-stage-row:hover { background: var(--surface-2); }
-.lead-stage-row:focus-visible { outline: 2px solid var(--gold); outline-offset: -1px; }
-.lead-stage-row.is-active { background: color-mix(in srgb, var(--stage-fill, var(--status-neutral-fill)) 16%, var(--surface-2)); }
-.lead-stage-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--r-pill);
-  background: var(--stage-fill, var(--status-neutral-fill));
-}
-.lead-stage-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.lead-stage-row.is-active .lead-stage-label { color: var(--text); }
-/* The active row's tint lifts its background, which drops `--dim` on it to 4.03:1 in dark --
-   below AA for 10.5px text. A step up to `--muted` clears it and reinforces the active state
-   at the same time. */
-.lead-stage-row.is-active .lead-stage-pct { color: var(--muted); }
-.lead-stage-n {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.lead-stage-pct {
-  min-width: 42px;
-  color: var(--dim);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
 
 /* Each stage's colour, matching the pill it recolours in the board below (see the
    `.lead-quality-select.quality-*` rules) so a stage reads the same in both places. */
@@ -6938,15 +6844,15 @@ tr:hover .benchmark-bar span { opacity: 1; }
 /* --- Key pipeline stages ---------------------------------------------------------------- */
 .lead-kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 .lead-kpi {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 132px;
-  padding: 14px 16px 13px;
+  min-height: 122px;
+  padding: 13px 14px 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
@@ -6972,8 +6878,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 27px;
+  gap: 8px;
+  min-height: 30px;
 }
 .lead-kpi-label {
   overflow: hidden;
@@ -7095,29 +7001,18 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .board-bulk-label { color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .lead-bulk-quality .menu-select-trigger { min-width: 160px; }
 
-/* --- Adaptation ---------------------------------------------------------------------------
-   The bento collapses by priority, not by shrinking every cell in step: the pipeline keeps a
-   full row of its own the moment the two side cells no longer fit beside it. */
-@media (max-width: 1120px) {
-  .lead-bento {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas:
-      "pipeline pipeline"
-      "queue    outcomes"
-      "kpis     kpis"
-      "cost     cost";
-  }
-}
-@media (max-width: 920px) {
-  .lead-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* --- Adaptation --------------------------------------------------------------------------- */
+@media (max-width: 1280px) {
+  .lead-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 780px) {
   .lead-bento {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "pipeline" "queue" "outcomes" "kpis" "cost";
+    grid-template-areas: "queue" "outcomes" "kpis" "cost";
   }
+  .lead-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lead-scope-select .menu-select-trigger { max-width: 150px; }
-  .lead-total strong, .lead-queue-figure strong { font-size: 28px; }
+  .lead-queue-figure strong { font-size: 28px; }
   .lead-add-backdrop { padding: 8px; }
   .lead-add-drawer { width: 100%; max-height: calc(100vh - 16px); }
   .lead-add-head, .lead-add-body, .lead-add-actions { padding-left: 16px; padding-right: 16px; }
@@ -7131,7 +7026,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-kpi { min-height: 118px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lead-pipeline-seg, .lead-progress > i, .lead-stage-row, .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer { transition: none; animation: none; }
+  .lead-progress > i, .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer { transition: none; animation: none; }
   .lead-progress > i { transform: scaleX(var(--fill, 0)); }
 }
 /* Follow-up CRM queue */

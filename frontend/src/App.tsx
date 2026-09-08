@@ -6955,31 +6955,6 @@ const EMPTY_DUPLICATE_LEADS: DuplicateLeadResult = {
  groups: [], group_count: 0, duplicate_leads: 0, extra_occurrences: 0, scanned_leads: 0,
 };
 
-// The whole book as one segmented bar, so the shape of the pipeline is legible before a single
-// number is read. Zero-count stages contribute no segment rather than an invisible sliver -- with
-// seven stages and most leads at Pending Review, drawing all seven would produce hairlines
-// nobody can see.
-function LeadPipelineBar({ stages, total, active }: { stages: any[]; total: number; active: string[] }) {
- const filled = stages.filter((stage) => Number(stage.count) > 0);
- if (!total || !filled.length) {
-  return <div className="lead-pipeline-bar is-empty" aria-hidden="true" />;
- }
- return (
-  // aria-hidden because the stage list below carries the same figures as real, focusable
-  // controls -- announcing both would read the pipeline twice to a screen reader.
-  <div className="lead-pipeline-bar" aria-hidden="true">
-   {filled.map((stage) => (
-    <span
-     key={stage.quality}
-     className={`lead-pipeline-seg quality-${leadQualitySlug(stage.quality)}${active.length && !active.includes(stage.quality) ? ' is-muted' : ''}`}
-     style={{ width: `${(Number(stage.count) / total) * 100}%` }}
-     title={`${stage.quality}: ${fmt(stage.count)} (${percent(stage.share)})`}
-    />
-   ))}
-  </div>
- );
-}
-
 // Money with the cents held back a step. Four dollar figures sit side by side in the cost cell,
 // and full-weight cents make them read as eight numbers instead of four -- the dollars are what
 // gets compared, the cents only matter once you are already looking at one.
@@ -7620,6 +7595,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   ? summary.stages
   : LEAD_QUALITY_OPTIONS.map((quality) => ({ quality, count: 0, share: 0 }));
  const leadKpis = [
+  { quality: 'Pending Review', label: 'Pending Review' },
+  { quality: 'Not Qualified', label: 'Not Qualified' },
   { quality: 'Qualified', label: 'Qualified' },
   { quality: 'Awaiting Document and Payment', label: 'Awaiting Document & Payment' },
   { quality: 'Converted', label: 'Converted' },
@@ -7628,10 +7605,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   ...item,
   ...(stages.find((stage: any) => stage.quality === item.quality) || { count: 0, share: 0 }),
  }));
- const campaignLabel = campaignId
-  ? (options.campaigns.find((item: any) => String(item.campaign_id) === campaignId)?.campaign || campaignId)
-  : 'All campaigns';
-
  return (
   <div className="page-content lead-management-page">
    <section className="dataset-heading">
@@ -7648,51 +7621,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    </section>
 
    <section className="dataset-section">
-    {/* Bento rather than three bands of equal tiles. "Where is my book stuck" is the question
-        this page exists to answer, so the pipeline is the one object that leads; the review
-        queue and the outcome rates flank it, and acquisition cost runs underneath. Four cells
-        for four distinct questions -- no filler tile, and no metric repeated in two places
-        (the old layout printed the total twice and "nothing is rated" three times). */}
+    {/* Review progress and rates form the compact overview; the interactive stage KPIs then
+        carry the pipeline detail without repeating it in a large summary panel. */}
     <div className="lead-bento">
-     <section className="lead-cell lead-cell-pipeline" aria-labelledby="lead-pipeline-heading">
-      <div className="lead-cell-head">
-       <h3 id="lead-pipeline-heading">Pipeline</h3>
-       {/* Keyed to the SCOPE, not to `hasAnyFilter`: toggling a stage does not narrow the
-           population this cell counts, so it must not relabel it either. */}
-       <span className="lead-cell-note">{scopeParts.length ? campaignLabel : 'Every lead on record'}</span>
-      </div>
-      {showSkeleton
-       ? <div className="skeleton skeleton-line lead-total-skeleton" />
-       : (
-        <p className="lead-total">
-         <strong>{fmt(summary.total)}</strong>
-         <span>{summary.total === 1 ? 'lead' : 'leads'}</span>
-        </p>
-       )}
-      <LeadPipelineBar stages={stages} total={summary.total} active={qualityFilter} />
-      {/* The stage list is the real control surface -- the bar above it is the same data at a
-          glance. Keeping the clickable rows in one place avoids two tab stops per stage. */}
-      <div className="lead-stage-list" role="group" aria-label="Filter by pipeline stage">
-       {stages.map((stage: any) => {
-        const active = qualityFilter.includes(stage.quality);
-        return (
-         <button
-          type="button"
-          key={stage.quality}
-          className={`lead-stage-row quality-${leadQualitySlug(stage.quality)}${active ? ' is-active' : ''}`}
-          aria-pressed={active}
-          onClick={() => toggleStage(stage.quality)}
-         >
-          <span className="lead-stage-dot" aria-hidden="true" />
-          <span className="lead-stage-label">{stage.quality}</span>
-          <span className="lead-stage-n">{fmt(stage.count)}</span>
-          <span className="lead-stage-pct">{percent(stage.share)}</span>
-         </button>
-        );
-       })}
-      </div>
-     </section>
-
      <section className="lead-cell lead-cell-queue" aria-labelledby="lead-queue-heading">
       <div className="lead-cell-head">
        <h3 id="lead-queue-heading">Awaiting review</h3>
