@@ -1263,6 +1263,61 @@ function Shell({ page, setPage, children, role, onSignOut }: { page: Page; setPa
  );
 }
 
+type PageSkeletonVariant = 'analytics' | 'table' | 'form';
+
+function PageSkeleton({ variant = 'analytics', label = 'Loading page' }: { variant?: PageSkeletonVariant; label?: string }) {
+ const metricCount = variant === 'form' ? 3 : variant === 'table' ? 4 : 5;
+ return (
+  <div className={`page-content page-loading-skeleton is-${variant}`} role="status" aria-label={label} aria-live="polite">
+   <span className="sr-only">{label}</span>
+   <header className="page-skeleton-head" aria-hidden="true">
+    <div><i className="skeleton" /><b className="skeleton" /></div>
+    <em className="skeleton" />
+   </header>
+   <section className="page-skeleton-metrics" aria-hidden="true">
+    {Array.from({ length: metricCount }, (_, index) => (
+     <article key={index}>
+      <i className="skeleton" />
+      <b className="skeleton" />
+      <span className="skeleton" />
+     </article>
+    ))}
+   </section>
+   {variant === 'analytics' && (
+    <section className="page-skeleton-analytics" aria-hidden="true">
+     <article><i className="skeleton" /><b className="skeleton" /><span className="skeleton" /></article>
+     <article><i className="skeleton" /><b className="skeleton" /><span className="skeleton" /></article>
+    </section>
+   )}
+   {variant === 'table' && (
+    <section className="page-skeleton-table" aria-hidden="true">
+     <header><i className="skeleton" /><span className="skeleton" /><span className="skeleton" /></header>
+     {Array.from({ length: 8 }, (_, index) => <div key={index}>{Array.from({ length: 6 }, (__, cell) => <i className="skeleton" key={cell} />)}</div>)}
+    </section>
+   )}
+   {variant === 'form' && (
+    <section className="page-skeleton-form" aria-hidden="true">
+     <i className="skeleton" />
+     <div>{Array.from({ length: 6 }, (_, index) => <span className="skeleton" key={index} />)}</div>
+     <b className="skeleton" />
+    </section>
+   )}
+  </div>
+ );
+}
+
+function AppBootSkeleton() {
+ return (
+  <div className="app-shell app-boot-skeleton" role="status" aria-label="Loading workspace">
+   <aside className="sidebar" aria-hidden="true">
+    <div className="boot-brand skeleton" />
+    <div className="boot-nav">{Array.from({ length: 9 }, (_, index) => <i className="skeleton" key={index} />)}</div>
+   </aside>
+   <main><PageSkeleton label="Loading workspace" /></main>
+  </div>
+ );
+}
+
 function Metric({ label, value, suffix, sub, icon: Icon, index = 0, loading = false }: any) {
  const paths = [
  'M1 26 C12 21 16 28 25 18 S42 13 50 20 S66 5 80 11 S94 17 107 5',
@@ -2389,6 +2444,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  const [summary, setSummary] = useState<any>({});
  const [insights, setInsights] = useState<any>({ statuses: [], campaigns: [] });
  const [forecastTracking, setForecastTracking] = useState<any>({ summary: {}, timeline: [] });
+ const [trackingReady, setTrackingReady] = useState(false);
  const [adSpend, setAdSpend] = useState<any>({ available: false, summary: {}, daily: [], campaigns: [], ad_sets: [] });
  const [sets, setSets] = useState<any[]>([]);
  const [query, setQuery] = useState('');
@@ -2614,8 +2670,11 @@ function ForecastPage({ role }: { role: UserRole }) {
  })
  .catch(() => {
  if (!controller.signal.aborted && requestId === trackingRequestId.current) {
- setForecastTracking({ summary: {}, timeline: [] });
- }
+   setForecastTracking({ summary: {}, timeline: [] });
+  }
+ })
+ .finally(() => {
+  if (!controller.signal.aborted && requestId === trackingRequestId.current) setTrackingReady(true);
  });
  return () => controller.abort();
  }, [selectedCampaignId, selectedId]);
@@ -3534,6 +3593,10 @@ function ForecastPage({ role }: { role: UserRole }) {
  tone: 'neutral' as const,
  },
  ];
+
+ if ((busy && !Object.keys(summary).length) || (!!selectedCampaignId && !trackingReady)) {
+  return <PageSkeleton variant="analytics" label="Loading forecast" />;
+ }
 
  return (
  <div className="page-content dashboard-page forecast-v2-page">
@@ -4812,7 +4875,8 @@ function UploadPage({ role }: { role: UserRole }) {
 function HistoryPage({ role }: { role: UserRole }) {
  const canWrite = role !== 'staff';
  const [rows, setRows] = useState<any[]>([]);
- const load = () => api('/uploads').then(setRows);
+ const [initialLoading, setInitialLoading] = useState(true);
+ const load = () => api('/uploads').then(setRows).catch(() => setRows([])).finally(() => setInitialLoading(false));
  useEffect(() => { void load(); }, []);
  const totals = {
   files: rows.length,
@@ -4825,6 +4889,7 @@ function HistoryPage({ role }: { role: UserRole }) {
    load();
   }
  };
+ if (initialLoading) return <PageSkeleton variant="table" label="Loading import history" />;
  return (
  <div className="page-content imports-page">
  <section className="imports-heading">
@@ -5694,6 +5759,9 @@ function DatasetPage({ role }: { role: UserRole }) {
  const [correlation, setCorrelation] = useState<any>(null);
  const [ols, setOls] = useState<any>(null);
  const [error, setError] = useState('');
+ const [diagnosticsReady, setDiagnosticsReady] = useState(false);
+ const [rowsReady, setRowsReady] = useState(false);
+ const [campaignsReady, setCampaignsReady] = useState(false);
 
  const [hoverIdx, setHoverIdx] = useState(-1);
  const [declaredHoverIdx, setDeclaredHoverIdx] = useState(-1);
@@ -5775,7 +5843,10 @@ function DatasetPage({ role }: { role: UserRole }) {
  const campaignPickerRef = useRef<HTMLDivElement>(null);
 
  useEffect(() => {
-  api('/dashboard/insights').then((data) => setCampaigns(data.campaigns || [])).catch(() => {});
+  api('/dashboard/insights')
+   .then((data) => setCampaigns(data.campaigns || []))
+   .catch(() => {})
+   .finally(() => setCampaignsReady(true));
  }, []);
 
  useEffect(() => {
@@ -5828,7 +5899,8 @@ function DatasetPage({ role }: { role: UserRole }) {
   const suffix = scopeParams ? `?${scopeParams}` : '';
   Promise.all([api(`/dataset/correlation${suffix}`), api(`/ols-summary${suffix}`)])
    .then(([correlationData, olsData]) => { setCorrelation(correlationData); setOls(olsData); })
-   .catch((err) => setError(err.message || 'Failed to load dataset diagnostics'));
+   .catch((err) => setError(err.message || 'Failed to load dataset diagnostics'))
+   .finally(() => setDiagnosticsReady(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [scopeParams, dataRefreshKey]);
 
@@ -5875,7 +5947,11 @@ function DatasetPage({ role }: { role: UserRole }) {
     setRowsData({ rows: data.rows, total: data.total, limit: data.limit });
    })
    .catch((err) => { if (requestId === rowsRequestId.current) setError(err.message || 'Failed to load rows'); })
-   .finally(() => { if (requestId === rowsRequestId.current) setRowsBusy(false); });
+   .finally(() => {
+    if (requestId !== rowsRequestId.current) return;
+    setRowsBusy(false);
+    setRowsReady(true);
+   });
   // `dataRefreshKey` for the same reason the correlation/OLS effect above needs it: the raw
   // table's declared-variable columns are derived from recorded changes, so a popover save
   // changes them without touching the scope or page. `rowsQueryKey` folds in table/scope/
@@ -6154,6 +6230,8 @@ function DatasetPage({ role }: { role: UserRole }) {
 
  const rowStart = rowsData.total ? rowsOffset + 1 : 0;
  const rowEnd = Math.min(rowsOffset + rowsData.limit, rowsData.total);
+
+ if (!diagnosticsReady || !rowsReady || !campaignsReady) return <PageSkeleton variant="table" label="Loading dataset" />;
 
  return (
   <div className="page-content dataset-page">
@@ -6632,6 +6710,7 @@ function FollowupPage() {
  const [compact, setCompact] = useState(false);
  const [selected, setSelected] = useState<string[]>([]);
  const [loading, setLoading] = useState(true);
+ const [hasLoaded, setHasLoaded] = useState(false);
  const [error, setError] = useState('');
  const [message, setMessage] = useState('');
  const [refreshKey, setRefreshKey] = useState(0);
@@ -6663,7 +6742,7 @@ function FollowupPage() {
   api(`/follow-up/leads?${query}`)
    .then((result) => { if (!cancelled) setRowsData(result); })
    .catch((err: any) => { if (!cancelled) setError(err.message || 'Failed to load follow-ups.'); })
-   .finally(() => { if (!cancelled) setLoading(false); });
+   .finally(() => { if (!cancelled) { setLoading(false); setHasLoaded(true); } });
   return () => { cancelled = true; };
  }, [query, refreshKey]);
 
@@ -6753,6 +6832,8 @@ function FollowupPage() {
  const isOverdue = (value: any) => value && String(value).slice(0, 10) < today;
  const totalPages = Math.max(1, Math.ceil(rowsData.total / rowsData.limit));
  const currentPage = Math.floor(offset / rowsData.limit) + 1;
+
+ if (!hasLoaded) return <PageSkeleton variant="table" label="Loading follow-ups" />;
 
  return (
   <div className="page-content followup-page">
@@ -7009,6 +7090,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  );
  const [summary, setSummary] = useState<any>(EMPTY_LEAD_SUMMARY);
  const [summaryBusy, setSummaryBusy] = useState(true);
+ const [summaryReady, setSummaryReady] = useState(false);
+ const [rowsReady, setRowsReady] = useState(false);
+ const [optionsReady, setOptionsReady] = useState(false);
 
  // --- Filters -----------------------------------------------------------------------------
  // Campaign and ad set ride as scope params (the backend's `campaign_id`/`ad_set_id`), the
@@ -7061,7 +7145,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  useEffect(() => {
   api('/lead-management/options')
    .then(setOptions)
-   .catch((err: any) => setBoardError(err.message || 'Failed to load filter options.'));
+   .catch((err: any) => setBoardError(err.message || 'Failed to load filter options.'))
+   .finally(() => setOptionsReady(true));
  }, []);
 
  useEffect(() => {
@@ -7166,7 +7251,11 @@ function LeadManagementPage({ role }: { role: UserRole }) {
     setRowsData({ rows: data.rows, total: data.total, limit: data.limit });
    })
    .catch((err: any) => { if (requestId === rowsRequestId.current) setBoardError(err.message || 'Failed to load leads.'); })
-   .finally(() => { if (requestId === rowsRequestId.current) setRowsBusy(false); });
+   .finally(() => {
+    if (requestId !== rowsRequestId.current) return;
+    setRowsBusy(false);
+    setRowsReady(true);
+   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [queryKey, rowsOffset, refreshKey]);
 
@@ -7176,7 +7265,11 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   api(`/lead-management/summary${standaloneQuery}`)
    .then((data) => { if (requestId === summaryRequestId.current) setSummary(data); })
    .catch(() => { if (requestId === summaryRequestId.current) setSummary(EMPTY_LEAD_SUMMARY); })
-   .finally(() => { if (requestId === summaryRequestId.current) setSummaryBusy(false); });
+   .finally(() => {
+    if (requestId !== summaryRequestId.current) return;
+    setSummaryBusy(false);
+    setSummaryReady(true);
+   });
   // Keyed on `scopeKey`, not `queryKey`: not on `rowsOffset` because the funnel describes the
   // whole population rather than a page of it, and not on the stage toggles because those
   // change which rows the board lists, not which leads the funnel is counting.
@@ -7626,6 +7719,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    setExportingCsv(false);
   }
  };
+
+ if (!summaryReady || !rowsReady || !optionsReady) return <PageSkeleton variant="analytics" label="Loading lead management" />;
 
  // Skeletons only on the very first load. Once a total exists, a refetch swaps numbers in
  // place rather than blanking cells the reader is mid-sentence on.
@@ -8422,6 +8517,8 @@ function OptimizationPage() {
   { label: 'Net leads if applied', value: `${netLeads > 0 ? '+' : ''}${fmt(netLeads)}`, suffix: '/day', note: `${fmt(leadStart)} -> ${fmt(leadEnd)} leads`, positive: netLeads > 0 },
  ];
 
+ if (loading && !data) return <PageSkeleton variant="table" label="Loading optimization" />;
+
  return (
   <div className="page-content optimization-page optimization-design-clarity">
    <div className="page-heading">
@@ -8446,17 +8543,6 @@ function OptimizationPage() {
    </div>
 
    {error && <div className="decision-error" role="alert">{error}</div>}
-
-   {loading && !data && (
-    <section className="optimization-metrics optimization-skeleton" aria-hidden="true">
-     {[0, 1, 2, 3, 4, 5].map((item) => (
-      <div className="om-metric" key={item}>
-       <div className="skeleton skeleton-line" style={{ width: '54%' }} />
-       <div className="skeleton skeleton-line" style={{ width: '72%', height: 24 }} />
-      </div>
-     ))}
-    </section>
-   )}
 
    {!loading && data && !data.available && (
     <div className="card-empty-state glass-panel"><TrendingUp /><b>No ad spend yet</b>
@@ -8699,6 +8785,7 @@ function AdminPage() {
  const [users, setUsers] = useState<AdminUser[]>([]);
  const [activity, setActivity] = useState<AdminActivity[]>([]);
  const [loading, setLoading] = useState(true);
+ const [hasLoaded, setHasLoaded] = useState(false);
  const [saving, setSaving] = useState(false);
  const [error, setError] = useState('');
  const [message, setMessage] = useState('');
@@ -8719,6 +8806,7 @@ function AdminPage() {
    setError(loadError.message || 'Could not load admin users');
   } finally {
    setLoading(false);
+   setHasLoaded(true);
   }
  };
 
@@ -8811,6 +8899,8 @@ function AdminPage() {
   ['Manager', 'Can change forecasting data and operational records, but cannot manage users.'],
   ['Staff', 'Can sort and rate Lead Management quality. Everything else is view-only, with no Admin page access.'],
  ];
+
+ if (!hasLoaded) return <PageSkeleton variant="form" label="Loading administration" />;
 
  return (
   <div className="page-content admin-page">
@@ -9077,7 +9167,7 @@ export function App() {
   if (page === 'Upload Data' && role === 'staff') setPage('Forecast');
  }, [page, role]);
 
- if (auth.checking) return <LoginPage checking onSignedIn={signedIn} />;
+ if (auth.checking) return <AppBootSkeleton />;
  if (auth.required && !auth.signedIn) return <LoginPage onSignedIn={signedIn} />;
 
  return (
