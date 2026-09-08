@@ -7771,9 +7771,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <Plus size={14} />Add Leads
        </button>
       )}
-      <button type="button" className="lead-duplicates-btn" disabled={duplicatesBusy} onClick={openDuplicates}>
-       <Copy size={14} />{duplicatesBusy ? 'Scanning' : 'Duplicates'}
-      </button>
       <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
        <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
       </button>

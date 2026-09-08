@@ -6168,30 +6168,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-add-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
 .lead-add-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
-.lead-duplicates-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 10px;
-  color: var(--text);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  font: 700 11px var(--font-display);
-  cursor: pointer;
-  transition: color .14s ease, border-color .14s ease, background .14s ease, transform .1s ease;
-}
-.lead-duplicates-btn > svg { color: var(--gold-strong); }
-.lead-duplicates-btn:hover {
-  color: var(--gold-strong);
-  border-color: color-mix(in srgb, var(--gold-strong) 48%, var(--line));
-  background: color-mix(in srgb, var(--gold) 7%, var(--surface));
-}
-.lead-duplicates-btn:active { transform: scale(.97); }
-.lead-duplicates-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
-.lead-duplicates-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-
 .lead-toolbar-rule {
   align-self: center;
   width: 1px;
