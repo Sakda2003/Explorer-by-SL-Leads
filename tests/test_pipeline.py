@@ -255,6 +255,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(summary["rated"], 0)
         self.assertEqual(summary["rated_share"], 0.0)
 
+    def test_lead_pipeline_chart_series_reconcile_with_summary(self):
+        self.import_frame(frame_for(4), "lead-chart-series.csv")
+        with core.connect() as db:
+            ids = [row[0] for row in db.execute("SELECT id FROM lead_events ORDER BY id").fetchall()]
+            for lead_id, quality in zip(ids, ["Qualified", "Awaiting Document and Payment", "Converted", "Lost"]):
+                db.execute("UPDATE lead_events SET lead_quality=? WHERE id=?", (quality, lead_id))
+
+        summary = core.get_lead_pipeline_summary()
+
+        self.assertEqual(sum(day["total"] for day in summary["daily_series"]), summary["total"])
+        self.assertEqual(sum(day["converted"] for day in summary["daily_series"]), summary["converted"])
+        self.assertEqual(sum(row["total"] for row in summary["campaigns"]), summary["total"])
+        self.assertEqual(sum(row["qualified"] for row in summary["campaigns"]), summary["qualified"])
+        self.assertIn("cost_per_converted", summary["campaigns"][0])
+        self.assertEqual(summary["daily_series"][-1]["lost"], 1)
+
     def test_dashboard_insights_reconcile_status_and_campaign_mix(self):
         self.import_frame(frame_for(4), "dashboard-mix.csv")
         insights = core.get_dashboard_insights()

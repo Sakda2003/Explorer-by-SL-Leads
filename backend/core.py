@@ -7042,6 +7042,22 @@ def get_lead_pipeline_summary(
             f"FROM {table_sql} GROUP BY status",
             params,
         ).fetchall()
+        daily_stage_rows = db.execute(
+            f"SELECT date(created_at) AS day, "
+            f"COALESCE(NULLIF(TRIM(lead_quality), ''), ?) AS stage, COUNT(*) AS n "
+            f"FROM {table_sql} GROUP BY day, stage ORDER BY day",
+            [DEFAULT_IMPORTED_LEAD_QUALITY, *params],
+        ).fetchall()
+        campaign_rows = db.execute(
+            f"""SELECT COALESCE(NULLIF(TRIM(utm_campaign_id), ''), 'Unattributed') AS campaign_id,
+                       COALESCE(MAX(NULLIF(TRIM(utm_campaign), '')), 'Unattributed') AS campaign,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN lead_quality IN ({','.join('?' for _ in LEAD_QUALIFIED_STAGES)}) THEN 1 ELSE 0 END) AS qualified,
+                       SUM(CASE WHEN lead_quality = 'Converted' THEN 1 ELSE 0 END) AS converted
+                FROM {table_sql}
+                GROUP BY campaign_id ORDER BY total DESC, campaign_id""",
+            [*LEAD_QUALIFIED_STAGES, *params],
+        ).fetchall()
         # Spend is summed over the DISTINCT (ad set, day) pairs the matched leads came from,
         # never per lead: `amount_spent_usd` on a lead row is the ad set's whole-day spend
         # (see the "leads" spec's COALESCE join), so SUM()ing it across leads would multiply
@@ -7056,6 +7072,19 @@ def get_lead_pipeline_summary(
                   ON p.ad_set_id = matched.ad_set_id AND p.day = matched.day""",
             params,
         ).fetchone()[0]
+        campaign_spend_rows = db.execute(
+            f"""SELECT matched.campaign_id, COALESCE(SUM(p.spend), 0) AS spend
+                FROM (
+                  SELECT DISTINCT COALESCE(NULLIF(TRIM(utm_campaign_id), ''), 'Unattributed') AS campaign_id,
+                                  utm_ad_set_id AS ad_set_id, date(created_at) AS day
+                  FROM {table_sql}
+                ) matched
+                JOIN (SELECT ad_set_id, day, SUM(amount_spent_usd) AS spend
+                      FROM daily_ad_performance GROUP BY ad_set_id, day) p
+                  ON p.ad_set_id = matched.ad_set_id AND p.day = matched.day
+                GROUP BY matched.campaign_id""",
+            params,
+        ).fetchall()
 
     counts = {str(row["stage"]): int(row["n"]) for row in stage_rows}
     # Zero-filled and ordered by LEAD_QUALITY_OPTIONS so the funnel renders every stage in
@@ -7083,6 +7112,57 @@ def get_lead_pipeline_summary(
     rated = total - pending_review
     spend_value = float(spend or 0.0)
 
+    daily: dict[str, dict[str, object]] = {}
+    for row in daily_stage_rows:
+        day = str(row["day"] or "")
+        if not day:
+            continue
+        point = daily.setdefault(day, {
+            "day": day, "total": 0, "rated": 0, "qualified_total": 0,
+            "pending_review": 0, "not_qualified": 0, "qualified": 0,
+            "awaiting": 0, "converted": 0, "lost": 0,
+        })
+        stage = str(row["stage"])
+        count = int(row["n"])
+        point["total"] = int(point["total"]) + count
+        if stage != DEFAULT_IMPORTED_LEAD_QUALITY:
+            point["rated"] = int(point["rated"]) + count
+        if stage in LEAD_QUALIFIED_STAGES:
+            point["qualified_total"] = int(point["qualified_total"]) + count
+        key = {
+            "Pending Review": "pending_review",
+            "Not Qualified": "not_qualified",
+            "Qualified": "qualified",
+            "Awaiting Document and Payment": "awaiting",
+            "Converted": "converted",
+            "Lost": "lost",
+        }.get(stage)
+        if key:
+            point[key] = int(point[key]) + count
+    daily_series = []
+    for point in daily.values():
+        rated_day = int(point["rated"])
+        point["qualification_rate"] = (int(point["qualified_total"]) / rated_day) if rated_day else None
+        point["conversion_rate"] = (int(point["converted"]) / rated_day) if rated_day else None
+        daily_series.append(point)
+
+    campaign_spend = {str(row["campaign_id"]): float(row["spend"] or 0.0)
+                      for row in campaign_spend_rows}
+    campaign_series = []
+    for row in campaign_rows:
+        campaign_key = str(row["campaign_id"])
+        campaign_converted = int(row["converted"] or 0)
+        attributed_spend = campaign_spend.get(campaign_key, 0.0)
+        campaign_series.append({
+            "campaign_id": campaign_key,
+            "campaign": display_campaign_name(row["campaign"]),
+            "total": int(row["total"]),
+            "qualified": int(row["qualified"] or 0),
+            "converted": campaign_converted,
+            "matched_spend_usd": attributed_spend,
+            "cost_per_converted": (attributed_spend / campaign_converted) if campaign_converted else None,
+        })
+
     return {
         "total": total,
         "stages": stages,
@@ -7104,6 +7184,8 @@ def get_lead_pipeline_summary(
         "cost_per_lead": (spend_value / total) if total else None,
         "cost_per_qualified": (spend_value / qualified) if qualified else None,
         "cost_per_converted": (spend_value / converted) if converted else None,
+        "daily_series": daily_series,
+        "campaigns": campaign_series,
     }
 
 
