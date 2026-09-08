@@ -7002,34 +7002,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-insights-head { align-items: center; margin-bottom: 22px; }
 .lead-insights-head span { color: var(--gold); font-size: 11px; font-weight: 750; letter-spacing: 0; text-transform: uppercase; }
 .lead-insights-head h3 { margin: 6px 0 0; color: var(--text); font-size: 19px; font-weight: 650; letter-spacing: 0; }
-.lead-range-switch {
-  display: inline-grid;
-  grid-template-columns: repeat(3, 36px);
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
-}
-.lead-range-switch button {
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--dim);
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background .18s ease, color .18s ease, transform .18s ease;
-}
-.lead-range-switch button:hover { color: var(--text); }
-.lead-range-switch button:active { transform: scale(.96); }
-.lead-range-switch button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
-.lead-range-switch button.is-active { background: var(--gold); color: var(--ink-on-gold); }
 .lead-insight-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, .75fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .lead-chart-panel {
@@ -7039,19 +7014,14 @@ tr:hover .benchmark-bar span { opacity: 1; }
   border-radius: var(--r-md);
   background: var(--surface-2);
 }
-.lead-chart-outcomes { grid-column: 1 / -1; min-height: 430px; }
-.lead-chart-funnel { min-height: 274px; }
-.lead-chart-campaigns { min-height: 250px; }
-.lead-chart-mix,
-.lead-chart-rates { min-height: 232px; }
+.lead-chart-outcomes { min-height: 430px; }
 .lead-chart-head { min-height: 42px; margin-bottom: 16px; }
 .lead-chart-head h4 { margin: 0; color: var(--text); font-size: 15px; font-weight: 700; }
 .lead-chart-head p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .lead-chart-head > strong { color: var(--text); font-family: var(--font-mono); font-size: 16px; font-variant-numeric: tabular-nums; }
 .lead-chart-legend { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 16px; max-width: 62%; }
 .lead-chart-legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; }
-.lead-chart-legend i,
-.lead-mix-key i { width: 6px; height: 6px; border-radius: 50%; }
+.lead-chart-legend i { width: 6px; height: 6px; border-radius: 50%; }
 .lead-chart-legend .lead-share-bar-key { border-radius: 2px; background: var(--status-info-fill); }
 .lead-chart-legend .lead-count-line-key,
 .lead-outcome-tooltip .lead-count-line-key { width: 10px; height: 2px; border-radius: 1px; background: var(--yellow-strong); }
@@ -7067,53 +7037,11 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-outcome-filters strong { color: var(--text); font-family: var(--font-mono); font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .lead-chart-canvas { width: 100%; }
 .lead-chart-canvas-main { height: 285px; }
-.lead-chart-canvas-campaign { height: 188px; }
-.lead-chart-canvas-rate { height: 166px; }
 .lead-chart-skeleton { height: 352px; border-radius: var(--r-sm); }
 .lead-chart-empty { display: grid; place-items: center; min-height: 160px; margin: 0; color: var(--dim); font-size: 11px; }
 .lead-chart-tooltip { max-width: 260px; }
 .lead-chart-tooltip b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lead-chart-panel .recharts-bar-rectangle { cursor: pointer; }
-
-.lead-funnel-list { display: grid; gap: 8px; }
-.lead-funnel-list button {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.lead-funnel-list button:disabled { cursor: default; opacity: 1; }
-.lead-funnel-list button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
-.lead-funnel-list button > span { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.lead-funnel-list b { color: var(--muted); font-size: 9.5px; font-weight: 600; }
-.lead-funnel-list strong { color: var(--text); font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
-.lead-funnel-list button > i { height: 5px; overflow: hidden; border-radius: var(--r-pill); background: var(--line); }
-.lead-funnel-list em { display: block; width: 100%; height: 100%; border-radius: inherit; background: var(--gold); transform: scaleX(var(--fill, 0)); transform-origin: left; transition: transform .3s ease; }
-.lead-funnel-list button:nth-child(2) em { background: var(--status-info-fill); }
-.lead-funnel-list button:nth-child(3) em { background: var(--status-warn-fill); }
-.lead-funnel-list button:nth-child(4) em { background: var(--status-good-fill); }
-.lead-funnel-list button:not(:disabled):hover b,
-.lead-funnel-list button.is-active b { color: var(--text); }
-.lead-funnel-list small { color: var(--dim); font-size: 8.5px; }
-
-.lead-mix-bar { display: flex; width: 100%; height: 18px; margin: 8px 0 17px; overflow: hidden; border-radius: 4px; background: var(--line); }
-.lead-mix-bar button { flex: var(--share) 1 0; min-width: 3px; padding: 0; border: 0; border-right: 2px solid var(--surface-2); background: var(--mix-color); cursor: pointer; transition: filter .18s ease, transform .18s ease; }
-.lead-mix-bar button:last-child { border-right: 0; }
-.lead-mix-bar button:hover { filter: brightness(1.18); transform: scaleY(1.12); }
-.lead-mix-bar button:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
-.lead-mix-key { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; }
-.lead-mix-key button { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-width: 0; padding: 4px 5px; border: 0; border-radius: 4px; background: transparent; color: var(--dim); font: inherit; font-size: 9px; text-align: left; cursor: pointer; }
-.lead-mix-key button:hover,
-.lead-mix-key button.is-active { background: var(--surface-tint); color: var(--text); }
-.lead-mix-key button:focus-visible { outline: 2px solid var(--gold); }
-.lead-mix-key span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lead-mix-key strong { font-family: var(--font-mono); font-size: 8.5px; font-variant-numeric: tabular-nums; }
 
 /* --- Acquisition cost -------------------------------------------------------------------- */
 .lead-figures {
@@ -7217,14 +7145,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-heading-campaign { flex: 1 1 160px; min-width: 0; }
   .lead-heading-campaign .menu-select-trigger { width: 100%; max-width: none; }
   .lead-insights-head { flex-direction: column; }
-  .lead-range-switch { align-self: stretch; grid-template-columns: repeat(3, 1fr); }
   .lead-chart-panel { padding: 16px 12px; }
   .lead-chart-outcomes { min-height: 420px; }
   .lead-chart-canvas-main { height: 270px; }
-  .lead-mix-key { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer, .lead-range-switch button, .lead-funnel-list em, .lead-mix-bar button { transition: none; animation: none; }
+  .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer { transition: none; animation: none; }
 }
 /* Follow-up CRM queue */
 .page-content.followup-page { max-width: none; min-height: 100vh; margin: 0; padding: 26px 40px 110px; background: var(--canvas); color: var(--text); }

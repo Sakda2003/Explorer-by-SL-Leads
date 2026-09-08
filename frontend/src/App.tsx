@@ -7082,20 +7082,6 @@ const LEAD_CHART_STAGES = [
  { key: 'lost', quality: 'Lost', label: 'Lost', color: 'var(--status-lost-fill)' },
 ] as const;
 
-function LeadChartTooltip({ active, payload, label, rate = false }: any) {
- if (!active || !payload?.length) return null;
- const rows = payload.filter((item: any) => item.value != null && Number(item.value) !== 0);
- return (
-  <div className="forecast-tooltip lead-chart-tooltip">
-   <span>{rate ? 'CONVERSION HEALTH' : 'LEAD OUTCOMES'}</span>
-   <b>{dateFmt(label)}</b>
-   {rows.map((item: any) => (
-    <p key={item.dataKey}><i style={{ background: item.color }} />{item.name}<strong>{rate ? percent(item.value) : fmt(item.value)}</strong></p>
-   ))}
-  </div>
- );
-}
-
 function LeadOutcomeShareTooltip({ active, payload }: any) {
  if (!active || !payload?.length) return null;
  const point = payload[0]?.payload || {};
@@ -7105,21 +7091,6 @@ function LeadOutcomeShareTooltip({ active, payload }: any) {
    <b>{point.label}</b>
    <p><i style={{ background: point.color }} />Share of leads<strong>{Number(point.percentage || 0).toFixed(1)}%</strong></p>
    <p><i className="lead-count-line-key" />Lead count<strong>{fmt(point.count)}</strong></p>
-  </div>
- );
-}
-
-function LeadCampaignTooltip({ active, payload }: any) {
- if (!active || !payload?.length) return null;
- const point = payload[0]?.payload || {};
- return (
-  <div className="forecast-tooltip lead-chart-tooltip">
-   <span>CAMPAIGN PERFORMANCE</span>
-   <b>{point.campaign}</b>
-   <p><i />All leads<strong>{fmt(point.total)}</strong></p>
-   <p><i style={{ background: 'var(--status-info-fill)' }} />Passed qualification<strong>{fmt(point.qualified)}</strong></p>
-   <p><i style={{ background: 'var(--status-good-fill)' }} />Converted<strong>{fmt(point.converted)}</strong></p>
-   <small>{point.cost_per_converted == null ? 'No converted leads yet' : `${cplMoney(point.cost_per_converted)} per conversion`}</small>
   </div>
  );
 }
@@ -7146,7 +7117,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  // "show me Qualified *and* Awaiting Document" is the natural next question after seeing the
  // two counts side by side.
  const [qualityFilter, setQualityFilter] = useState<string[]>([]);
- const [insightDays, setInsightDays] = useState<7 | 30 | 90>(30);
  const [searchDraft, setSearchDraft] = useState('');
  const [search, setSearch] = useState('');
 
@@ -7796,22 +7766,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    color: stage?.color || 'var(--muted)',
   };
  });
- const dailySeries = [...(summary.daily_series || [])]
-  .sort((a: any, b: any) => String(a.day).localeCompare(String(b.day)))
-  .slice(-insightDays);
- const campaignSeries = (summary.campaigns || []).slice(0, 6).map((item: any) => ({
-  ...item,
-  shortName: String(item.campaign || 'Unattributed').length > 24
-   ? `${String(item.campaign).slice(0, 22)}...`
-   : String(item.campaign || 'Unattributed'),
- }));
- const funnelSeries = [
-  { label: 'Reviewed', count: Number(summary.rated || 0), quality: '' },
-  { label: 'Passed qualification', count: Number(summary.qualified || 0), quality: 'Qualified' },
-  { label: 'Reached documents', count: Number((stages.find((stage: any) => stage.quality === 'Awaiting Document and Payment')?.count || 0) + (summary.converted || 0)), quality: 'Awaiting Document and Payment' },
-  { label: 'Converted', count: Number(summary.converted || 0), quality: 'Converted' },
- ];
- const funnelMax = Math.max(1, ...funnelSeries.map((item) => item.count));
  return (
   <div className="page-content lead-management-page">
    <section className="dataset-heading">
@@ -7884,13 +7838,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <span>Performance insights</span>
         <h3 id="lead-insights-heading">Lead movement and conversion health</h3>
        </div>
-       <div className="lead-range-switch" aria-label="Chart period">
-        {([7, 30, 90] as const).map((days) => (
-         <button type="button" key={days} className={insightDays === days ? 'is-active' : ''} aria-pressed={insightDays === days} onClick={() => setInsightDays(days)}>
-          {days}D
-         </button>
-        ))}
-       </div>
       </div>
 
       <div className="lead-insight-grid">
@@ -7933,81 +7880,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
            </ComposedChart>
           </ResponsiveContainer>
          </div>
-        ) : <p className="lead-chart-empty">No lead outcomes in this view.</p>}
-       </article>
-
-       <article className="lead-chart-panel lead-chart-funnel">
-        <div className="lead-chart-head"><div><h4>Conversion funnel</h4><p>Current stage progression</p></div></div>
-        <div className="lead-funnel-list">
-         {funnelSeries.map((item, index) => {
-          const active = item.quality ? qualityFilter.includes(item.quality) : false;
-          return (
-           <button type="button" key={item.label} className={active ? 'is-active' : ''} disabled={!item.quality} aria-pressed={item.quality ? active : undefined} onClick={() => item.quality && toggleStage(item.quality)}>
-            <span><b>{item.label}</b><strong>{fmt(item.count)}</strong></span>
-            <i><em style={{ '--fill': item.count / funnelMax } as CSSProperties} /></i>
-            {index > 0 && <small>{percent(funnelSeries[index - 1].count ? item.count / funnelSeries[index - 1].count : 0)} from previous</small>}
-           </button>
-          );
-         })}
-        </div>
-       </article>
-
-       <article className="lead-chart-panel lead-chart-campaigns">
-        <div className="lead-chart-head"><div><h4>Campaign performance</h4><p>Top campaigns by lead volume</p></div></div>
-        {campaignSeries.length ? (
-         <div className="lead-chart-canvas lead-chart-canvas-campaign">
-          <ResponsiveContainer width="100%" height="100%">
-           <BarChart data={campaignSeries} layout="vertical" margin={{ top: 0, right: 78, left: 0, bottom: 0 }} barCategoryGap="30%">
-            <CartesianGrid stroke="var(--grid-line)" horizontal={false} />
-            <XAxis type="number" allowDecimals={false} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} />
-            <YAxis type="category" dataKey="shortName" width={138} tick={{ fontSize: 9.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} />
-            <Tooltip content={<LeadCampaignTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            <Bar dataKey="qualified" name="Passed qualification" fill="var(--status-info-fill)" radius={[0, 3, 3, 0]} onClick={(entry: any) => { const id = String(entry?.campaign_id || entry?.payload?.campaign_id || ''); if (id && id !== 'Unattributed') pickCampaign(id); }} />
-            <Bar dataKey="converted" name="Converted" fill="var(--status-good-fill)" radius={[0, 3, 3, 0]} onClick={(entry: any) => { const id = String(entry?.campaign_id || entry?.payload?.campaign_id || ''); if (id && id !== 'Unattributed') pickCampaign(id); }}>
-             <LabelList dataKey="cost_per_converted" position="right" formatter={(value: any) => value == null ? '-' : `${cplMoney(value)}/sale`} fill="var(--dim)" fontSize={8.5} fontWeight={600} />
-            </Bar>
-           </BarChart>
-          </ResponsiveContainer>
-         </div>
-        ) : <p className="lead-chart-empty">No campaign data in this view.</p>}
-       </article>
-
-       <article className="lead-chart-panel lead-chart-mix">
-        <div className="lead-chart-head"><div><h4>Lead quality mix</h4><p>Share of all leads</p></div><strong>{fmt(summary.total)}</strong></div>
-        <div className="lead-mix-bar" role="img" aria-label="Current lead quality distribution">
-         {LEAD_CHART_STAGES.map((stage) => {
-          const item = leadKpis.find((kpi) => kpi.quality === stage.quality);
-          const share = Number(item?.share || 0);
-          return share > 0 ? <button type="button" key={stage.key} style={{ '--share': share, '--mix-color': stage.color } as CSSProperties} aria-label={`${stage.label}: ${percent(share)}`} onClick={() => toggleStage(stage.quality)} /> : null;
-         })}
-        </div>
-        <div className="lead-mix-key">
-         {LEAD_CHART_STAGES.map((stage) => {
-          const item = leadKpis.find((kpi) => kpi.quality === stage.quality);
-          return <button type="button" key={stage.key} className={qualityFilter.includes(stage.quality) ? 'is-active' : ''} onClick={() => toggleStage(stage.quality)}><i style={{ background: stage.color }} /><span>{stage.label}</span><strong>{percent(item?.share || 0)}</strong></button>;
-         })}
-        </div>
-       </article>
-
-       <article className="lead-chart-panel lead-chart-rates">
-        <div className="lead-chart-head">
-         <div><h4>Conversion rate</h4><p>Daily share of reviewed leads</p></div>
-         <div className="lead-chart-legend"><span><i style={{ background: 'var(--status-info-fill)' }} />Qualified</span><span><i style={{ background: 'var(--status-good-fill)' }} />Converted</span></div>
-        </div>
-        {dailySeries.length ? (
-         <div className="lead-chart-canvas lead-chart-canvas-rate">
-          <ResponsiveContainer width="100%" height="100%">
-           <LineChart data={dailySeries} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-            <CartesianGrid stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="day" tickFormatter={(value) => String(value).slice(5)} minTickGap={28} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} />
-            <YAxis domain={[0, 1]} tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} width={38} />
-            <Tooltip content={<LeadChartTooltip rate />} />
-            <Line type="monotone" dataKey="qualification_rate" name="Qualification rate" stroke="var(--status-info-fill)" strokeWidth={2} dot={false} connectNulls />
-            <Line type="monotone" dataKey="conversion_rate" name="Conversion rate" stroke="var(--status-good-fill)" strokeWidth={2} dot={false} connectNulls />
-           </LineChart>
-          </ResponsiveContainer>
-         </div>
-        ) : <p className="lead-chart-empty">No reviewed lead history in this view.</p>}
+       ) : <p className="lead-chart-empty">No lead outcomes in this view.</p>}
        </article>
       </div>
      </section>
