@@ -6711,6 +6711,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   grid-template-areas:
     "pipeline queue"
     "pipeline outcomes"
+    "kpis     kpis"
     "cost     cost";
   gap: 12px;
   margin-bottom: 22px;
@@ -6718,6 +6719,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-cell-pipeline { grid-area: pipeline; }
 .lead-cell-queue { grid-area: queue; }
 .lead-cell-outcomes { grid-area: outcomes; }
+.lead-kpis { grid-area: kpis; }
 .lead-cell-cost { grid-area: cost; }
 
 .lead-cell {
@@ -6933,6 +6935,100 @@ tr:hover .benchmark-bar span { opacity: 1; }
   letter-spacing: -.02em;
 }
 
+/* --- Key pipeline stages ---------------------------------------------------------------- */
+.lead-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.lead-kpi {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 132px;
+  padding: 14px 16px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--elev-1);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+.lead-kpi:hover {
+  border-color: color-mix(in srgb, var(--stage-fill, var(--gold)) 48%, var(--line));
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+.lead-kpi:active { transform: translateY(0) scale(.99); }
+.lead-kpi:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.lead-kpi.is-active {
+  border-color: color-mix(in srgb, var(--stage-fill, var(--gold)) 72%, var(--line));
+  background: color-mix(in srgb, var(--stage-fill, var(--gold)) 9%, var(--surface));
+}
+.lead-kpi-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 27px;
+}
+.lead-kpi-label {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+.lead-kpi-state {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+.lead-kpi.is-active .lead-kpi-label,
+.lead-kpi.is-active .lead-kpi-state { color: var(--text); }
+.lead-kpi-value {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 27px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.lead-kpi-skeleton { width: 44%; height: 27px; margin-top: 3px; border-radius: var(--r-sm); }
+.lead-kpi-meter {
+  display: block;
+  height: 3px;
+  margin-top: 13px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--line-2);
+}
+.lead-kpi-meter > i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--stage-fill, var(--gold));
+  transform: scaleX(var(--fill, 0));
+  transform-origin: left center;
+  transition: transform .36s cubic-bezier(.22,1,.36,1);
+}
+.lead-kpi-foot {
+  margin-top: 7px;
+  color: var(--dim);
+  font-size: 9.5px;
+  line-height: 1.3;
+}
+.lead-kpi.is-active .lead-kpi-foot { color: var(--muted); }
+
 /* --- Acquisition cost -------------------------------------------------------------------- */
 .lead-figures {
   display: grid;
@@ -7008,13 +7104,17 @@ tr:hover .benchmark-bar span { opacity: 1; }
     grid-template-areas:
       "pipeline pipeline"
       "queue    outcomes"
+      "kpis     kpis"
       "cost     cost";
   }
+}
+@media (max-width: 920px) {
+  .lead-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 780px) {
   .lead-bento {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "pipeline" "queue" "outcomes" "cost";
+    grid-template-areas: "pipeline" "queue" "outcomes" "kpis" "cost";
   }
   .lead-scope-select .menu-select-trigger { max-width: 150px; }
   .lead-total strong, .lead-queue-figure strong { font-size: 28px; }
@@ -7026,8 +7126,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-add-actions { justify-content: stretch; }
   .lead-add-secondary, .lead-add-primary { flex: 1 1 0; min-width: 0; }
 }
+@media (max-width: 480px) {
+  .lead-kpis { grid-template-columns: minmax(0, 1fr); }
+  .lead-kpi { min-height: 118px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .lead-pipeline-seg, .lead-progress > i, .lead-stage-row, .lead-add-drawer { transition: none; animation: none; }
+  .lead-pipeline-seg, .lead-progress > i, .lead-stage-row, .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer { transition: none; animation: none; }
   .lead-progress > i { transform: scaleX(var(--fill, 0)); }
 }
 /* Follow-up CRM queue */

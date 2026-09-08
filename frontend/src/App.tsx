@@ -7619,6 +7619,15 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const stages: any[] = summary.stages?.length
   ? summary.stages
   : LEAD_QUALITY_OPTIONS.map((quality) => ({ quality, count: 0, share: 0 }));
+ const leadKpis = [
+  { quality: 'Qualified', label: 'Qualified' },
+  { quality: 'Awaiting Document and Payment', label: 'Awaiting Document & Payment' },
+  { quality: 'Converted', label: 'Converted' },
+  { quality: 'Lost', label: 'Lost' },
+ ].map((item) => ({
+  ...item,
+  ...(stages.find((stage: any) => stage.quality === item.quality) || { count: 0, share: 0 }),
+ }));
  const campaignLabel = campaignId
   ? (options.campaigns.find((item: any) => String(item.campaign_id) === campaignId)?.campaign || campaignId)
   : 'All campaigns';
@@ -7737,6 +7746,34 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       ) : (
        <p className="lead-cell-empty">Rate a lead below to start measuring qualification and conversion.</p>
       )}
+     </section>
+
+     <section className="lead-kpis" aria-label="Key pipeline stages">
+      {leadKpis.map((kpi) => {
+       const active = qualityFilter.includes(kpi.quality);
+       return (
+        <button
+         type="button"
+         key={kpi.quality}
+         className={`lead-kpi quality-${leadQualitySlug(kpi.quality)}${active ? ' is-active' : ''}`}
+         aria-pressed={active}
+         aria-label={`${kpi.label}: ${plural(kpi.count, 'lead')}. ${active ? 'Remove' : 'Add'} stage filter`}
+         onClick={() => toggleStage(kpi.quality)}
+        >
+         <span className="lead-kpi-head">
+          <span className="lead-kpi-label">{kpi.label}</span>
+          <span className="lead-kpi-state">{active ? 'Filtering' : percent(kpi.share)}</span>
+         </span>
+         {showSkeleton
+          ? <span className="skeleton skeleton-line lead-kpi-skeleton" />
+          : <strong className="lead-kpi-value">{fmt(kpi.count)}</strong>}
+         <span className="lead-kpi-meter" aria-hidden="true">
+          <i style={{ '--fill': Math.max(0, Math.min(1, Number(kpi.share) || 0)) } as CSSProperties} />
+         </span>
+         <span className="lead-kpi-foot">{active ? 'Included in table view' : `${percent(kpi.share)} of all leads`}</span>
+        </button>
+       );
+      })}
      </section>
 
      <section className="lead-cell lead-cell-cost" aria-labelledby="lead-cost-heading">
