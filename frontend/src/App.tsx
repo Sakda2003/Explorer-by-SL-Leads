@@ -7621,8 +7621,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    </section>
 
    <section className="dataset-section">
-    {/* Review progress and rates form the compact overview; the interactive stage KPIs then
-        carry the pipeline detail without repeating it in a large summary panel. */}
+    {/* Review progress forms the compact overview; the interactive stage KPIs carry the
+        pipeline detail without repeating it in a large summary panel. */}
     <div className="lead-bento">
      <section className="lead-cell lead-cell-queue" aria-labelledby="lead-queue-heading">
       <div className="lead-cell-head">
@@ -7648,35 +7648,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
          ? `All ${plural(summary.total, 'lead')} rated. Nothing waiting.`
          : `${plural(summary.pending_review, 'lead')} pending review.`}
       </p>
-     </section>
-
-     <section className="lead-cell lead-cell-outcomes" aria-labelledby="lead-outcomes-heading">
-      <div className="lead-cell-head">
-       <h3 id="lead-outcomes-heading">Outcomes</h3>
-       {!!summary.rated && <span className="lead-cell-note">of {fmt(summary.rated)} rated</span>}
-      </div>
-      {/* Two zero-percents would be a lie dressed as data before anyone has rated anything.
-          The empty state names the action that fills this cell instead. */}
-      {summary.rated ? (
-       <div className="lead-outcome-rows">
-        {/* "Passed qualification", not "Qualified": this counts the whole band that cleared
-            triage (Qualified + Awaiting Document and Payment + Converted), which is a bigger
-            number than the Qualified STAGE listed in the pipeline cell a few inches away.
-            Naming both "Qualified" made the page look like it contradicted itself. */}
-        <div className="lead-outcome is-qualified">
-         <span className="lead-outcome-label">Passed qualification</span>
-         <strong className="lead-outcome-value">{percent(summary.qualification_rate)}</strong>
-         <span className="lead-outcome-sub">{plural(summary.qualified, 'lead')}</span>
-        </div>
-        <div className="lead-outcome is-converted">
-         <span className="lead-outcome-label">Converted</span>
-         <strong className="lead-outcome-value">{percent(summary.conversion_rate)}</strong>
-         <span className="lead-outcome-sub">{plural(summary.converted, 'lead')}</span>
-        </div>
-       </div>
-      ) : (
-       <p className="lead-cell-empty">Rate a lead below to start measuring qualification and conversion.</p>
-      )}
      </section>
 
      <section className="lead-kpis" aria-label="Key pipeline stages">
