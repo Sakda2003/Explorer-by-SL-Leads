@@ -944,9 +944,39 @@ main:has(.upload-v2-page) {
 .metric-bottom svg { width: 86px; height: 25px; overflow: visible; }
 .metric-bottom path { fill: none; stroke: var(--yellow); stroke-width: 1.6; stroke-linecap: round; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--yellow) 40%, transparent)); }
 
-@keyframes skeleton-sheen { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-.skeleton { position: relative; overflow: hidden; border-radius: 8px; background: var(--surface-soft); }
-.skeleton::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 6%, transparent), transparent); background-size: 200% 100%; animation: skeleton-sheen 1.4s ease-in-out infinite; }
+@keyframes skeleton-sweep {
+  0% { transform: translateX(-140%); }
+  55%, 100% { transform: translateX(240%); }
+}
+@keyframes skeleton-breathe {
+  0%, 100% { opacity: .58; }
+  50% { opacity: 1; }
+}
+.skeleton {
+  --skeleton-delay: 0s;
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 84%, var(--text) 16%);
+  animation: skeleton-breathe 1.8s ease-in-out var(--skeleton-delay) infinite;
+  will-change: opacity;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: -1px auto -1px 0;
+  width: 46%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 14%, transparent) 46%, color-mix(in srgb, var(--gold) 10%, transparent) 56%, transparent);
+  transform: translateX(-140%);
+  animation: skeleton-sweep 1.35s cubic-bezier(.4, 0, .2, 1) var(--skeleton-delay) infinite;
+  will-change: transform;
+}
+.page-skeleton-metrics article:nth-child(2n) .skeleton,
+.page-skeleton-table > div:nth-child(2n) .skeleton,
+.boot-nav i:nth-child(2n) { --skeleton-delay: -.2s; }
+.page-skeleton-metrics article:nth-child(3n) .skeleton,
+.page-skeleton-table > div:nth-child(3n) .skeleton { --skeleton-delay: -.4s; }
+.page-skeleton-analytics article:nth-child(2) .skeleton { --skeleton-delay: -.3s; }
 .skeleton-line { height: 12px; margin: 6px 0; }
 .skeleton-block { height: 100%; min-height: 120px; }
 .card-loading { display: grid; gap: 8px; padding: 4px 0; }
@@ -995,8 +1025,10 @@ main:has(.upload-v2-page) {
   .page-skeleton-form > div { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
+  .page-loading-skeleton .skeleton,
+  .app-boot-skeleton .skeleton { animation: none; opacity: .78; }
   .page-loading-skeleton .skeleton::after,
-  .app-boot-skeleton .skeleton::after { animation: none; opacity: .4; }
+  .app-boot-skeleton .skeleton::after { animation: none; opacity: 0; }
 }
 .card-empty-state { min-height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 20px; color: var(--dim); }
 .card-empty-state svg { width: 30px; height: 30px; color: var(--line-strong); }
