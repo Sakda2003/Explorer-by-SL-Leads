@@ -6078,6 +6078,15 @@ tr:hover .benchmark-bar span { opacity: 1; }
   justify-content: space-between;
   gap: 20px;
 }
+.lead-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+.lead-heading-campaign .menu-select-trigger { max-width: 260px; }
 
 /* --- Toolbar -------------------------------------------------------------------------------
    Scope filters and board tools share one compact row above the board, in the same vocabulary
@@ -6705,14 +6714,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "queue"
     "kpis"
     "insights"
     "cost";
   gap: 12px;
   margin-bottom: 22px;
 }
-.lead-cell-queue { grid-area: queue; }
 .lead-kpis { grid-area: kpis; }
 .lead-insights { grid-area: insights; }
 .lead-cell-cost { grid-area: cost; }
@@ -6742,16 +6749,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-weight: 600;
   letter-spacing: -.01em;
 }
-.lead-cell-queue .lead-cell-head { align-items: center; }
-.lead-queue-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 7px;
-  min-width: 0;
-}
-.lead-queue-campaign .menu-select-trigger { max-width: 260px; }
 .lead-cell-note {
   min-width: 0;
   overflow: hidden;
@@ -6762,9 +6759,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-weight: 500;
 }
 .lead-cell-foot { margin: 0; padding-top: 12px; color: var(--dim); font-size: 10.5px; line-height: 1.55; }
-/* Only the cost cell's foot sinks: it qualifies the four figures above it, so it reads as a
-   footnote. The queue cell's foot explains the bar directly above it and has to stay with it,
-   or the grid row (sized by the pipeline cell beside it) opens a hole in between. */
+/* The cost note stays pinned beneath the four figures it qualifies. */
 .lead-cell-cost .lead-cell-foot { margin-top: auto; }
 .lead-cell-empty {
   display: flex;
@@ -6777,25 +6772,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
   line-height: 1.6;
 }
 
-/* Mono because the review rate is a measurement read against the outcome figures beside it. */
-.lead-queue-figure {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin: 0 0 12px;
-}
-.lead-queue-figure strong {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 34px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.03em;
-  line-height: 1;
-}
-.lead-queue-figure span { color: var(--dim); font-size: 11.5px; font-weight: 600; }
-.lead-total-skeleton { width: 46%; height: 34px; margin-bottom: 12px; border-radius: var(--r-sm); }
-
 /* Each stage's colour, matching the pill it recolours in the board below (see the
    `.lead-quality-select.quality-*` rules) so a stage reads the same in both places. */
 .quality-pending-review { --stage-fill: var(--status-neutral-fill); }
@@ -6805,26 +6781,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .quality-converted { --stage-fill: var(--status-good-fill); }
 .quality-lost { --stage-fill: var(--status-lost-fill); }
 .quality-awaiting-document-and-payment { --stage-fill: var(--status-warn-fill); }
-
-/* --- Review queue ------------------------------------------------------------------------ */
-.lead-progress {
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: var(--line-2);
-  overflow: hidden;
-}
-/* Scaled, not resized: the fill is a full-width bar squashed from the left, so the one
-   animated thing on this page runs on the compositor instead of forcing a layout pass. */
-.lead-progress > i {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: var(--gold);
-  transform: scaleX(var(--fill, 0));
-  transform-origin: left center;
-  transition: transform .36s cubic-bezier(.22,1,.36,1);
-}
 
 /* --- Key pipeline stages ---------------------------------------------------------------- */
 .lead-kpis {
@@ -7122,8 +7078,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-insights-head { align-items: flex-start; }
   .lead-chart-legend { display: none; }
   .lead-scope-select .menu-select-trigger { max-width: 150px; }
-  .lead-queue-campaign .menu-select-trigger { max-width: 210px; }
-  .lead-queue-figure strong { font-size: 28px; }
+  .lead-heading-campaign .menu-select-trigger { max-width: 210px; }
   .lead-add-backdrop { padding: 8px; }
   .lead-add-drawer { width: 100%; max-height: calc(100vh - 16px); }
   .lead-add-head, .lead-add-body, .lead-add-actions { padding-left: 16px; padding-right: 16px; }
@@ -7135,18 +7090,17 @@ tr:hover .benchmark-bar span { opacity: 1; }
 @media (max-width: 480px) {
   .lead-kpis { grid-template-columns: minmax(0, 1fr); }
   .lead-kpi { min-height: 118px; }
-  .lead-cell-queue .lead-cell-head { align-items: stretch; flex-direction: column; }
-  .lead-queue-actions { justify-content: flex-start; }
-  .lead-queue-campaign { flex: 1 1 160px; min-width: 0; }
-  .lead-queue-campaign .menu-select-trigger { width: 100%; max-width: none; }
+  .lead-management-page .dataset-heading { align-items: stretch; flex-direction: column; }
+  .lead-heading-actions { justify-content: flex-start; }
+  .lead-heading-campaign { flex: 1 1 160px; min-width: 0; }
+  .lead-heading-campaign .menu-select-trigger { width: 100%; max-width: none; }
   .lead-insights-head { flex-direction: column; }
   .lead-range-switch { align-self: stretch; grid-template-columns: repeat(3, 1fr); }
   .lead-chart-panel { padding: 12px 10px; }
   .lead-mix-key { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lead-progress > i, .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer, .lead-range-switch button, .lead-funnel-list em, .lead-mix-bar button { transition: none; animation: none; }
-  .lead-progress > i { transform: scaleX(var(--fill, 0)); }
+  .lead-kpi, .lead-kpi-meter > i, .lead-add-drawer, .lead-range-switch button, .lead-funnel-list em, .lead-mix-bar button { transition: none; animation: none; }
 }
 /* Follow-up CRM queue */
 .page-content.followup-page { max-width: none; min-height: 100vh; margin: 0; padding: 26px 40px 110px; background: var(--canvas); color: var(--text); }

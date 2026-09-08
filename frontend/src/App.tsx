@@ -7667,67 +7667,36 @@ function LeadManagementPage({ role }: { role: UserRole }) {
      <span>Lead Management</span>
      <h2>Rate every lead and follow it through</h2>
     </div>
-    {/* Shown while a single-cell edit's background retrain is running. Status genuinely is a
-        model input (rebuild_aggregates counts New vs Existing per ad set day), and the shared
-        PATCH endpoint schedules a retrain for any lead field, so the chip is honest for both
-        editable columns here. Bulk rating writes only `lead_quality` and schedules nothing --
-        see applyBulkQuality. */}
-    {retraining && <span className="board-retrain-chip"><RefreshCw size={12} />Retraining the model</span>}
+    <div className="lead-heading-actions">
+     {/* Shown while a single-cell edit's background retrain is running. */}
+     {retraining && <span className="board-retrain-chip"><RefreshCw size={12} />Retraining the model</span>}
+     <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
+      <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
+     </button>
+     <MenuSelect
+      className={`lead-scope-select lead-heading-campaign${campaignId ? ' is-scoped' : ''}`}
+      ariaLabel="Filter by campaign"
+      value={campaignId}
+      onChange={pickCampaign}
+      options={[
+       { value: '', label: 'All campaigns', icon: Megaphone },
+       ...options.campaigns.map((item: any) => {
+        const name = String(item.campaign || item.campaign_id);
+        return {
+         value: String(item.campaign_id),
+         label: campaignLabelFor(name, String(item.campaign_id)),
+         short: name,
+         icon: Megaphone,
+        };
+       }),
+      ]}
+     />
+    </div>
    </section>
 
    <section className="dataset-section">
-    {/* Review progress forms the compact overview; the interactive stage KPIs carry the
-        pipeline detail without repeating it in a large summary panel. */}
+    {/* Interactive stage KPIs carry the pipeline overview without repeating it in a summary card. */}
     <div className="lead-bento">
-     <section className="lead-cell lead-cell-queue" aria-labelledby="lead-queue-heading">
-      <div className="lead-cell-head">
-       <h3 id="lead-queue-heading">Awaiting review</h3>
-       <div className="lead-queue-actions">
-        <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
-         <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
-        </button>
-        <MenuSelect
-         className={`lead-scope-select lead-queue-campaign${campaignId ? ' is-scoped' : ''}`}
-         ariaLabel="Filter by campaign"
-         value={campaignId}
-         onChange={pickCampaign}
-         options={[
-          { value: '', label: 'All campaigns', icon: Megaphone },
-          ...options.campaigns.map((item: any) => {
-           const name = String(item.campaign || item.campaign_id);
-           return {
-            value: String(item.campaign_id),
-            label: campaignLabelFor(name, String(item.campaign_id)),
-            short: name,
-            icon: Megaphone,
-           };
-          }),
-         ]}
-        />
-       </div>
-      </div>
-      {/* Share reviewed, not the count still waiting. Imported rows sit in Pending Review
-          until someone moves them to Intake, Qualified, or another real judgement. */}
-      {showSkeleton ? <div className="skeleton skeleton-line lead-total-skeleton" /> : (
-       <p className="lead-queue-figure">
-        <strong>{percent(summary.rated_share)}</strong>
-        <span>reviewed</span>
-       </p>
-      )}
-      {/* Progress against the whole book, not a decorative ring: the fill is literally the
-          share of leads someone has already put a judgement on. */}
-      <div className="lead-progress" role="img" aria-label={`${percent(summary.rated_share)} of leads rated`}>
-       <i style={{ '--fill': Math.max(0, Math.min(1, Number(summary.rated_share) || 0)) } as CSSProperties} />
-      </div>
-      <p className="lead-cell-foot">
-       {summary.total === 0
-        ? 'Nothing to review in this view.'
-        : (summary.pending_review ?? 0) === 0
-         ? `All ${plural(summary.total, 'lead')} rated. Nothing waiting.`
-         : `${plural(summary.pending_review, 'lead')} pending review.`}
-      </p>
-     </section>
-
      <section className="lead-kpis" aria-label="Key pipeline stages">
       {leadKpis.map((kpi) => {
        const active = qualityFilter.includes(kpi.quality);
