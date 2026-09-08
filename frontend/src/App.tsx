@@ -7682,6 +7682,29 @@ function LeadManagementPage({ role }: { role: UserRole }) {
      <section className="lead-cell lead-cell-queue" aria-labelledby="lead-queue-heading">
       <div className="lead-cell-head">
        <h3 id="lead-queue-heading">Awaiting review</h3>
+       <div className="lead-queue-actions">
+        <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
+         <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
+        </button>
+        <MenuSelect
+         className={`lead-scope-select lead-queue-campaign${campaignId ? ' is-scoped' : ''}`}
+         ariaLabel="Filter by campaign"
+         value={campaignId}
+         onChange={pickCampaign}
+         options={[
+          { value: '', label: 'All campaigns', icon: Megaphone },
+          ...options.campaigns.map((item: any) => {
+           const name = String(item.campaign || item.campaign_id);
+           return {
+            value: String(item.campaign_id),
+            label: campaignLabelFor(name, String(item.campaign_id)),
+            short: name,
+            icon: Megaphone,
+           };
+          }),
+         ]}
+        />
+       </div>
       </div>
       {/* Share reviewed, not the count still waiting. Imported rows sit in Pending Review
           until someone moves them to Intake, Qualified, or another real judgement. */}
@@ -7866,11 +7889,8 @@ function LeadManagementPage({ role }: { role: UserRole }) {
      </section>
     </div>
 
-    {/* One toolbar instead of a labelled filter panel above the bento and a separate board
-        row down here. Same vocabulary as the Dataset page's board toolbar, so the two data
-        surfaces in this app are operated the same way. The field labels are gone because each
-        control already says what it is when nothing is picked ("All campaigns", "Any status")
-        and carries a leading icon once something is. */}
+    {/* The remaining controls stay with the table because they change how its rows are searched,
+        grouped, or displayed. Campaign scope and export live in the overview above. */}
     <div className="dataset-rows-controls lead-board-controls">
      <div className="lead-board-count">
      {rowsData.total ? `${fmt(rowsData.total)} ${rowsData.total === 1 ? 'lead' : 'leads'} in this view` : 'No leads in view'}
@@ -7881,30 +7901,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <Plus size={14} />Add Leads
        </button>
       )}
-      <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
-       <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
-      </button>
       <BoardSearch value={searchDraft} onChange={setSearchDraft} />
-      <MenuSelect
-       className={`lead-scope-select${campaignId ? ' is-scoped' : ''}`}
-       ariaLabel="Filter by campaign"
-       value={campaignId}
-       onChange={pickCampaign}
-       options={[
-        { value: '', label: 'All campaigns', icon: Megaphone },
-        ...options.campaigns.map((item: any) => {
-         const name = String(item.campaign || item.campaign_id);
-         return {
-          value: String(item.campaign_id),
-          label: campaignLabelFor(name, String(item.campaign_id)),
-          // The trigger stays the bare name even for a disambiguated row: it is already the
-          // selected one, so the id it needed to be told apart by adds nothing there.
-          short: name,
-          icon: Megaphone,
-         };
-        }),
-       ]}
-      />
       <MenuSelect
        className={`lead-scope-select${adSetId ? ' is-scoped' : ''}`}
        ariaLabel="Filter by ad set"
