@@ -7052,6 +7052,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-chart-legend span { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); font-size: 8.5px; white-space: nowrap; }
 .lead-chart-legend i,
 .lead-mix-key i { width: 6px; height: 6px; border-radius: 50%; }
+.lead-chart-legend .lead-share-bar-key { border-radius: 2px; background: var(--status-info-fill); }
+.lead-chart-legend .lead-count-line-key,
+.lead-outcome-tooltip .lead-count-line-key { width: 10px; height: 2px; border-radius: 1px; background: var(--yellow-strong); }
+.lead-outcome-tooltip p:first-of-type i { width: 7px; height: 7px; }
 .lead-chart-canvas { width: 100%; }
 .lead-chart-canvas-main { height: 202px; }
 .lead-chart-canvas-campaign { height: 188px; }

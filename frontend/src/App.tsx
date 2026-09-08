@@ -7096,6 +7096,19 @@ function LeadChartTooltip({ active, payload, label, rate = false }: any) {
  );
 }
 
+function LeadOutcomeShareTooltip({ active, payload }: any) {
+ if (!active || !payload?.length) return null;
+ const point = payload[0]?.payload || {};
+ return (
+  <div className="forecast-tooltip lead-chart-tooltip lead-outcome-tooltip">
+   <span>OUTCOME SHARE</span>
+   <b>{point.label}</b>
+   <p><i style={{ background: point.color }} />Share of leads<strong>{Number(point.percentage || 0).toFixed(1)}%</strong></p>
+   <p><i className="lead-count-line-key" />Lead count<strong>{fmt(point.count)}</strong></p>
+  </div>
+ );
+}
+
 function LeadCampaignTooltip({ active, payload }: any) {
  if (!active || !payload?.length) return null;
  const point = payload[0]?.payload || {};
@@ -7765,6 +7778,24 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   ...item,
   ...(stages.find((stage: any) => stage.quality === item.quality) || { count: 0, share: 0 }),
  }));
+ const outcomeShareSeries = [
+  'Qualified',
+  'Not Qualified',
+  'Awaiting Document and Payment',
+  'Converted',
+  'Lost',
+ ].map((quality) => {
+  const stage = LEAD_CHART_STAGES.find((item) => item.quality === quality);
+  const kpi = leadKpis.find((item) => item.quality === quality);
+  return {
+   quality,
+   label: quality === 'Awaiting Document and Payment' ? 'Awaiting Document & Payment' : quality,
+   axisLabel: quality === 'Awaiting Document and Payment' ? 'Awaiting docs' : quality,
+   count: Number(kpi?.count || 0),
+   percentage: Number(kpi?.share || 0) * 100,
+   color: stage?.color || 'var(--muted)',
+  };
+ });
  const dailySeries = [...(summary.daily_series || [])]
   .sort((a: any, b: any) => String(a.day).localeCompare(String(b.day)))
   .slice(-insightDays);
@@ -7865,26 +7896,30 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       <div className="lead-insight-grid">
        <article className="lead-chart-panel lead-chart-outcomes">
         <div className="lead-chart-head">
-         <div><h4>Outcome trend</h4><p>Daily outcome volume</p></div>
+         <div><h4>Outcome share</h4><p>Percentage of leads in the current view</p></div>
          <div className="lead-chart-legend" aria-label="Outcome legend">
-          {LEAD_CHART_STAGES.slice(2).map((stage) => <span key={stage.key}><i style={{ background: stage.color }} />{stage.label}</span>)}
+          <span><i className="lead-share-bar-key" />Share of leads</span>
+          <span><i className="lead-count-line-key" />Lead count</span>
          </div>
         </div>
-        {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : dailySeries.length ? (
+        {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : summary.total ? (
          <div className="lead-chart-canvas lead-chart-canvas-main">
           <ResponsiveContainer width="100%" height="100%">
-           <BarChart data={dailySeries} margin={{ top: 8, right: 8, left: -20, bottom: 0 }} barCategoryGap="26%">
+           <ComposedChart data={outcomeShareSeries} margin={{ top: 24, right: 12, left: -12, bottom: 0 }} barCategoryGap="34%">
             <CartesianGrid stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="day" tickFormatter={(value) => String(value).slice(5)} minTickGap={28} tick={{ fontSize: 10, fill: 'var(--dim)' }} axisLine={false} tickLine={false} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: 'var(--dim)' }} axisLine={false} tickLine={false} />
-            <Tooltip content={<LeadChartTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            {LEAD_CHART_STAGES.slice(2).map((stage) => (
-             <Bar key={stage.key} dataKey={stage.key} name={stage.label} stackId="outcomes" fill={stage.color} onClick={() => toggleStage(stage.quality)} />
-            ))}
-           </BarChart>
+            <XAxis dataKey="axisLabel" interval={0} tick={{ fontSize: 9.5, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} />
+            <YAxis yAxisId="share" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} width={42} />
+            <YAxis yAxisId="count" orientation="right" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} width={48} />
+            <Tooltip content={<LeadOutcomeShareTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
+            <Bar yAxisId="share" dataKey="percentage" name="Share of leads" radius={[3, 3, 0, 0]} maxBarSize={58} cursor="pointer" onClick={(entry: any) => toggleStage(entry?.quality || entry?.payload?.quality)}>
+             {outcomeShareSeries.map((item) => <Cell key={item.quality} fill={item.color} opacity={qualityFilter.length && !qualityFilter.includes(item.quality) ? .32 : 1} />)}
+             <LabelList dataKey="percentage" position="top" formatter={(value: any) => `${Number(value).toFixed(1)}%`} fill="var(--text)" fontSize={9.5} fontWeight={700} />
+            </Bar>
+            <Line yAxisId="count" type="monotone" dataKey="count" name="Lead count" stroke="var(--yellow-strong)" strokeWidth={2} dot={{ r: 3.5, fill: 'var(--surface)', stroke: 'var(--yellow-strong)', strokeWidth: 2 }} activeDot={{ r: 5 }} />
+           </ComposedChart>
           </ResponsiveContainer>
          </div>
-        ) : <p className="lead-chart-empty">No dated leads in this view.</p>}
+        ) : <p className="lead-chart-empty">No lead outcomes in this view.</p>}
        </article>
 
        <article className="lead-chart-panel lead-chart-funnel">
