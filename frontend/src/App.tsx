@@ -7779,25 +7779,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
      <button type="button" className="lead-export-btn" disabled={exportingCsv || rowsBusy || !rowsData.total} onClick={() => void exportLeadCsv()}>
       <Download size={14} />{exportingCsv ? 'Exporting' : 'Export CSV'}
      </button>
-     <MenuSelect
-      className={`lead-scope-select lead-heading-campaign${campaignId ? ' is-scoped' : ''}`}
-      ariaLabel="Filter by campaign"
-      value={campaignId}
-      disabled={!optionsReady}
-      onChange={pickCampaign}
-      options={[
-       { value: '', label: 'All campaigns', icon: Megaphone },
-       ...options.campaigns.map((item: any) => {
-        const name = String(item.campaign || item.campaign_id);
-        return {
-         value: String(item.campaign_id),
-         label: campaignLabelFor(name, String(item.campaign_id)),
-         short: name,
-         icon: Megaphone,
-        };
-       }),
-      ]}
-     />
     </div>
    </section>
 
@@ -7838,6 +7819,25 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <span>Performance insights</span>
         <h3 id="lead-insights-heading">Lead movement and conversion health</h3>
        </div>
+       <MenuSelect
+        className={`lead-scope-select lead-insights-campaign${campaignId ? ' is-scoped' : ''}`}
+        ariaLabel="Filter by campaign"
+        value={campaignId}
+        disabled={!optionsReady}
+        onChange={pickCampaign}
+        options={[
+         { value: '', label: 'All campaigns', icon: Megaphone },
+         ...options.campaigns.map((item: any) => {
+          const name = String(item.campaign || item.campaign_id);
+          return {
+           value: String(item.campaign_id),
+           label: campaignLabelFor(name, String(item.campaign_id)),
+           short: name,
+           icon: Megaphone,
+          };
+         }),
+        ]}
+       />
       </div>
 
       <div className="lead-insight-grid">

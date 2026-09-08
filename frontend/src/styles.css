@@ -6193,7 +6193,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
   gap: 7px;
   min-width: 0;
 }
-.lead-heading-campaign .menu-select-trigger { max-width: 260px; }
 
 /* --- Toolbar -------------------------------------------------------------------------------
    Scope filters and board tools share one compact row above the board, in the same vocabulary
@@ -7002,6 +7001,8 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-insights-head { align-items: center; margin-bottom: 22px; }
 .lead-insights-head span { color: var(--gold); font-size: 11px; font-weight: 750; letter-spacing: 0; text-transform: uppercase; }
 .lead-insights-head h3 { margin: 6px 0 0; color: var(--text); font-size: 19px; font-weight: 650; letter-spacing: 0; }
+.lead-insights-campaign { flex: 0 1 260px; min-width: 180px; }
+.lead-insights-campaign .menu-select-trigger { width: 100%; max-width: 260px; }
 .lead-insight-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -7112,7 +7113,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
 /* --- Adaptation --------------------------------------------------------------------------- */
 @media (max-width: 1280px) {
   .lead-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .lead-insight-grid { grid-template-columns: minmax(0, 1fr) minmax(260px, .7fr); }
 }
 @media (max-width: 1040px) {
   .lead-insight-grid { grid-template-columns: minmax(0, 1fr); }
@@ -7128,7 +7128,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-outcome-filters { display: flex; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
   .lead-outcome-filters button { flex: 0 0 170px; }
   .lead-scope-select .menu-select-trigger { max-width: 150px; }
-  .lead-heading-campaign .menu-select-trigger { max-width: 210px; }
+  .lead-insights-campaign .menu-select-trigger { max-width: 210px; }
   .lead-add-backdrop { padding: 8px; }
   .lead-add-drawer { width: 100%; max-height: calc(100vh - 16px); }
   .lead-add-head, .lead-add-body, .lead-add-actions { padding-left: 16px; padding-right: 16px; }
@@ -7142,9 +7142,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-kpi { min-height: 118px; }
   .lead-management-page .dataset-heading { align-items: stretch; flex-direction: column; }
   .lead-heading-actions { justify-content: flex-start; }
-  .lead-heading-campaign { flex: 1 1 160px; min-width: 0; }
-  .lead-heading-campaign .menu-select-trigger { width: 100%; max-width: none; }
-  .lead-insights-head { flex-direction: column; }
+  .lead-insights-campaign { flex: 1 1 auto; width: 100%; min-width: 0; }
+  .lead-insights-campaign .menu-select-trigger { width: 100%; max-width: none; }
+  .lead-insights-head { align-items: stretch; flex-direction: column; }
   .lead-chart-panel { padding: 16px 12px; }
   .lead-chart-outcomes { min-height: 420px; }
   .lead-chart-canvas-main { height: 270px; }
