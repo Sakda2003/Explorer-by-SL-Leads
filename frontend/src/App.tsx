@@ -7790,7 +7790,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   return {
    quality,
    label: quality === 'Awaiting Document and Payment' ? 'Awaiting Document & Payment' : quality,
-   axisLabel: quality === 'Awaiting Document and Payment' ? 'Awaiting docs' : quality,
+   axisLabel: quality === 'Awaiting Document and Payment' ? 'Awaiting' : quality === 'Not Qualified' ? 'Not qual.' : quality,
    count: Number(kpi?.count || 0),
    percentage: Number(kpi?.share || 0) * 100,
    color: stage?.color || 'var(--muted)',
@@ -7902,20 +7902,34 @@ function LeadManagementPage({ role }: { role: UserRole }) {
           <span><i className="lead-count-line-key" />Lead count</span>
          </div>
         </div>
+        {!showSkeleton && !!summary.total && (
+         <div className="lead-outcome-filters" role="group" aria-label="Filter leads by outcome">
+          {outcomeShareSeries.map((item) => {
+           const active = qualityFilter.includes(item.quality);
+           return (
+            <button type="button" key={item.quality} className={active ? 'is-active' : ''} aria-pressed={active} onClick={() => toggleStage(item.quality)}>
+             <i style={{ background: item.color }} />
+             <span>{item.label}</span>
+             <strong>{item.percentage.toFixed(1)}%</strong>
+            </button>
+           );
+          })}
+         </div>
+        )}
         {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : summary.total ? (
          <div className="lead-chart-canvas lead-chart-canvas-main">
           <ResponsiveContainer width="100%" height="100%">
-           <ComposedChart data={outcomeShareSeries} margin={{ top: 24, right: 12, left: -12, bottom: 0 }} barCategoryGap="34%">
+           <ComposedChart accessibilityLayer data={outcomeShareSeries} margin={{ top: 32, right: 22, left: 0, bottom: 8 }} barCategoryGap="32%">
             <CartesianGrid stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="axisLabel" interval={0} tick={{ fontSize: 9.5, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} />
-            <YAxis yAxisId="share" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} width={42} />
-            <YAxis yAxisId="count" orientation="right" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 9, fill: 'var(--dim)' }} axisLine={false} tickLine={false} width={48} />
+            <XAxis dataKey="axisLabel" interval={0} tick={{ fontSize: 11.5, fontWeight: 600, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} height={36} />
+            <YAxis yAxisId="share" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={48} />
+            <YAxis yAxisId="count" orientation="right" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={56} />
             <Tooltip content={<LeadOutcomeShareTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            <Bar yAxisId="share" dataKey="percentage" name="Share of leads" radius={[3, 3, 0, 0]} maxBarSize={58} cursor="pointer" onClick={(entry: any) => toggleStage(entry?.quality || entry?.payload?.quality)}>
+            <Bar yAxisId="share" dataKey="percentage" name="Share of leads" radius={[5, 5, 0, 0]} maxBarSize={72} cursor="pointer" animationDuration={650} onClick={(entry: any) => toggleStage(entry?.quality || entry?.payload?.quality)}>
              {outcomeShareSeries.map((item) => <Cell key={item.quality} fill={item.color} opacity={qualityFilter.length && !qualityFilter.includes(item.quality) ? .32 : 1} />)}
-             <LabelList dataKey="percentage" position="top" formatter={(value: any) => `${Number(value).toFixed(1)}%`} fill="var(--text)" fontSize={9.5} fontWeight={700} />
+             <LabelList dataKey="percentage" position="top" formatter={(value: any) => `${Number(value).toFixed(1)}%`} fill="var(--text)" fontSize={11.5} fontWeight={750} />
             </Bar>
-            <Line yAxisId="count" type="monotone" dataKey="count" name="Lead count" stroke="var(--yellow-strong)" strokeWidth={2} dot={{ r: 3.5, fill: 'var(--surface)', stroke: 'var(--yellow-strong)', strokeWidth: 2 }} activeDot={{ r: 5 }} />
+            <Line yAxisId="count" type="monotone" dataKey="count" name="Lead count" stroke="var(--yellow-strong)" strokeWidth={1.6} strokeOpacity={.72} dot={{ r: 4, fill: 'var(--surface)', stroke: 'var(--yellow-strong)', strokeWidth: 2 }} activeDot={{ r: 6 }} animationDuration={750} />
            </ComposedChart>
           </ResponsiveContainer>
          </div>
