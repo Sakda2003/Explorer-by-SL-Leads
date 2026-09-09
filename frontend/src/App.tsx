@@ -3689,7 +3689,6 @@ function ForecastPage({ role }: { role: UserRole }) {
  onClick={() => selectCampaignFromDropdown(String(campaign.campaign_id))}
  >
  <span title={campaign.campaign}>{campaign.campaign}</span>
- <small>{campaign.adSetCount} ad sets - {fmt(campaign.recent_leads || 0)} last 7d - {fmt(campaign.leads)} total</small>
  </button>
  );
  })}
@@ -6300,7 +6299,6 @@ function DatasetPage({ role }: { role: UserRole }) {
          onClick={() => { setSelectedCampaignId(''); setSelectedAdSetId(''); setAdSetQuery(''); setAdSetLookupError(''); setCampaignPickerOpen(false); }}
         >
          <span>All campaigns</span>
-         <small>Portfolio-wide</small>
         </button>
         {campaigns.map((campaign: any) => {
          const isActive = campaignScopeValue(campaign) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(campaign), selectedCampaignId);
@@ -6314,7 +6312,6 @@ function DatasetPage({ role }: { role: UserRole }) {
            onClick={() => { setSelectedCampaignId(String(campaign.campaign_id)); setSelectedAdSetId(''); setAdSetQuery(''); setAdSetLookupError(''); setCampaignPickerOpen(false); }}
           >
            <span title={campaign.campaign}>{campaign.campaign}</span>
-           <small>{fmt(campaign.leads)} leads</small>
           </button>
          );
         })}
@@ -7319,8 +7316,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   [campaignChoices],
  );
  const selectedCampaignChoice = campaignChoices.find((item: any) => campaignScopeValue(item) === campaignId || campaignScopeIncludesId(campaignScopeValue(item), campaignId)) || null;
- const allCampaignLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.leads || 0), 0);
- const allCampaignRecentLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.recent_leads || 0), 0);
  const pickCampaign = (value: string) => {
   setCampaignId(value);
   setCampaignPickerOpen(false);
@@ -7889,16 +7884,13 @@ function LeadManagementPage({ role }: { role: UserRole }) {
            <div className="campaign-menu" role="listbox" aria-label="Campaigns">
             <button type="button" role="option" aria-selected={!campaignId} className={`campaign-option${!campaignId ? ' active' : ''}`} onClick={() => pickCampaign('')}>
              <span>All campaigns</span>
-             <small>{fmt(campaignChoices.length)} campaigns - {fmt(allCampaignRecentLeadCount)} last 7d - {fmt(allCampaignLeadCount)} total</small>
             </button>
             {campaignChoices.map((campaign: any) => {
              const id = String(campaign.campaign_id);
              const name = String(campaign.campaign || id);
-             const adSetCount = options.ad_sets.filter((item: any) => campaignScopeIncludesId(id, item.campaign_id)).length;
              return (
               <button type="button" key={id} role="option" aria-selected={id === campaignId || campaignScopeIncludesId(id, campaignId)} className={`campaign-option${id === campaignId || campaignScopeIncludesId(id, campaignId) ? ' active' : ''}`} onClick={() => pickCampaign(id)}>
                <span title={name}>{campaignLabelFor(name, id)}</span>
-               <small>{fmt(adSetCount)} {adSetCount === 1 ? 'ad set' : 'ad sets'} - {fmt(campaign.recent_leads || 0)} last 7d - {fmt(campaign.leads)} total</small>
               </button>
              );
             })}
