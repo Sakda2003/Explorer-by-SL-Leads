@@ -7085,6 +7085,30 @@ def get_lead_pipeline_summary(
                 GROUP BY matched.campaign_id""",
             params,
         ).fetchall()
+        ad_set_stage_rows = db.execute(
+            f"""SELECT COALESCE(NULLIF(TRIM(utm_ad_set_id), ''), 'Unattributed') AS ad_set_id,
+                       COALESCE(MAX(NULLIF(TRIM(utm_campaign_id), '')), 'Unattributed') AS campaign_id,
+                       COALESCE(MAX(NULLIF(TRIM(utm_campaign), '')), 'Unattributed') AS campaign,
+                       COALESCE(NULLIF(TRIM(lead_quality), ''), ?) AS stage,
+                       COUNT(*) AS n
+                FROM {table_sql}
+                GROUP BY ad_set_id, stage
+                ORDER BY ad_set_id, stage""",
+            [DEFAULT_IMPORTED_LEAD_QUALITY, *params],
+        ).fetchall()
+        ad_set_spend_rows = db.execute(
+            f"""SELECT matched.ad_set_id, COALESCE(SUM(p.spend), 0) AS spend
+                FROM (
+                  SELECT DISTINCT COALESCE(NULLIF(TRIM(utm_ad_set_id), ''), 'Unattributed') AS ad_set_id,
+                                  date(created_at) AS day
+                  FROM {table_sql}
+                ) matched
+                JOIN (SELECT ad_set_id, day, SUM(amount_spent_usd) AS spend
+                      FROM daily_ad_performance GROUP BY ad_set_id, day) p
+                  ON p.ad_set_id = matched.ad_set_id AND p.day = matched.day
+                GROUP BY matched.ad_set_id""",
+            params,
+        ).fetchall()
 
     counts = {str(row["stage"]): int(row["n"]) for row in stage_rows}
     # Zero-filled and ordered by LEAD_QUALITY_OPTIONS so the funnel renders every stage in
@@ -7163,6 +7187,56 @@ def get_lead_pipeline_summary(
             "cost_per_converted": (attributed_spend / campaign_converted) if campaign_converted else None,
         })
 
+    ad_set_spend = {str(row["ad_set_id"]): float(row["spend"] or 0.0)
+                    for row in ad_set_spend_rows}
+    ad_set_map: dict[str, dict[str, object]] = {}
+    stage_key_map = {
+        DEFAULT_IMPORTED_LEAD_QUALITY.casefold(): "pending_review",
+        "Not Qualified".casefold(): "not_qualified",
+        "Qualified".casefold(): "qualified",
+        "Awaiting Document and Payment".casefold(): "awaiting",
+        "Converted".casefold(): "converted",
+        "Lost".casefold(): "lost",
+    }
+    for row in ad_set_stage_rows:
+        ad_set_key = str(row["ad_set_id"])
+        point = ad_set_map.setdefault(ad_set_key, {
+            "ad_set_id": ad_set_key,
+            "campaign_id": str(row["campaign_id"] or "Unattributed"),
+            "campaign": display_campaign_name(row["campaign"]),
+            "total": 0,
+            "pending_review": 0,
+            "not_qualified": 0,
+            "qualified": 0,
+            "awaiting": 0,
+            "converted": 0,
+            "lost": 0,
+            "matched_spend_usd": 0.0,
+            "cost_per_qualified": None,
+            "cost_per_converted": None,
+        })
+        stage = str(row["stage"])
+        count = int(row["n"] or 0)
+        point["total"] = int(point["total"]) + count
+        key = stage_key_map.get(stage.casefold())
+        if key:
+            point[key] = int(point[key]) + count
+    ad_set_series = []
+    for ad_set_key, point in ad_set_map.items():
+        spend_for_set = ad_set_spend.get(ad_set_key, 0.0)
+        qualified_for_set = (
+            int(point["qualified"])
+            + int(point["awaiting"])
+            + int(point["converted"])
+        )
+        converted_for_set = int(point["converted"])
+        point["qualified_total"] = qualified_for_set
+        point["matched_spend_usd"] = spend_for_set
+        point["cost_per_qualified"] = (spend_for_set / qualified_for_set) if qualified_for_set else None
+        point["cost_per_converted"] = (spend_for_set / converted_for_set) if converted_for_set else None
+        ad_set_series.append(point)
+    ad_set_series.sort(key=lambda item: (-float(item["matched_spend_usd"] or 0), -int(item["total"] or 0), str(item["ad_set_id"])))
+
     return {
         "total": total,
         "stages": stages,
@@ -7186,6 +7260,7 @@ def get_lead_pipeline_summary(
         "cost_per_converted": (spend_value / converted) if converted else None,
         "daily_series": daily_series,
         "campaigns": campaign_series,
+        "ad_sets": ad_set_series,
     }
 
 
