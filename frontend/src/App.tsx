@@ -7081,15 +7081,11 @@ function LeadSpendOutcomeTooltip({ active, payload, label }: any) {
  if (!active || !payload?.length) return null;
  const point = payload[0]?.payload || {};
  const leadValue = Number(point.leads || 0);
- const spendValue = Number(point.spend || 0);
  return (
   <div className="forecast-tooltip lead-chart-tooltip lead-spend-tooltip">
    <span>SCOPE SNAPSHOT</span>
    <b>{point.label || label}</b>
-   {point.kind === 'spend'
-    ? <p><i className="lead-spend-line-key" />Matched spend<strong>{money(spendValue)}</strong></p>
-    : <p><i style={{ background: point.color }} />Lead count<strong>{fmt(leadValue)}</strong></p>}
-   {point.cost_per_lead != null && <p><i />Cost per lead<strong>{cplMoney(point.cost_per_lead)}</strong></p>}
+   <p><i style={{ background: point.color }} />Lead count<strong>{fmt(leadValue)}</strong></p>
    {point.share != null && <p><i />Share of leads<strong>{Number(point.share || 0).toFixed(1)}%</strong></p>}
   </div>
  );
@@ -7800,20 +7796,11 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   converted: Number(summary.converted || 0),
   notQualified: Number(stages.find((stage: any) => stage.quality === 'Not Qualified')?.count || 0),
   lost: Number(stages.find((stage: any) => stage.quality === 'Lost')?.count || 0),
-  total: Number(summary.total || 0),
+ total: Number(summary.total || 0),
  };
  const spendOutcomeChart = [
   {
-   key: 'spend',
-   kind: 'spend',
-   label: 'Spend',
-   spend: spendOutcomeSummary.spend,
-   cost_per_lead: summary.cost_per_lead,
-   color: 'var(--yellow-strong)',
-  },
-  {
    key: 'qualified',
-   kind: 'leads',
    quality: 'Qualified',
    label: 'Qualified',
    leads: Number(stages.find((stage: any) => stage.quality === 'Qualified')?.count || 0),
@@ -7822,7 +7809,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   },
   {
    key: 'awaiting',
-   kind: 'leads',
    quality: 'Awaiting Document and Payment',
    label: 'Awaiting docs',
    leads: spendOutcomeSummary.awaiting,
@@ -7831,7 +7817,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   },
   {
    key: 'converted',
-   kind: 'leads',
    quality: 'Converted',
    label: 'Converted',
    leads: spendOutcomeSummary.converted,
@@ -7840,7 +7825,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   },
   {
    key: 'not_qualified',
-   kind: 'leads',
    quality: 'Not Qualified',
    label: 'Not qualified',
    leads: spendOutcomeSummary.notQualified,
@@ -7849,7 +7833,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   },
   {
    key: 'lost',
-   kind: 'leads',
    quality: 'Lost',
    label: 'Lost',
    leads: spendOutcomeSummary.lost,
@@ -7977,7 +7960,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
           <p>{spendOutcomeScopeLabel}</p>
          </div>
          <div className="lead-chart-legend" aria-label="Spend and outcome legend">
-          <span><i className="lead-spend-line-key" />Matched spend</span>
           <span><i className="lead-leads-bar-key" />Lead outcomes</span>
           <span><i style={{ background: 'var(--status-info-fill)' }} />Qualified</span>
           <span><i style={{ background: 'var(--status-warn-fill)' }} />Awaiting docs</span>
@@ -7999,13 +7981,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
             <CartesianGrid stroke="var(--grid-line)" vertical={false} />
             <XAxis dataKey="label" interval={0} tick={{ fontSize: 11.5, fontWeight: 650, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} height={34} />
             <YAxis yAxisId="leads" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={44} />
-            <YAxis yAxisId="spend" orientation="right" tickFormatter={(value) => cplMoney(value)} tick={{ fontSize: 10.5, fill: 'var(--yellow)' }} axisLine={false} tickLine={false} width={74} />
             <Tooltip content={<LeadSpendOutcomeTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            <Bar yAxisId="spend" dataKey="spend" name="Matched spend" radius={[5, 5, 0, 0]} maxBarSize={86} animationDuration={650}>
-             {spendOutcomeChart.map((item) => <Cell key={`spend-${item.key}`} fill={item.kind === 'spend' ? 'var(--yellow-strong)' : 'transparent'} />)}
-            </Bar>
             <Bar yAxisId="leads" dataKey="leads" name="Lead outcomes" radius={[5, 5, 0, 0]} maxBarSize={86} cursor="pointer" animationDuration={650} onClick={(entry: any) => { if (entry?.quality || entry?.payload?.quality) toggleStage(entry.quality || entry.payload.quality); }}>
-             {spendOutcomeChart.map((item) => <Cell key={`leads-${item.key}`} fill={item.kind === 'leads' ? item.color : 'transparent'} opacity={item.kind === 'leads' && qualityFilter.length && !qualityFilter.includes(String(item.quality)) ? .32 : 1} />)}
+             {spendOutcomeChart.map((item) => <Cell key={`leads-${item.key}`} fill={item.color} opacity={qualityFilter.length && !qualityFilter.includes(String(item.quality)) ? .32 : 1} />)}
              <LabelList dataKey="leads" position="top" formatter={(value: any) => Number(value || 0) ? fmt(value) : ''} fill="var(--text)" fontSize={11.5} fontWeight={750} />
             </Bar>
            </ComposedChart>
