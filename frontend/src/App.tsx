@@ -7132,6 +7132,11 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const [qualityFilter, setQualityFilter] = useState<string[]>([]);
  const [searchDraft, setSearchDraft] = useState('');
  const [search, setSearch] = useState('');
+ const [adSetQuery, setAdSetQuery] = useState('');
+ const [adSetLookupError, setAdSetLookupError] = useState('');
+ const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
+ const leadCampaignPickerRef = useRef<HTMLDivElement>(null);
+ const leadAdSetInputRef = useRef<HTMLInputElement>(null);
 
  // --- Board -------------------------------------------------------------------------------
  const [rowsData, setRowsData] = useState<{ rows: any[]; total: number; limit: number }>({ rows: [], total: 0, limit: 50 });
@@ -7172,6 +7177,22 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    .catch((err: any) => setBoardError(err.message || 'Failed to load filter options.'))
    .finally(() => setOptionsReady(true));
  }, []);
+
+ useEffect(() => {
+  if (!campaignPickerOpen) return;
+  const closeOnPointer = (event: PointerEvent) => {
+   if (!leadCampaignPickerRef.current?.contains(event.target as Node)) setCampaignPickerOpen(false);
+  };
+  const closeOnEscape = (event: KeyboardEvent) => {
+   if (event.key === 'Escape') setCampaignPickerOpen(false);
+  };
+  document.addEventListener('pointerdown', closeOnPointer);
+  document.addEventListener('keydown', closeOnEscape);
+  return () => {
+   document.removeEventListener('pointerdown', closeOnPointer);
+   document.removeEventListener('keydown', closeOnEscape);
+  };
+ }, [campaignPickerOpen]);
 
  useEffect(() => {
   if (!addLeadOpen) return;
@@ -7304,10 +7325,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  // Ad sets narrow to the picked campaign; picking an ad set that belongs to another campaign
  // (possible while "All campaigns" is showing) pins that campaign too, so the pair on screen
  // always describes one real scope.
- const adSetChoices = useMemo(
-  () => (campaignId ? options.ad_sets.filter((item: any) => String(item.campaign_id) === String(campaignId)) : options.ad_sets),
-  [options.ad_sets, campaignId],
- );
  const campaignChoices = useMemo(
   () => options.campaigns.filter((item: any) => !HIDDEN_LEAD_CAMPAIGN_IDS.has(String(item.campaign_id))),
   [options.campaigns],
@@ -7316,16 +7333,16 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   () => labelDisambiguator(campaignChoices.map((item: any) => String(item.campaign || item.campaign_id))),
   [campaignChoices],
  );
- const adSetLabelFor = useMemo(
-  () => labelDisambiguator(adSetChoices.map((item: any) => String(item.ad_title || item.ad_set_id))),
-  [adSetChoices],
- );
+ const selectedCampaignChoice = campaignChoices.find((item: any) => String(item.campaign_id) === String(campaignId)) || null;
+ const allCampaignLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.leads || 0), 0);
  const pickCampaign = (value: string) => {
   setCampaignId(value);
-  // A held-over ad set from the previous campaign would silently override the new campaign
-  // scope (ad set wins), showing rows from a campaign the picker says isn't selected.
-  if (value && adSetId && !options.ad_sets.some((item: any) => String(item.ad_set_id) === adSetId && String(item.campaign_id) === value)) {
+  setCampaignPickerOpen(false);
+  setAdSetLookupError('');
+  // Campaign is the broader scope, so choosing one always clears a narrower held-over ad set.
+  if (adSetId) {
    setAdSetId('');
+   setAdSetQuery('');
   }
  };
  const pickAdSet = (value: string) => {
@@ -7333,12 +7350,31 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   const match = options.ad_sets.find((item: any) => String(item.ad_set_id) === value);
   if (match?.campaign_id) setCampaignId(String(match.campaign_id));
  };
+ const applyAdSetLookup = () => {
+  const term = adSetQuery.trim();
+  if (!term) {
+   setAdSetId('');
+   setAdSetLookupError('');
+   return;
+  }
+  const match = options.ad_sets.find((item: any) => String(item.ad_set_id).toLowerCase() === term.toLowerCase());
+  if (!match) {
+   setAdSetLookupError('No exact Ad Set ID was found. Check the ID and try again.');
+   leadAdSetInputRef.current?.focus();
+   return;
+  }
+  setAdSetLookupError('');
+  setAdSetQuery(String(match.ad_set_id));
+  pickAdSet(String(match.ad_set_id));
+  leadAdSetInputRef.current?.blur();
+ };
  const toggleStage = (quality: string) => {
   setQualityFilter((current) => (current.includes(quality) ? current.filter((item) => item !== quality) : [...current, quality]));
  };
  const clearFilters = () => {
   setCampaignId(''); setAdSetId(''); setDateRange(null);
   setQualityFilter([]); setSearchDraft(''); setSearch(''); setBoardError('');
+  setAdSetQuery(''); setAdSetLookupError('');
  };
 
  const updateManualLeadDraft = (field: keyof ManualLeadDraft, value: string) => {
@@ -7836,25 +7872,63 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         <span>Performance insights</span>
         <h3 id="lead-insights-heading">Lead movement and conversion health</h3>
        </div>
-       <MenuSelect
-        className={`lead-scope-select lead-insights-campaign${campaignId ? ' is-scoped' : ''}`}
-        ariaLabel="Filter by campaign"
-        value={campaignId}
-        disabled={!optionsReady}
-        onChange={pickCampaign}
-        options={[
-         { value: '', label: 'All campaigns', icon: Megaphone },
-         ...campaignChoices.map((item: any) => {
-          const name = String(item.campaign || item.campaign_id);
-          return {
-           value: String(item.campaign_id),
-           label: campaignLabelFor(name, String(item.campaign_id)),
-           short: name,
-           icon: Megaphone,
-          };
-         }),
-        ]}
-       />
+       <form className="lead-insights-scope" aria-label="Lead scope filters" onSubmit={(event) => { event.preventDefault(); applyAdSetLookup(); }}>
+        <div className="lead-scope-lookup">
+         <div className={`campaign-picker${campaignPickerOpen ? ' open' : ''}`} ref={leadCampaignPickerRef}>
+          <button
+           type="button"
+           className="selector campaign-selector"
+           aria-haspopup="listbox"
+           aria-expanded={campaignPickerOpen}
+           disabled={!optionsReady}
+           onClick={() => setCampaignPickerOpen((open) => !open)}
+          >
+           <Megaphone size={16} />
+           <span>Campaign</span>
+           <strong title={selectedCampaignChoice?.campaign || undefined}>{selectedCampaignChoice?.campaign || 'All campaigns'}</strong>
+           <ChevronDown size={15} className="campaign-caret" />
+          </button>
+          {campaignPickerOpen && (
+           <div className="campaign-menu" role="listbox" aria-label="Campaigns">
+            <button type="button" role="option" aria-selected={!campaignId} className={`campaign-option${!campaignId ? ' active' : ''}`} onClick={() => pickCampaign('')}>
+             <span>All campaigns</span>
+             <small>{fmt(campaignChoices.length)} campaigns - {fmt(allCampaignLeadCount)} leads</small>
+            </button>
+            {campaignChoices.map((campaign: any) => {
+             const id = String(campaign.campaign_id);
+             const name = String(campaign.campaign || id);
+             const adSetCount = options.ad_sets.filter((item: any) => String(item.campaign_id) === id).length;
+             return (
+              <button type="button" key={id} role="option" aria-selected={id === campaignId} className={`campaign-option${id === campaignId ? ' active' : ''}`} onClick={() => pickCampaign(id)}>
+               <span title={name}>{campaignLabelFor(name, id)}</span>
+               <small>{fmt(adSetCount)} {adSetCount === 1 ? 'ad set' : 'ad sets'} - {fmt(campaign.leads)} leads</small>
+              </button>
+             );
+            })}
+           </div>
+          )}
+         </div>
+         <div className={`selector adset-selector${adSetLookupError ? ' invalid' : ''}`}>
+          <Search size={17} />
+          <label className="lookup-input-label" htmlFor="lead-adset-search">Ad Set ID</label>
+          <input
+           ref={leadAdSetInputRef}
+           id="lead-adset-search"
+           value={adSetQuery}
+           disabled={!optionsReady}
+           onChange={(event) => { setAdSetQuery(event.target.value); setAdSetLookupError(''); }}
+           placeholder="Enter or paste an Ad Set ID..."
+           autoComplete="off"
+           inputMode="numeric"
+           spellCheck={false}
+           aria-invalid={Boolean(adSetLookupError)}
+           aria-describedby={adSetLookupError ? 'lead-adset-lookup-error' : undefined}
+          />
+          {adSetQuery && <button type="button" className="clear-search" aria-label="Clear Ad Set ID" onClick={() => { setAdSetQuery(''); setAdSetId(''); setAdSetLookupError(''); leadAdSetInputRef.current?.focus(); }}><X size={15} /></button>}
+         </div>
+        </div>
+        {adSetLookupError && <div id="lead-adset-lookup-error" className="lookup-error" aria-live="polite">{adSetLookupError}</div>}
+       </form>
       </div>
 
       <div className="lead-insight-grid">
@@ -7932,24 +8006,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
        </button>
       )}
       <BoardSearch value={searchDraft} onChange={setSearchDraft} />
-      <MenuSelect
-       className={`lead-scope-select${adSetId ? ' is-scoped' : ''}`}
-       ariaLabel="Filter by ad set"
-       value={adSetId}
-       onChange={pickAdSet}
-       options={[
-        { value: '', label: campaignId ? 'All ad sets in campaign' : 'All ad sets', icon: Layers3 },
-        ...adSetChoices.map((item: any) => {
-         const name = String(item.ad_title || item.ad_set_id);
-         return {
-          value: String(item.ad_set_id),
-          label: adSetLabelFor(name, String(item.ad_set_id)),
-          short: name,
-          icon: Layers3,
-         };
-        }),
-       ]}
-      />
       {/* Drives the same `qualityFilter` the pipeline cell's stage rows do, rather than
           introducing a second filter for the same column: pick a stage here and its card
           lights up, toggle the card and this trigger follows.
