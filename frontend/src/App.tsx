@@ -7903,6 +7903,14 @@ function LeadManagementPage({ role }: { role: UserRole }) {
           />
           {adSetQuery && <button type="button" className="clear-search" aria-label="Clear Ad Set ID" onClick={() => { setAdSetQuery(''); setAdSetId(''); setAdSetLookupError(''); leadAdSetInputRef.current?.focus(); }}><X size={15} /></button>}
          </div>
+         <div className="lead-date-scope">
+          <PresetDateRangePicker
+           value={dateRange}
+           onApply={setDateRange}
+           onClear={() => setDateRange(null)}
+           minDate={options.first_day || undefined}
+          />
+         </div>
         </div>
         {adSetLookupError && <div id="lead-adset-lookup-error" className="lookup-error" aria-live="polite">{adSetLookupError}</div>}
        </form>
@@ -8009,12 +8017,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         },
         ...LEAD_QUALITY_OPTIONS.map((option) => ({ value: option, label: leadQualityLabel(option), icon: CircleCheckBig })),
        ]}
-      />
-      <PresetDateRangePicker
-       value={dateRange}
-       onApply={setDateRange}
-       onClear={() => setDateRange(null)}
-       minDate={options.first_day || undefined}
       />
       {hasAnyFilter && (
        <button type="button" className="lead-filter-clear" onClick={clearFilters} title="Clear every filter">

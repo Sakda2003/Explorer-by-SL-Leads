@@ -6852,10 +6852,20 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-insights-head { align-items: center; margin-bottom: 22px; }
 .lead-insights-head > div:first-child > span { color: var(--gold); font-size: 11px; font-weight: 750; letter-spacing: 0; text-transform: uppercase; }
 .lead-insights-head h3 { margin: 6px 0 0; color: var(--text); font-size: 19px; font-weight: 650; letter-spacing: 0; }
-.lead-insights-scope { flex: 1 1 680px; max-width: 760px; min-width: 460px; }
-.lead-scope-lookup { display: grid; grid-template-columns: minmax(250px, .72fr) minmax(330px, 1fr); align-items: center; gap: 9px; }
+.lead-insights-scope { flex: 1 1 940px; max-width: 1080px; min-width: 640px; }
+.lead-scope-lookup { display: grid; grid-template-columns: minmax(240px, .76fr) minmax(320px, 1fr) minmax(190px, .56fr); align-items: center; gap: 9px; }
 .lead-scope-lookup .campaign-menu { width: 100%; }
 .lead-insights-scope .selector { background: var(--surface-2); }
+.lead-date-scope,
+.lead-date-scope .preset-date-picker,
+.lead-date-scope .date-range-trigger { min-width: 0; width: 100%; }
+.lead-date-scope .date-range-trigger { justify-content: flex-start; }
+.lead-date-scope .date-range-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lead-date-scope .date-range-trigger .campaign-caret { margin-left: auto; }
 .lead-insights-scope .campaign-selector:hover,
 .lead-insights-scope .campaign-picker.open .campaign-selector { background: color-mix(in srgb, var(--gold) 7%, var(--surface-2)); }
 .lead-insights-scope .lookup-error { padding-top: 5px; }
@@ -7091,6 +7101,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
   .lead-insight-grid { grid-template-columns: minmax(0, 1fr); }
   .lead-insights-head { align-items: stretch; flex-direction: column; }
   .lead-insights-scope { width: 100%; max-width: none; min-width: 0; }
+  .lead-scope-lookup { grid-template-columns: minmax(220px, .72fr) minmax(260px, 1fr) minmax(180px, .58fr); }
 }
 @media (max-width: 780px) {
   .lead-bento {
