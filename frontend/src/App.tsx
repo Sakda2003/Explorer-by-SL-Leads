@@ -7077,15 +7077,6 @@ const EMPTY_DUPLICATE_LEADS: DuplicateLeadResult = {
  groups: [], group_count: 0, duplicate_leads: 0, extra_occurrences: 0, scanned_leads: 0,
 };
 
-// Money with the cents held back a step. Four dollar figures sit side by side in the cost cell,
-// and full-weight cents make them read as eight numbers instead of four -- the dollars are what
-// gets compared, the cents only matter once you are already looking at one.
-function SplitMoney({ value }: { value: any }) {
- if (value == null || Number.isNaN(Number(value))) return <span className="lead-figure-none">-</span>;
- const [whole, cents] = cplMoney(value).split('.');
- return <>{whole}{cents && <i className="lead-figure-cents">.{cents}</i>}</>;
-}
-
 const LEAD_CHART_STAGES = [
  { key: 'pending_review', quality: 'Pending Review', label: 'Pending review', color: 'var(--status-neutral-fill)' },
  { key: 'not_qualified', quality: 'Not Qualified', label: 'Not qualified', color: 'var(--status-bad-fill)' },
@@ -7976,21 +7967,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       </div>
      </section>
 
-     <section className="lead-cell lead-cell-cost" aria-labelledby="lead-cost-heading">
-      <div className="lead-cell-head">
-       <h3 id="lead-cost-heading">Acquisition cost</h3>
-       <span className="lead-cell-note">Ad set days these leads came from</span>
-      </div>
-      <dl className="lead-figures">
-       <div><dt>Matched spend</dt><dd><SplitMoney value={summary.matched_spend_usd} /></dd></div>
-       <div><dt>Per lead</dt><dd><SplitMoney value={summary.cost_per_lead} /></dd></div>
-       <div><dt>Per qualified</dt><dd><SplitMoney value={summary.cost_per_qualified} /></dd></div>
-       <div><dt>Per converted</dt><dd><SplitMoney value={summary.cost_per_converted} /></dd></div>
-      </dl>
-      {/* The attribution caveat belongs next to the numbers it qualifies, not in a footnote
-          nobody scrolls to: a day's spend counts whole even when only some of its leads match. */}
-      <p className="lead-cell-foot">Each ad set day counts whole, so this reads high when a filter selects only part of a day.</p>
-     </section>
     </div>
 
     {/* The remaining controls stay with the table because they change how its rows are searched,

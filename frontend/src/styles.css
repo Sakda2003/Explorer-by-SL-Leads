@@ -6821,62 +6821,12 @@ tr:hover .benchmark-bar span { opacity: 1; }
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "kpis"
-    "insights"
-    "cost";
+    "insights";
   gap: 12px;
   margin-bottom: 22px;
 }
 .lead-kpis { grid-area: kpis; }
 .lead-insights { grid-area: insights; }
-.lead-cell-cost { grid-area: cost; }
-
-.lead-cell {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 16px 18px 18px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--elev-1);
-}
-.lead-cell-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-.lead-cell-head h3 {
-  margin: 0;
-  color: var(--text);
-  font-family: var(--font-display);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -.01em;
-}
-.lead-cell-note {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--dim);
-  font-size: 10.5px;
-  font-weight: 500;
-}
-.lead-cell-foot { margin: 0; padding-top: 12px; color: var(--dim); font-size: 10.5px; line-height: 1.55; }
-/* The cost note stays pinned beneath the four figures it qualifies. */
-.lead-cell-cost .lead-cell-foot { margin-top: auto; }
-.lead-cell-empty {
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
-  margin: 0;
-  padding: 4px 0 8px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
 
 /* Each stage's colour, matching the pill it recolours in the board below (see the
    `.lead-quality-select.quality-*` rules) so a stage reads the same in both places. */
@@ -7048,29 +6998,6 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-chart-tooltip { max-width: 260px; }
 .lead-chart-tooltip b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lead-chart-panel .recharts-bar-rectangle { cursor: pointer; }
-
-/* --- Acquisition cost -------------------------------------------------------------------- */
-.lead-figures {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 14px 26px;
-  margin: 0;
-}
-.lead-figures > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.lead-figures dt { color: var(--muted); font-size: 11px; font-weight: 600; }
-.lead-figures dd {
-  margin: 0;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 20px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
-}
-/* Cents a step back: four dollar figures side by side read as eight numbers when the cents
-   carry the same weight as the dollars. */
-.lead-figure-cents { color: var(--dim); font-size: .72em; font-style: normal; font-weight: 600; }
-.lead-figure-none { color: var(--dim); font-weight: 600; }
 
 /* --- Board --------------------------------------------------------------------------------
    Same board as the Dataset page's, so only the count label on the left is new. */
