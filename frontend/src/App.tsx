@@ -2518,9 +2518,10 @@ function ForecastPage({ role }: { role: UserRole }) {
  setBusy(true);
  const summaryRequest = api('/dashboard/summary').then(setSummary).catch(() => setSummary({}));
  const insightsRequest = api('/dashboard/insights').then((insightData) => {
-  const nextCampaignId = insightData.campaigns?.some((item: any) => item.campaign_id === selectedCampaignId)
+  const selectableCampaigns = (insightData.campaigns || []).filter(isAttributedCampaign);
+  const nextCampaignId = selectableCampaigns.some((item: any) => item.campaign_id === selectedCampaignId)
    ? selectedCampaignId
-   : insightData.campaigns?.[0]?.campaign_id || '';
+   : selectableCampaigns[0]?.campaign_id || '';
   setInsights(insightData);
   setSelectedCampaignId(String(nextCampaignId));
   if (!nextCampaignId) setTrackingReady(true);
@@ -2887,7 +2888,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  rank: index + 1,
  sharePercent: Number(item.share || 0) * 100,
  })), [insights]);
- const campaignOptions = useMemo(() => campaignMix.map((campaign: any) => {
+ const campaignOptions = useMemo(() => campaignMix.filter(isAttributedCampaign).map((campaign: any) => {
  const campaignSets = sets
  .filter((item) => String(item.utm_campaign_id) === String(campaign.campaign_id))
  .sort((a, b) => Number(b.total_leads || 0) - Number(a.total_leads || 0));
@@ -7032,6 +7033,12 @@ const HIDDEN_LEAD_CAMPAIGN_IDS = new Set([
  '120249276038010078',
  '120244916977850078',
 ]);
+
+const isAttributedCampaign = (campaign: any) => {
+ const id = String(campaign?.campaign_id || '').trim();
+ const name = String(campaign?.campaign || campaign?.campaign_name || '').trim();
+ return id.toLowerCase() !== 'unattributed' && name.toLowerCase() !== 'unattributed';
+};
 
 const EMPTY_LEAD_SUMMARY = {
  total: 0, stages: [] as any[], statuses: {} as Record<string, number>, pending_review: 0, intake: 0, rated: 0,
