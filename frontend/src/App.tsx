@@ -7077,20 +7077,6 @@ const EMPTY_DUPLICATE_LEADS: DuplicateLeadResult = {
  groups: [], group_count: 0, duplicate_leads: 0, extra_occurrences: 0, scanned_leads: 0,
 };
 
-function LeadSpendOutcomeTooltip({ active, payload, label }: any) {
- if (!active || !payload?.length) return null;
- const point = payload[0]?.payload || {};
- const leadValue = Number(point.leads || 0);
- return (
-  <div className="forecast-tooltip lead-chart-tooltip lead-spend-tooltip">
-   <span>SCOPE SNAPSHOT</span>
-   <b>{point.label || label}</b>
-   <p><i style={{ background: point.color }} />Lead count<strong>{fmt(leadValue)}</strong></p>
-   {point.share != null && <p><i />Share of leads<strong>{Number(point.share || 0).toFixed(1)}%</strong></p>}
-  </div>
- );
-}
-
 function LeadManagementPage({ role }: { role: UserRole }) {
  const isStaff = role === 'staff';
  const [options, setOptions] = useState<{ campaigns: any[]; ad_sets: any[]; first_day: string | null; last_day: string | null }>(
@@ -7840,6 +7826,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    color: 'var(--status-lost-fill)',
   },
  ];
+ const spendOutcomeMax = Math.max(1, ...spendOutcomeChart.map((item) => Number(item.leads || 0)));
  return (
   <div className="page-content lead-management-page">
    <section className="dataset-heading">
@@ -7954,16 +7941,15 @@ function LeadManagementPage({ role }: { role: UserRole }) {
 
       <div className="lead-insight-grid">
        <article className="lead-chart-panel lead-spend-outcomes">
-       <div className="lead-chart-head">
-        <div>
+        <div className="lead-chart-head lead-spend-head">
+         <div>
           <h4>Spend and outcomes</h4>
           <p>{spendOutcomeScopeLabel}</p>
          </div>
          <div className="lead-chart-legend" aria-label="Spend and outcome legend">
-          <span><i className="lead-leads-bar-key" />Lead outcomes</span>
-          <span><i style={{ background: 'var(--status-info-fill)' }} />Qualified</span>
-          <span><i style={{ background: 'var(--status-warn-fill)' }} />Awaiting docs</span>
-          <span><i style={{ background: 'var(--status-good-fill)' }} />Converted</span>
+          {spendOutcomeChart.map((item) => (
+           <span key={item.key}><i style={{ background: item.color }} />{item.label}</span>
+          ))}
          </div>
         </div>
         {!showSkeleton && !!summary.total && (
@@ -7975,19 +7961,41 @@ function LeadManagementPage({ role }: { role: UserRole }) {
          </div>
         )}
         {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : summary.total ? (
-         <div className="lead-chart-canvas lead-spend-canvas">
-          <ResponsiveContainer width="100%" height="100%">
-           <ComposedChart accessibilityLayer data={spendOutcomeChart} margin={{ top: 16, right: 30, left: 0, bottom: 6 }} barCategoryGap="34%">
-            <CartesianGrid stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="label" interval={0} tick={{ fontSize: 11.5, fontWeight: 650, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} height={34} />
-            <YAxis yAxisId="leads" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={44} />
-            <Tooltip content={<LeadSpendOutcomeTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            <Bar yAxisId="leads" dataKey="leads" name="Lead outcomes" radius={[5, 5, 0, 0]} maxBarSize={86} cursor="pointer" animationDuration={650} onClick={(entry: any) => { if (entry?.quality || entry?.payload?.quality) toggleStage(entry.quality || entry.payload.quality); }}>
-             {spendOutcomeChart.map((item) => <Cell key={`leads-${item.key}`} fill={item.color} opacity={qualityFilter.length && !qualityFilter.includes(String(item.quality)) ? .32 : 1} />)}
-             <LabelList dataKey="leads" position="top" formatter={(value: any) => Number(value || 0) ? fmt(value) : ''} fill="var(--text)" fontSize={11.5} fontWeight={750} />
-            </Bar>
-           </ComposedChart>
-          </ResponsiveContainer>
+         <div className="lead-outcome-bars" aria-label="Lead outcome distribution">
+          {spendOutcomeChart.map((item) => {
+           const active = qualityFilter.includes(item.quality);
+           const share = Math.max(0, Math.min(100, Number(item.share || 0)));
+           const width = Math.max(2, Math.min(100, (Number(item.leads || 0) / spendOutcomeMax) * 100));
+           const cost = item.key === 'converted'
+            ? summary.cost_per_converted
+            : item.key === 'qualified'
+             ? summary.cost_per_qualified
+             : null;
+           return (
+            <button
+             type="button"
+             key={item.key}
+             className={`lead-outcome-row${active ? ' is-active' : ''}`}
+             style={{ '--bar': `${width}%`, '--accent': item.color } as CSSProperties}
+             aria-pressed={active}
+             aria-label={`${item.label}: ${plural(Number(item.leads || 0), 'lead')}, ${share.toFixed(1)} percent of leads. ${active ? 'Remove' : 'Apply'} filter.`}
+             onClick={() => toggleStage(item.quality)}
+            >
+             <span className="lead-outcome-meta">
+              <i />
+              <span>{item.label}</span>
+              <strong>{fmt(item.leads)}</strong>
+             </span>
+             <span className="lead-outcome-track" aria-hidden="true">
+              <span />
+             </span>
+             <span className="lead-outcome-foot">
+              <b>{share.toFixed(1)}%</b>
+              <small>{cost == null ? 'of selected leads' : `${cplMoney(cost)} per lead`}</small>
+             </span>
+            </button>
+           );
+          })}
          </div>
         ) : <p className="lead-chart-empty">No spend or outcome data in this view.</p>}
        </article>
