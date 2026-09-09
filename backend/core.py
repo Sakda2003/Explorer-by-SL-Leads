@@ -3473,12 +3473,17 @@ def get_dashboard_insights() -> dict:
             """SELECT status, created_at, utm_campaign, utm_campaign_id, utm_ad_set_id
                FROM lead_events ORDER BY created_at"""
         ).fetchall()
+        latest_lead_date = db.execute("SELECT MAX(date(created_at)) FROM lead_events").fetchone()[0]
 
     total = len(source_rows)
     status_counts: Counter[str] = Counter()
     campaigns: dict[str, dict] = {}
     dates: list[str] = []
     invalid_names = {"", "nan", "none", "null", "n/a"}
+    recent_start = (
+        (datetime.fromisoformat(latest_lead_date) - pd.Timedelta(days=6)).date().isoformat()
+        if latest_lead_date else None
+    )
 
     for row in source_rows:
         raw_status = str(row["status"] or "").strip()
@@ -3501,9 +3506,11 @@ def get_dashboard_insights() -> dict:
         bucket_key = f"name:{campaign_name.casefold()}" if has_valid_name else "unattributed"
         bucket = campaigns.setdefault(bucket_key, {
             "campaign_id": campaign_id or "Unattributed", "campaign_ids": set(),
-            "leads": 0, "names": Counter(), "ad_set_ids": set(), "last_activity": None,
+            "leads": 0, "recent_leads": 0, "names": Counter(), "ad_set_ids": set(), "last_activity": None,
         })
         bucket["leads"] += 1
+        if recent_start and created_date >= recent_start:
+            bucket["recent_leads"] += 1
         if campaign_id:
             bucket["campaign_ids"].add(campaign_id)
             if bucket["campaign_id"] == "Unattributed":
@@ -3536,12 +3543,13 @@ def get_dashboard_insights() -> dict:
             "campaign_ids": campaign_ids,
             "campaign": name,
             "leads": bucket["leads"],
+            "recent_leads": bucket["recent_leads"],
             "share": bucket["leads"] / total if total else 0.0,
             "ad_set_count": len(bucket["ad_set_ids"]),
             "ad_set_ids": set(bucket["ad_set_ids"]),
             "last_activity": bucket["last_activity"],
         })
-    campaign_rows.sort(key=lambda item: (-item["leads"], item["campaign"]))
+    campaign_rows.sort(key=lambda item: (-item["recent_leads"], -item["leads"], item["campaign"]))
     normalized_campaigns: dict[str, dict] = {}
     for row in campaign_rows:
         campaign_name = str(row["campaign"] or "").strip()
@@ -3553,6 +3561,7 @@ def get_dashboard_insights() -> dict:
             "campaign_ids": set(),
             "campaign": campaign_name,
             "leads": 0,
+            "recent_leads": 0,
             "share": 0.0,
             "ad_set_count": 0,
             "ad_set_ids": set(),
@@ -3561,6 +3570,7 @@ def get_dashboard_insights() -> dict:
         raw_ids = row.get("campaign_ids") or [row["campaign_id"]]
         merged["campaign_ids"].update(str(value) for value in raw_ids if value and str(value) != "Unattributed")
         merged["leads"] += row["leads"]
+        merged["recent_leads"] += row.get("recent_leads", 0)
         merged["ad_set_ids"].update(row.get("ad_set_ids", set()))
         if row["last_activity"] and (merged["last_activity"] is None or row["last_activity"] > merged["last_activity"]):
             merged["last_activity"] = row["last_activity"]
@@ -3572,7 +3582,7 @@ def get_dashboard_insights() -> dict:
         row["ad_set_count"] = len(row.pop("ad_set_ids"))
         row["share"] = row["leads"] / total if total else 0.0
         campaign_rows.append(row)
-    campaign_rows.sort(key=lambda item: (-item["leads"], item["campaign"]))
+    campaign_rows.sort(key=lambda item: (-item["recent_leads"], -item["leads"], item["campaign"]))
     for row in campaign_rows:
         row["campaign"] = display_campaign_name(row["campaign"])
 
@@ -7272,14 +7282,18 @@ def get_lead_filter_options() -> dict:
     returns rows.
     """
     with connect() as db:
+        latest_day = db.execute("SELECT MAX(date(created_at)) FROM lead_events").fetchone()[0]
+        recent_start = db.execute("SELECT date(?, '-6 days')", (latest_day,)).fetchone()[0] if latest_day else None
         campaign_rows = db.execute(
             """SELECT utm_campaign_id AS campaign_id,
                       COALESCE(MAX(NULLIF(TRIM(utm_campaign), '')), '') AS campaign,
-                      COUNT(*) AS leads
+                      COUNT(*) AS leads,
+                      SUM(CASE WHEN date(created_at) >= date(?) THEN 1 ELSE 0 END) AS recent_leads
                FROM lead_events
                WHERE TRIM(COALESCE(utm_campaign_id, '')) <> ''
                GROUP BY utm_campaign_id
-               ORDER BY leads DESC, campaign_id"""
+               ORDER BY recent_leads DESC, leads DESC, campaign_id""",
+            (recent_start,),
         ).fetchall()
         ad_set_rows = db.execute(
             """SELECT utm_ad_set_id AS ad_set_id,

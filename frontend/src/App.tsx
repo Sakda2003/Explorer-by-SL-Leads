@@ -3684,7 +3684,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  onClick={() => selectCampaignFromDropdown(String(campaign.campaign_id))}
  >
  <span title={campaign.campaign}>{campaign.campaign}</span>
- <small>{campaign.adSetCount} ad sets - {fmt(campaign.leads)} leads</small>
+ <small>{campaign.adSetCount} ad sets - {fmt(campaign.recent_leads || 0)} last 7d - {fmt(campaign.leads)} total</small>
  </button>
  );
  })}
@@ -7304,6 +7304,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  );
  const selectedCampaignChoice = campaignChoices.find((item: any) => String(item.campaign_id) === String(campaignId)) || null;
  const allCampaignLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.leads || 0), 0);
+ const allCampaignRecentLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.recent_leads || 0), 0);
  const pickCampaign = (value: string) => {
   setCampaignId(value);
   setCampaignPickerOpen(false);
@@ -7869,7 +7870,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
            <div className="campaign-menu" role="listbox" aria-label="Campaigns">
             <button type="button" role="option" aria-selected={!campaignId} className={`campaign-option${!campaignId ? ' active' : ''}`} onClick={() => pickCampaign('')}>
              <span>All campaigns</span>
-             <small>{fmt(campaignChoices.length)} campaigns - {fmt(allCampaignLeadCount)} leads</small>
+             <small>{fmt(campaignChoices.length)} campaigns - {fmt(allCampaignRecentLeadCount)} last 7d - {fmt(allCampaignLeadCount)} total</small>
             </button>
             {campaignChoices.map((campaign: any) => {
              const id = String(campaign.campaign_id);
@@ -7878,7 +7879,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
              return (
               <button type="button" key={id} role="option" aria-selected={id === campaignId} className={`campaign-option${id === campaignId ? ' active' : ''}`} onClick={() => pickCampaign(id)}>
                <span title={name}>{campaignLabelFor(name, id)}</span>
-               <small>{fmt(adSetCount)} {adSetCount === 1 ? 'ad set' : 'ad sets'} - {fmt(campaign.leads)} leads</small>
+               <small>{fmt(adSetCount)} {adSetCount === 1 ? 'ad set' : 'ad sets'} - {fmt(campaign.recent_leads || 0)} last 7d - {fmt(campaign.leads)} total</small>
               </button>
              );
             })}
