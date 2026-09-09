@@ -7027,6 +7027,11 @@ const labelDisambiguator = (names: string[]) => {
  return (name: string, id: string) => ((counts.get(name) || 0) > 1 ? `${name} \u00b7 ${id}` : name);
 };
 
+const HIDDEN_LEAD_CAMPAIGN_IDS = new Set([
+ '120246730013800078',
+ '120244916977850078',
+]);
+
 const EMPTY_LEAD_SUMMARY = {
  total: 0, stages: [] as any[], statuses: {} as Record<string, number>, pending_review: 0, intake: 0, rated: 0,
  rated_share: 0, qualified: 0, dropped: 0, converted: 0, qualification_rate: null,
@@ -7295,9 +7300,13 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   () => (campaignId ? options.ad_sets.filter((item: any) => String(item.campaign_id) === String(campaignId)) : options.ad_sets),
   [options.ad_sets, campaignId],
  );
- const campaignLabelFor = useMemo(
-  () => labelDisambiguator(options.campaigns.map((item: any) => String(item.campaign || item.campaign_id))),
+ const campaignChoices = useMemo(
+  () => options.campaigns.filter((item: any) => !HIDDEN_LEAD_CAMPAIGN_IDS.has(String(item.campaign_id))),
   [options.campaigns],
+ );
+ const campaignLabelFor = useMemo(
+  () => labelDisambiguator(campaignChoices.map((item: any) => String(item.campaign || item.campaign_id))),
+  [campaignChoices],
  );
  const adSetLabelFor = useMemo(
   () => labelDisambiguator(adSetChoices.map((item: any) => String(item.ad_title || item.ad_set_id))),
@@ -7827,7 +7836,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
         onChange={pickCampaign}
         options={[
          { value: '', label: 'All campaigns', icon: Megaphone },
-         ...options.campaigns.map((item: any) => {
+         ...campaignChoices.map((item: any) => {
           const name = String(item.campaign || item.campaign_id);
           return {
            value: String(item.campaign_id),
