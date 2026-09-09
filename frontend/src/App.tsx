@@ -7102,16 +7102,17 @@ function LeadOutcomeShareTooltip({ active, payload }: any) {
 function LeadSpendOutcomeTooltip({ active, payload, label }: any) {
  if (!active || !payload?.length) return null;
  const point = payload[0]?.payload || {};
+ const leadValue = Number(point.leads || 0);
+ const spendValue = Number(point.spend || 0);
  return (
   <div className="forecast-tooltip lead-chart-tooltip lead-spend-tooltip">
-   <span>AD SET SPEND</span>
-   <b title={point.ad_set_id}>{point.displayLabel || label}</b>
-   <p><i className="lead-spend-line-key" />Matched spend<strong>{money(point.matched_spend_usd)}</strong></p>
-   <p><i style={{ background: 'var(--status-info-fill)' }} />Qualified<strong>{fmt(point.qualified)}</strong></p>
-   <p><i style={{ background: 'var(--status-warn-fill)' }} />Awaiting docs<strong>{fmt(point.awaiting)}</strong></p>
-   <p><i style={{ background: 'var(--status-good-fill)' }} />Converted<strong>{fmt(point.converted)}</strong></p>
-   <p><i style={{ background: 'var(--status-bad-fill)' }} />Not qualified<strong>{fmt(point.not_qualified)}</strong></p>
-   <p><i style={{ background: 'var(--status-lost-fill)' }} />Lost<strong>{fmt(point.lost)}</strong></p>
+   <span>SCOPE SNAPSHOT</span>
+   <b>{point.label || label}</b>
+   {point.kind === 'spend'
+    ? <p><i className="lead-spend-line-key" />Matched spend<strong>{money(spendValue)}</strong></p>
+    : <p><i style={{ background: point.color }} />Lead count<strong>{fmt(leadValue)}</strong></p>}
+   {point.cost_per_lead != null && <p><i />Cost per lead<strong>{cplMoney(point.cost_per_lead)}</strong></p>}
+   {point.share != null && <p><i />Share of leads<strong>{Number(point.share || 0).toFixed(1)}%</strong></p>}
   </div>
  );
 }
@@ -7827,52 +7828,75 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    color: stage?.color || 'var(--muted)',
   };
  });
- const adSetLabelLookup = useMemo(() => {
-  const labels = new Map<string, string>();
-  for (const item of options.ad_sets) {
-   const id = String(item.ad_set_id || '');
-   if (!id) continue;
-   const title = String(item.ad_title || '').trim();
-   labels.set(id, title || id);
-  }
-  return labels;
- }, [options.ad_sets]);
- const spendOutcomeRows = (summary.ad_sets || [])
-  .map((item: any) => {
-   const adSetKey = String(item.ad_set_id || 'Unattributed');
-   const displayLabel = adSetKey === 'Unattributed'
-    ? 'Unattributed'
-    : (adSetLabelLookup.get(adSetKey) || adSetKey);
-   return {
-    ...item,
-    ad_set_id: adSetKey,
-    displayLabel,
-    axisLabel: adSetKey === 'Unattributed' ? 'Unattr.' : adSetKey.slice(-6),
-    matched_spend_usd: Number(item.matched_spend_usd || 0),
-    pending_review: Number(item.pending_review || 0),
-    not_qualified: Number(item.not_qualified || 0),
-    qualified: Number(item.qualified || 0),
-    awaiting: Number(item.awaiting || 0),
-    converted: Number(item.converted || 0),
-    lost: Number(item.lost || 0),
-    qualified_total: Number(item.qualified_total || 0),
-   };
-  });
- const spendOutcomeVisibleRows = spendOutcomeRows.slice(0, adSetId ? 1 : 8);
- const spendOutcomeTotals = spendOutcomeRows.reduce(
-  (totals: any, item: any) => ({
-   spend: totals.spend + item.matched_spend_usd,
-   qualified: totals.qualified + item.qualified_total,
-   converted: totals.converted + item.converted,
-   total: totals.total + Number(item.total || 0),
-  }),
-  { spend: 0, qualified: 0, converted: 0, total: 0 },
- );
  const spendOutcomeScopeLabel = adSetId
-  ? 'Selected ad set'
+  ? `Ad set ${adSetId}`
   : campaignId
-   ? 'Ad sets in selected campaign'
-   : 'Highest-spend ad sets';
+   ? (selectedCampaignChoice?.campaign || 'Selected campaign')
+   : 'All campaigns combined';
+ const spendOutcomeSummary = {
+  spend: Number(summary.matched_spend_usd || 0),
+  qualified: Number(summary.qualified || 0),
+  awaiting: Number(stages.find((stage: any) => stage.quality === 'Awaiting Document and Payment')?.count || 0),
+  converted: Number(summary.converted || 0),
+  notQualified: Number(stages.find((stage: any) => stage.quality === 'Not Qualified')?.count || 0),
+  lost: Number(stages.find((stage: any) => stage.quality === 'Lost')?.count || 0),
+  total: Number(summary.total || 0),
+ };
+ const spendOutcomeChart = [
+  {
+   key: 'spend',
+   kind: 'spend',
+   label: 'Spend',
+   spend: spendOutcomeSummary.spend,
+   cost_per_lead: summary.cost_per_lead,
+   color: 'var(--yellow-strong)',
+  },
+  {
+   key: 'qualified',
+   kind: 'leads',
+   quality: 'Qualified',
+   label: 'Qualified',
+   leads: Number(stages.find((stage: any) => stage.quality === 'Qualified')?.count || 0),
+   share: Number(stages.find((stage: any) => stage.quality === 'Qualified')?.share || 0) * 100,
+   color: 'var(--status-info-fill)',
+  },
+  {
+   key: 'awaiting',
+   kind: 'leads',
+   quality: 'Awaiting Document and Payment',
+   label: 'Awaiting docs',
+   leads: spendOutcomeSummary.awaiting,
+   share: Number(stages.find((stage: any) => stage.quality === 'Awaiting Document and Payment')?.share || 0) * 100,
+   color: 'var(--status-warn-fill)',
+  },
+  {
+   key: 'converted',
+   kind: 'leads',
+   quality: 'Converted',
+   label: 'Converted',
+   leads: spendOutcomeSummary.converted,
+   share: Number(stages.find((stage: any) => stage.quality === 'Converted')?.share || 0) * 100,
+   color: 'var(--status-good-fill)',
+  },
+  {
+   key: 'not_qualified',
+   kind: 'leads',
+   quality: 'Not Qualified',
+   label: 'Not qualified',
+   leads: spendOutcomeSummary.notQualified,
+   share: Number(stages.find((stage: any) => stage.quality === 'Not Qualified')?.share || 0) * 100,
+   color: 'var(--status-bad-fill)',
+  },
+  {
+   key: 'lost',
+   kind: 'leads',
+   quality: 'Lost',
+   label: 'Lost',
+   leads: spendOutcomeSummary.lost,
+   share: Number(stages.find((stage: any) => stage.quality === 'Lost')?.share || 0) * 100,
+   color: 'var(--status-lost-fill)',
+  },
+ ];
  return (
   <div className="page-content lead-management-page">
    <section className="dataset-heading">
@@ -8029,47 +8053,47 @@ function LeadManagementPage({ role }: { role: UserRole }) {
        </article>
 
        <article className="lead-chart-panel lead-spend-outcomes">
-        <div className="lead-chart-head">
-         <div>
-          <h4>Spend by ad set</h4>
+       <div className="lead-chart-head">
+        <div>
+          <h4>Spend and outcomes</h4>
           <p>{spendOutcomeScopeLabel}</p>
          </div>
          <div className="lead-chart-legend" aria-label="Spend and outcome legend">
           <span><i className="lead-spend-line-key" />Matched spend</span>
+          <span><i className="lead-leads-bar-key" />Lead outcomes</span>
           <span><i style={{ background: 'var(--status-info-fill)' }} />Qualified</span>
           <span><i style={{ background: 'var(--status-warn-fill)' }} />Awaiting docs</span>
           <span><i style={{ background: 'var(--status-good-fill)' }} />Converted</span>
-          <span><i style={{ background: 'var(--status-bad-fill)' }} />Not qualified</span>
-          <span><i style={{ background: 'var(--status-lost-fill)' }} />Lost</span>
          </div>
         </div>
-        {!showSkeleton && !!spendOutcomeRows.length && (
+        {!showSkeleton && !!summary.total && (
          <div className="lead-spend-summary" aria-label="Spend outcome totals">
-          <span><b>{money(spendOutcomeTotals.spend)}</b><small>matched spend</small></span>
-          <span><b>{fmt(spendOutcomeTotals.qualified)}</b><small>qualified+</small></span>
-          <span><b>{fmt(spendOutcomeTotals.converted)}</b><small>converted</small></span>
-          <span><b>{spendOutcomeTotals.qualified ? cplMoney(spendOutcomeTotals.spend / spendOutcomeTotals.qualified) : '-'}</b><small>cost / qualified</small></span>
+          <span><b>{money(spendOutcomeSummary.spend)}</b><small>matched spend</small></span>
+          <span><b>{fmt(spendOutcomeSummary.qualified)}</b><small>qualified+</small></span>
+          <span><b>{fmt(spendOutcomeSummary.converted)}</b><small>converted</small></span>
+          <span><b>{summary.cost_per_qualified == null ? '-' : cplMoney(summary.cost_per_qualified)}</b><small>cost / qualified</small></span>
          </div>
         )}
-        {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : spendOutcomeVisibleRows.length ? (
+        {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : summary.total ? (
          <div className="lead-chart-canvas lead-spend-canvas">
           <ResponsiveContainer width="100%" height="100%">
-           <ComposedChart accessibilityLayer data={spendOutcomeVisibleRows} margin={{ top: 16, right: 28, left: 0, bottom: 6 }} barCategoryGap="26%">
+           <ComposedChart accessibilityLayer data={spendOutcomeChart} margin={{ top: 16, right: 30, left: 0, bottom: 6 }} barCategoryGap="34%">
             <CartesianGrid stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="axisLabel" interval={0} tick={{ fontSize: 11.5, fontWeight: 650, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} height={34} />
+            <XAxis dataKey="label" interval={0} tick={{ fontSize: 11.5, fontWeight: 650, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} height={34} />
             <YAxis yAxisId="leads" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={44} />
             <YAxis yAxisId="spend" orientation="right" tickFormatter={(value) => cplMoney(value)} tick={{ fontSize: 10.5, fill: 'var(--yellow)' }} axisLine={false} tickLine={false} width={74} />
             <Tooltip content={<LeadSpendOutcomeTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            <Bar yAxisId="leads" stackId="outcomes" dataKey="qualified" name="Qualified" fill="var(--status-info-fill)" radius={[0, 0, 4, 4]} cursor="pointer" animationDuration={650} onClick={() => toggleStage('Qualified')} />
-            <Bar yAxisId="leads" stackId="outcomes" dataKey="awaiting" name="Awaiting documents" fill="var(--status-warn-fill)" cursor="pointer" animationDuration={650} onClick={() => toggleStage('Awaiting Document and Payment')} />
-            <Bar yAxisId="leads" stackId="outcomes" dataKey="converted" name="Converted" fill="var(--status-good-fill)" cursor="pointer" animationDuration={650} onClick={() => toggleStage('Converted')} />
-            <Bar yAxisId="leads" stackId="outcomes" dataKey="not_qualified" name="Not qualified" fill="var(--status-bad-fill)" cursor="pointer" animationDuration={650} onClick={() => toggleStage('Not Qualified')} />
-            <Bar yAxisId="leads" stackId="outcomes" dataKey="lost" name="Lost" fill="var(--status-lost-fill)" radius={[5, 5, 0, 0]} cursor="pointer" animationDuration={650} onClick={() => toggleStage('Lost')} />
-            <Line yAxisId="spend" type="monotone" dataKey="matched_spend_usd" name="Matched spend" stroke="var(--yellow-strong)" strokeWidth={2} strokeOpacity={.82} dot={{ r: 4, fill: 'var(--surface)', stroke: 'var(--yellow-strong)', strokeWidth: 2 }} activeDot={{ r: 6 }} animationDuration={800} />
+            <Bar yAxisId="spend" dataKey="spend" name="Matched spend" radius={[5, 5, 0, 0]} maxBarSize={86} animationDuration={650}>
+             {spendOutcomeChart.map((item) => <Cell key={`spend-${item.key}`} fill={item.kind === 'spend' ? 'var(--yellow-strong)' : 'transparent'} />)}
+            </Bar>
+            <Bar yAxisId="leads" dataKey="leads" name="Lead outcomes" radius={[5, 5, 0, 0]} maxBarSize={86} cursor="pointer" animationDuration={650} onClick={(entry: any) => { if (entry?.quality || entry?.payload?.quality) toggleStage(entry.quality || entry.payload.quality); }}>
+             {spendOutcomeChart.map((item) => <Cell key={`leads-${item.key}`} fill={item.kind === 'leads' ? item.color : 'transparent'} opacity={item.kind === 'leads' && qualityFilter.length && !qualityFilter.includes(String(item.quality)) ? .32 : 1} />)}
+             <LabelList dataKey="leads" position="top" formatter={(value: any) => Number(value || 0) ? fmt(value) : ''} fill="var(--text)" fontSize={11.5} fontWeight={750} />
+            </Bar>
            </ComposedChart>
           </ResponsiveContainer>
          </div>
-        ) : <p className="lead-chart-empty">No matched ad set spend in this view.</p>}
+        ) : <p className="lead-chart-empty">No spend or outcome data in this view.</p>}
        </article>
       </div>
      </section>

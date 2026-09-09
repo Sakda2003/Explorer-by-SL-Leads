@@ -6980,10 +6980,11 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .lead-chart-legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; }
 .lead-chart-legend i { width: 6px; height: 6px; border-radius: 50%; }
 .lead-chart-legend .lead-share-bar-key { border-radius: 2px; background: var(--status-info-fill); }
+.lead-chart-legend .lead-leads-bar-key { border-radius: 2px; background: var(--status-info-fill); }
 .lead-chart-legend .lead-count-line-key,
-.lead-outcome-tooltip .lead-count-line-key,
+.lead-outcome-tooltip .lead-count-line-key { width: 10px; height: 2px; border-radius: 1px; background: var(--yellow-strong); }
 .lead-chart-legend .lead-spend-line-key,
-.lead-spend-tooltip .lead-spend-line-key { width: 10px; height: 2px; border-radius: 1px; background: var(--yellow-strong); }
+.lead-spend-tooltip .lead-spend-line-key { width: 10px; height: 6px; border-radius: 2px; background: var(--yellow-strong); }
 .lead-outcome-tooltip p:first-of-type i { width: 7px; height: 7px; }
 .lead-outcome-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 2px 0 18px; }
 .lead-outcome-filters button { min-width: 0; min-height: 48px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); font: inherit; text-align: left; cursor: pointer; transition: border-color .2s ease, background .2s ease, color .2s ease, opacity .2s ease; }
