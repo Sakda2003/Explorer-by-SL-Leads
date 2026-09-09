@@ -2519,9 +2519,11 @@ function ForecastPage({ role }: { role: UserRole }) {
  const summaryRequest = api('/dashboard/summary').then(setSummary).catch(() => setSummary({}));
  const insightsRequest = api('/dashboard/insights').then((insightData) => {
   const selectableCampaigns = (insightData.campaigns || []).filter(isAttributedCampaign);
-  const nextCampaignId = selectableCampaigns.some((item: any) => item.campaign_id === selectedCampaignId)
-   ? selectedCampaignId
-   : selectableCampaigns[0]?.campaign_id || '';
+  const selectedCampaign = selectableCampaigns.find((item: any) => {
+   const scope = campaignScopeValue(item);
+   return scope === selectedCampaignId || campaignScopeIncludesId(scope, selectedCampaignId);
+  });
+  const nextCampaignId = selectedCampaign ? campaignScopeValue(selectedCampaign) : campaignScopeValue(selectableCampaigns[0]);
   setInsights(insightData);
   setSelectedCampaignId(String(nextCampaignId));
   if (!nextCampaignId) setTrackingReady(true);
@@ -2655,7 +2657,7 @@ function ForecastPage({ role }: { role: UserRole }) {
 
  useEffect(() => {
  const selectedSetCampaign = sets.find((item) => String(item.utm_ad_set_id) === String(selectedId))?.utm_campaign_id;
- if (selectedSetCampaign && String(selectedSetCampaign) !== String(selectedCampaignId)) {
+ if (selectedSetCampaign && !campaignScopeIncludesId(selectedCampaignId, selectedSetCampaign)) {
  setSelectedCampaignId(String(selectedSetCampaign));
  }
  }, [selectedId, sets, selectedCampaignId]);
@@ -2889,18 +2891,21 @@ function ForecastPage({ role }: { role: UserRole }) {
  sharePercent: Number(item.share || 0) * 100,
  })), [insights]);
  const campaignOptions = useMemo(() => campaignMix.filter(isAttributedCampaign).map((campaign: any) => {
+ const scopeIds = campaignIdsFor(campaign);
  const campaignSets = sets
- .filter((item) => String(item.utm_campaign_id) === String(campaign.campaign_id))
+ .filter((item) => scopeIds.includes(String(item.utm_campaign_id)))
  .sort((a, b) => Number(b.total_leads || 0) - Number(a.total_leads || 0));
  return {
  ...campaign,
+ campaign_id: campaignScopeValue(campaign),
+ scopeCampaignIds: scopeIds,
  primaryAdSetId: campaignSets[0]?.utm_ad_set_id ? String(campaignSets[0].utm_ad_set_id) : '',
  adSetCount: campaignSets.length,
  };
  }).filter((campaign: any) => campaign.primaryAdSetId), [campaignMix, sets]);
  const visibleCampaigns = showAllCampaigns ? campaignMix : campaignMix.slice(0, 10);
- const selectedCampaign = campaignMix.find((item: any) => item.campaign_id === selectedCampaignId) || campaignMix[0] || null;
- const selectedCampaignOption = campaignOptions.find((item: any) => String(item.campaign_id) === String(selectedCampaignId)) || campaignOptions[0] || null;
+ const selectedCampaign = campaignMix.find((item: any) => campaignScopeValue(item) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(item), selectedCampaignId)) || campaignMix[0] || null;
+ const selectedCampaignOption = campaignOptions.find((item: any) => String(item.campaign_id) === String(selectedCampaignId) || campaignScopeIncludesId(String(item.campaign_id), selectedCampaignId)) || campaignOptions[0] || null;
  const trackingScopeName = selectedId
  ? `${selectedCampaignOption?.campaign || 'Selected campaign'} - Ad set ${String(selectedId).slice(-6)}`
  : selectedCampaignOption?.campaign || 'Portfolio';
@@ -3202,7 +3207,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  const adSets = adSpend.ad_sets || [];
  if (selectedCampaignId) {
  return new Set(adSets
- .filter((item: any) => String(item.campaign_id || '') === String(selectedCampaignId))
+ .filter((item: any) => campaignMatchesScope(item, selectedCampaignId))
  .map((item: any) => String(item.ad_set_id)));
  }
  return new Set(adSets.map((item: any) => String(item.ad_set_id)));
@@ -3218,7 +3223,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  ? (adSpend.daily_campaigns || [])
  : (adSpend.daily || []);
  const filtered = source.filter((item: any) => {
- const campaignMatch = !selectedCampaignId || String(item.campaign_id) === String(selectedCampaignId);
+ const campaignMatch = campaignMatchesScope(item, selectedCampaignId);
  const adSetMatch = !selectedId || String(item.ad_set_id || '') === String(selectedId);
  const dateMatch = (!trackingStartDate || String(item.day) >= trackingStartDate) && (!trackingEndDate || String(item.day) <= trackingEndDate);
  return campaignMatch && adSetMatch && dateMatch;
@@ -3316,7 +3321,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  const spendScopeLabel = selectedId
  ? `Ad set ${String(selectedId).slice(-6)}`
  : selectedCampaignId
- ? selectedCampaignOption?.campaign || spendCampaignOptions.find((item: any) => String(item.campaign_id) === String(selectedCampaignId))?.campaign_name || 'Selected campaign'
+ ? selectedCampaignOption?.campaign || spendCampaignOptions.find((item: any) => campaignMatchesScope(item, selectedCampaignId))?.campaign_name || 'Selected campaign'
  : 'All campaigns';
  const spendCampaigns = allCampaignCplRows.slice(0, 10);
  const cplBenchmark = cplView === 'campaign' ? campaignCplBenchmark : adSetCplBenchmark;
@@ -3342,13 +3347,13 @@ function ForecastPage({ role }: { role: UserRole }) {
  cplRows.slice(Math.ceil(cplRows.length / 2)),
  ];
  const selectedSpendCampaign = selectedCampaignId
- ? (adSpend.campaigns || []).find((item: any) => String(item.campaign_id) === String(selectedCampaignId))
+ ? (adSpend.campaigns || []).find((item: any) => campaignMatchesScope(item, selectedCampaignId))
  : null;
  const selectedAdSetSpend = selectedId
  ? (adSpend.ad_sets || []).find((item: any) => String(item.ad_set_id) === String(selectedId))
  : null;
  const spendAdSetRows = (adSpend.ad_sets || [])
- .filter((item: any) => !selectedCampaignId || String(item.campaign_id) === String(selectedCampaignId))
+ .filter((item: any) => campaignMatchesScope(item, selectedCampaignId))
  .sort((a: any, b: any) => {
  const aCpl = a.actual_cpl ?? a.cpl;
  const bCpl = b.actual_cpl ?? b.cpl;
@@ -3382,7 +3387,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  const allocationMaxShare = Math.max(1, ...allocationRows.flatMap((item: any) => [Number(item.spend_share || 0), Number(item.lead_share || 0)]));
  const allocationStatusFor = (gap: any) => Number(gap || 0) >= 3 ? 'Under-funded' : Number(gap || 0) <= -3 ? 'Over-funded' : 'Balanced';
  const selectedAllocationRow = useMemo(() => {
- return allocationRows.find((item: any) => String(item.campaign_id) === String(selectedCampaignId)) || allocationRows[0] || null;
+ return allocationRows.find((item: any) => campaignMatchesScope(item, selectedCampaignId)) || allocationRows[0] || null;
  }, [allocationRows, selectedCampaignId]);
  const selectedAllocationStatus = selectedAllocationRow ? allocationStatusFor(selectedAllocationRow.gap) : '';
 
@@ -3672,7 +3677,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  {campaignPickerOpen && (
  <div className="campaign-menu" role="listbox" aria-label="Campaigns">
  {campaignOptions.map((campaign: any) => {
- const isActive = String(campaign.campaign_id) === String(selectedCampaignId);
+ const isActive = String(campaign.campaign_id) === String(selectedCampaignId) || campaignScopeIncludesId(String(campaign.campaign_id), selectedCampaignId);
  return (
  <button
  type="button"
@@ -4216,7 +4221,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  <YAxis type="category" dataKey="shortName" width={160} tick={{ fontSize: 11, fill: 'var(--muted)' }} axisLine={false} tickLine={false} />
  <Tooltip content={<CampaignSpendTooltip />} cursor={{ fill: 'color-mix(in srgb, var(--yellow) 3.5%, transparent)' }} />
  <Bar dataKey="actual_cpl" radius={[0, 8, 8, 0]} isAnimationActive animationDuration={750}>
- {spendCampaigns.map((item: any) => <Cell key={item.campaign_id} fill={String(item.campaign_id) === String(selectedCampaignId) ? 'var(--series-actual)' : 'var(--yellow-muted)'} />)}
+ {spendCampaigns.map((item: any) => <Cell key={item.campaign_id} fill={campaignMatchesScope(item, selectedCampaignId) ? 'var(--series-actual)' : 'var(--yellow-muted)'} />)}
  <LabelList dataKey="actual_cpl" position="right" formatter={(value: any) => money(value)} fill="var(--text)" fontSize={11} fontWeight={700} />
  </Bar>
  </BarChart>
@@ -4493,7 +4498,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  </div>
  <div className={`campaign-chart campaign-share-list${showAllCampaigns ? ' expanded' : ''}`} role="group" aria-label="Interactive campaign lead share ranking">
  {visibleCampaigns.map((item: any) => {
- const isActive = String(item.campaign_id) === String(selectedCampaignId);
+ const isActive = campaignMatchesScope(item, selectedCampaignId);
  const share = Number(item.sharePercent || 0);
  return (
  <button
@@ -5878,7 +5883,7 @@ function DatasetPage({ role }: { role: UserRole }) {
   return () => document.removeEventListener('mousedown', closeOnOutsideClick);
  }, []);
 
- const selectedCampaignName = campaigns.find((item: any) => String(item.campaign_id) === String(selectedCampaignId))?.campaign || '';
+ const selectedCampaignName = campaigns.find((item: any) => campaignScopeValue(item) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(item), selectedCampaignId))?.campaign || '';
 
  const applyAdSetLookup = async () => {
   const term = adSetQuery.trim();
@@ -6298,7 +6303,7 @@ function DatasetPage({ role }: { role: UserRole }) {
          <small>Portfolio-wide</small>
         </button>
         {campaigns.map((campaign: any) => {
-         const isActive = String(campaign.campaign_id) === String(selectedCampaignId);
+         const isActive = campaignScopeValue(campaign) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(campaign), selectedCampaignId);
          return (
           <button
            type="button"
@@ -7028,6 +7033,17 @@ const labelDisambiguator = (names: string[]) => {
  return (name: string, id: string) => ((counts.get(name) || 0) > 1 ? `${name} \u00b7 ${id}` : name);
 };
 
+const campaignIdsFor = (campaign: any) => {
+ const rawIds = Array.isArray(campaign?.campaign_ids) ? campaign.campaign_ids : String(campaign?.campaign_id || '').split(',');
+ return rawIds.map((id: any) => String(id || '').trim()).filter(Boolean);
+};
+const campaignScopeValue = (campaign: any) => campaignIdsFor(campaign).join(',') || String(campaign?.campaign_id || '');
+const campaignScopeIncludesId = (scope: string, id: any) => {
+ const needle = String(id || '').trim();
+ return !!needle && String(scope || '').split(',').map((part) => part.trim()).includes(needle);
+};
+const campaignMatchesScope = (item: any, scope: string) => !scope || campaignScopeIncludesId(scope, item?.campaign_id ?? item?.utm_campaign_id);
+
 const HIDDEN_LEAD_CAMPAIGN_IDS = new Set([
  '120246730013800078',
  '120249276038010078',
@@ -7295,14 +7311,14 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  // (possible while "All campaigns" is showing) pins that campaign too, so the pair on screen
  // always describes one real scope.
  const campaignChoices = useMemo(
-  () => options.campaigns.filter((item: any) => !HIDDEN_LEAD_CAMPAIGN_IDS.has(String(item.campaign_id))),
+  () => options.campaigns.filter((item: any) => campaignIdsFor(item).some((id: string) => !HIDDEN_LEAD_CAMPAIGN_IDS.has(id))),
   [options.campaigns],
  );
  const campaignLabelFor = useMemo(
   () => labelDisambiguator(campaignChoices.map((item: any) => String(item.campaign || item.campaign_id))),
   [campaignChoices],
  );
- const selectedCampaignChoice = campaignChoices.find((item: any) => String(item.campaign_id) === String(campaignId)) || null;
+ const selectedCampaignChoice = campaignChoices.find((item: any) => campaignScopeValue(item) === campaignId || campaignScopeIncludesId(campaignScopeValue(item), campaignId)) || null;
  const allCampaignLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.leads || 0), 0);
  const allCampaignRecentLeadCount = campaignChoices.reduce((total: number, item: any) => total + Number(item.recent_leads || 0), 0);
  const pickCampaign = (value: string) => {
@@ -7318,7 +7334,10 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const pickAdSet = (value: string) => {
   setAdSetId(value);
   const match = options.ad_sets.find((item: any) => String(item.ad_set_id) === value);
-  if (match?.campaign_id) setCampaignId(String(match.campaign_id));
+  if (match?.campaign_id) {
+   const campaign = campaignChoices.find((item: any) => campaignScopeIncludesId(campaignScopeValue(item), match.campaign_id));
+   setCampaignId(campaign ? campaignScopeValue(campaign) : String(match.campaign_id));
+  }
  };
  const applyAdSetLookup = () => {
   const term = adSetQuery.trim();
@@ -7354,14 +7373,14 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const openAddLead = () => {
   const draft = newManualLeadDraft();
   const campaign = campaignId
-   ? options.campaigns.find((item: any) => String(item.campaign_id) === campaignId)
+   ? options.campaigns.find((item: any) => campaignScopeValue(item) === campaignId || campaignScopeIncludesId(campaignScopeValue(item), campaignId))
    : null;
   const adSet = adSetId
    ? options.ad_sets.find((item: any) => String(item.ad_set_id) === adSetId)
    : null;
   if (campaign) {
    draft.utm_campaign = String(campaign.campaign || '');
-   draft.utm_campaign_id = String(campaign.campaign_id || '');
+   draft.utm_campaign_id = campaignIdsFor(campaign)[0] || String(campaign.campaign_id || '');
   }
   if (adSet) {
    draft.utm_ad_set_id = String(adSet.ad_set_id || '');
@@ -7875,9 +7894,9 @@ function LeadManagementPage({ role }: { role: UserRole }) {
             {campaignChoices.map((campaign: any) => {
              const id = String(campaign.campaign_id);
              const name = String(campaign.campaign || id);
-             const adSetCount = options.ad_sets.filter((item: any) => String(item.campaign_id) === id).length;
+             const adSetCount = options.ad_sets.filter((item: any) => campaignScopeIncludesId(id, item.campaign_id)).length;
              return (
-              <button type="button" key={id} role="option" aria-selected={id === campaignId} className={`campaign-option${id === campaignId ? ' active' : ''}`} onClick={() => pickCampaign(id)}>
+              <button type="button" key={id} role="option" aria-selected={id === campaignId || campaignScopeIncludesId(id, campaignId)} className={`campaign-option${id === campaignId || campaignScopeIncludesId(id, campaignId) ? ' active' : ''}`} onClick={() => pickCampaign(id)}>
                <span title={name}>{campaignLabelFor(name, id)}</span>
                <small>{fmt(adSetCount)} {adSetCount === 1 ? 'ad set' : 'ad sets'} - {fmt(campaign.recent_leads || 0)} last 7d - {fmt(campaign.leads)} total</small>
               </button>

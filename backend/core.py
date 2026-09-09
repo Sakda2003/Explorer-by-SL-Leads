@@ -174,6 +174,11 @@ def display_campaign_name(value: object) -> str:
     name = str(value or "")
     return DISPLAY_CAMPAIGN_RENAMES.get(name, name)
 
+
+def _scope_id_values(value: object) -> list[str]:
+    """One scope query value can represent one campaign or a merged display-name group."""
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
 DEFAULT_FORECAST_PARAMETERS = {
     "historical_signal_share": 0.65,
     "spend_signal_share": 0.20,
@@ -3552,7 +3557,7 @@ def get_dashboard_insights() -> dict:
     campaign_rows.sort(key=lambda item: (-item["recent_leads"], -item["leads"], item["campaign"]))
     normalized_campaigns: dict[str, dict] = {}
     for row in campaign_rows:
-        campaign_name = str(row["campaign"] or "").strip()
+        campaign_name = display_campaign_name(str(row["campaign"] or "").strip())
         if campaign_name.casefold() in invalid_names or campaign_name.startswith("Campaign "):
             campaign_name = "Unattributed"
         key = campaign_name.casefold()
@@ -3578,7 +3583,7 @@ def get_dashboard_insights() -> dict:
     for row in normalized_campaigns.values():
         campaign_ids = sorted(row.pop("campaign_ids"))
         row["campaign_ids"] = campaign_ids
-        row["campaign_id"] = campaign_ids[0] if len(campaign_ids) == 1 else row["campaign_id"]
+        row["campaign_id"] = ",".join(campaign_ids) if campaign_ids else row["campaign_id"]
         row["ad_set_count"] = len(row.pop("ad_set_ids"))
         row["share"] = row["leads"] / total if total else 0.0
         campaign_rows.append(row)
@@ -4300,12 +4305,17 @@ def get_portfolio_forecast_tracking(
     history_days = max(1, min(int(history_days), 90))
     future_days = max(1, min(int(future_days), 14))
     campaign_id = str(campaign_id or "").strip() or None
+    campaign_ids = _scope_id_values(campaign_id) if campaign_id else []
     ad_set_id = str(ad_set_id or "").strip() or None
     actual_filters: list[str] = []
     actual_params: list[object] = []
     if campaign_id:
-        actual_filters.append("utm_campaign_id=?")
-        actual_params.append(campaign_id)
+        if len(campaign_ids) > 1:
+            actual_filters.append(f"utm_campaign_id IN ({', '.join('?' for _ in campaign_ids)})")
+            actual_params.extend(campaign_ids)
+        else:
+            actual_filters.append("utm_campaign_id=?")
+            actual_params.append(campaign_ids[0] if campaign_ids else campaign_id)
     if ad_set_id:
         actual_filters.append("utm_ad_set_id=?")
         actual_params.append(ad_set_id)
@@ -4363,8 +4373,12 @@ def get_portfolio_forecast_tracking(
             params: list[object] = [*selected_run_ids]
             where = f"training_run_id IN ({','.join('?' for _ in selected_run_ids)})"
             if campaign_id:
-                where += " AND utm_campaign_id=?"
-                params.append(campaign_id)
+                if len(campaign_ids) > 1:
+                    where += f" AND utm_campaign_id IN ({', '.join('?' for _ in campaign_ids)})"
+                    params.extend(campaign_ids)
+                else:
+                    where += " AND utm_campaign_id=?"
+                    params.append(campaign_ids[0] if campaign_ids else campaign_id)
             if ad_set_id:
                 where += " AND utm_ad_set_id=?"
                 params.append(ad_set_id)
@@ -6015,6 +6029,7 @@ def _load_scope_feature_rows(
     """
     ad_set_id = str(ad_set_id).strip() if ad_set_id not in (None, "") else None
     campaign_id = str(campaign_id).strip() if campaign_id not in (None, "") else None
+    campaign_ids = _scope_id_values(campaign_id) if campaign_id else []
     with connect() as db:
         lead_rows = db.execute("SELECT * FROM daily_ad_set_aggregates ORDER BY aggregate_date").fetchall()
         spend_frame = _load_spend_frame(db)
@@ -6030,7 +6045,7 @@ def _load_scope_feature_rows(
     if ad_set_id:
         all_frame = all_frame[all_frame["utm_ad_set_id"].astype(str) == ad_set_id]
     elif campaign_id:
-        all_frame = all_frame[all_frame["utm_campaign_id"].astype(str) == campaign_id]
+        all_frame = all_frame[all_frame["utm_campaign_id"].astype(str).isin(campaign_ids or [campaign_id])]
     if all_frame.empty:
         return None, None, scope
 
@@ -6790,8 +6805,13 @@ def _dataset_where(
     where: list[str] = []
     params: list[object] = []
     if campaign_id:
-        where.append(f"{spec['campaign_column']}=?")
-        params.append(campaign_id)
+        campaign_ids = _scope_id_values(campaign_id)
+        if len(campaign_ids) > 1:
+            where.append(f"{spec['campaign_column']} IN ({', '.join('?' for _ in campaign_ids)})")
+            params.extend(campaign_ids)
+        else:
+            where.append(f"{spec['campaign_column']}=?")
+            params.append(campaign_ids[0] if campaign_ids else campaign_id)
     if ad_set_id:
         where.append(f"{spec['ad_set_column']}=?")
         params.append(ad_set_id)
@@ -7274,6 +7294,34 @@ def get_lead_pipeline_summary(
     }
 
 
+def _merge_campaign_option_rows(rows: Iterable[sqlite3.Row]) -> list[dict]:
+    """Collapse campaign IDs that intentionally render as the same selector label."""
+    merged: dict[str, dict] = {}
+    for row in rows:
+        item = dict(row)
+        campaign_id = str(item.get("campaign_id") or "").strip()
+        campaign_name = display_campaign_name(item.get("campaign") or campaign_id)
+        key = campaign_name.casefold()
+        bucket = merged.setdefault(key, {
+            "campaign_id": campaign_id,
+            "campaign_ids": [],
+            "campaign": campaign_name,
+            "leads": 0,
+            "recent_leads": 0,
+        })
+        if campaign_id and campaign_id not in bucket["campaign_ids"]:
+            bucket["campaign_ids"].append(campaign_id)
+        bucket["leads"] += int(item.get("leads") or 0)
+        bucket["recent_leads"] += int(item.get("recent_leads") or 0)
+    campaign_rows = []
+    for row in merged.values():
+        row["campaign_ids"].sort()
+        row["campaign_id"] = ",".join(row["campaign_ids"]) if row["campaign_ids"] else row["campaign_id"]
+        campaign_rows.append(row)
+    campaign_rows.sort(key=lambda item: (-item["recent_leads"], -item["leads"], item["campaign"]))
+    return campaign_rows
+
+
 def get_lead_filter_options() -> dict:
     """Campaign and ad set pickers for the Lead Management filter bar.
 
@@ -7311,10 +7359,7 @@ def get_lead_filter_options() -> dict:
             "FROM lead_events"
         ).fetchone()
     return {
-        "campaigns": [
-            {**dict(row), "campaign": display_campaign_name(row["campaign"])}
-            for row in campaign_rows
-        ],
+        "campaigns": _merge_campaign_option_rows(campaign_rows),
         "ad_sets": [dict(row) for row in ad_set_rows],
         "qualities": list(LEAD_QUALITY_OPTIONS),
         "statuses": ["New", "Existing"],
