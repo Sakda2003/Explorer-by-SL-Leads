@@ -7770,10 +7770,19 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   awaiting: Number(stages.find((stage: any) => stage.quality === 'Awaiting Document and Payment')?.count || 0),
   converted: Number(summary.converted || 0),
   notQualified: Number(stages.find((stage: any) => stage.quality === 'Not Qualified')?.count || 0),
+  pendingReview: Number(stages.find((stage: any) => stage.quality === 'Pending Review')?.count || 0),
   lost: Number(stages.find((stage: any) => stage.quality === 'Lost')?.count || 0),
- total: Number(summary.total || 0),
+  total: Number(summary.total || 0),
  };
  const spendOutcomeChart = [
+  {
+   key: 'pending_review',
+   quality: 'Pending Review',
+   label: 'Pending review',
+   leads: spendOutcomeSummary.pendingReview,
+   share: Number(stages.find((stage: any) => stage.quality === 'Pending Review')?.share || 0) * 100,
+   color: 'var(--status-neutral-fill)',
+  },
   {
    key: 'qualified',
    quality: 'Qualified',
