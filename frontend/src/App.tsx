@@ -7077,28 +7077,6 @@ const EMPTY_DUPLICATE_LEADS: DuplicateLeadResult = {
  groups: [], group_count: 0, duplicate_leads: 0, extra_occurrences: 0, scanned_leads: 0,
 };
 
-const LEAD_CHART_STAGES = [
- { key: 'pending_review', quality: 'Pending Review', label: 'Pending review', color: 'var(--status-neutral-fill)' },
- { key: 'not_qualified', quality: 'Not Qualified', label: 'Not qualified', color: 'var(--status-bad-fill)' },
- { key: 'qualified', quality: 'Qualified', label: 'Qualified', color: 'var(--status-info-fill)' },
- { key: 'awaiting', quality: 'Awaiting Document and Payment', label: 'Awaiting documents', color: 'var(--status-warn-fill)' },
- { key: 'converted', quality: 'Converted', label: 'Converted', color: 'var(--status-good-fill)' },
- { key: 'lost', quality: 'Lost', label: 'Lost', color: 'var(--status-lost-fill)' },
-] as const;
-
-function LeadOutcomeShareTooltip({ active, payload }: any) {
- if (!active || !payload?.length) return null;
- const point = payload[0]?.payload || {};
- return (
-  <div className="forecast-tooltip lead-chart-tooltip lead-outcome-tooltip">
-   <span>OUTCOME SHARE</span>
-   <b>{point.label}</b>
-   <p><i style={{ background: point.color }} />Share of leads<strong>{Number(point.percentage || 0).toFixed(1)}%</strong></p>
-   <p><i className="lead-count-line-key" />Lead count<strong>{fmt(point.count)}</strong></p>
-  </div>
- );
-}
-
 function LeadSpendOutcomeTooltip({ active, payload, label }: any) {
  if (!active || !payload?.length) return null;
  const point = payload[0]?.payload || {};
@@ -7810,24 +7788,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
   ...item,
   ...(stages.find((stage: any) => stage.quality === item.quality) || { count: 0, share: 0 }),
  }));
- const outcomeShareSeries = [
-  'Qualified',
-  'Not Qualified',
-  'Awaiting Document and Payment',
-  'Converted',
-  'Lost',
- ].map((quality) => {
-  const stage = LEAD_CHART_STAGES.find((item) => item.quality === quality);
-  const kpi = leadKpis.find((item) => item.quality === quality);
- return {
-   quality,
-   label: quality === 'Awaiting Document and Payment' ? 'Awaiting Document & Payment' : quality,
-   axisLabel: quality === 'Awaiting Document and Payment' ? 'Awaiting' : quality === 'Not Qualified' ? 'Not qual.' : quality,
-   count: Number(kpi?.count || 0),
-   percentage: Number(kpi?.share || 0) * 100,
-   color: stage?.color || 'var(--muted)',
-  };
- });
  const spendOutcomeScopeLabel = adSetId
   ? `Ad set ${adSetId}`
   : campaignId
@@ -8010,48 +7970,6 @@ function LeadManagementPage({ role }: { role: UserRole }) {
       </div>
 
       <div className="lead-insight-grid">
-       <article className="lead-chart-panel lead-chart-outcomes">
-        <div className="lead-chart-head">
-         <div><h4>Outcome share</h4><p>Percentage of leads in the current view</p></div>
-         <div className="lead-chart-legend" aria-label="Outcome legend">
-          <span><i className="lead-share-bar-key" />Share of leads</span>
-          <span><i className="lead-count-line-key" />Lead count</span>
-         </div>
-        </div>
-        {!showSkeleton && !!summary.total && (
-         <div className="lead-outcome-filters" role="group" aria-label="Filter leads by outcome">
-          {outcomeShareSeries.map((item) => {
-           const active = qualityFilter.includes(item.quality);
-           return (
-            <button type="button" key={item.quality} className={active ? 'is-active' : ''} aria-pressed={active} onClick={() => toggleStage(item.quality)}>
-             <i style={{ background: item.color }} />
-             <span>{item.label}</span>
-             <strong>{item.percentage.toFixed(1)}%</strong>
-            </button>
-           );
-          })}
-         </div>
-        )}
-        {showSkeleton ? <div className="skeleton lead-chart-skeleton" /> : summary.total ? (
-         <div className="lead-chart-canvas lead-chart-canvas-main">
-          <ResponsiveContainer width="100%" height="100%">
-           <ComposedChart accessibilityLayer data={outcomeShareSeries} margin={{ top: 32, right: 22, left: 0, bottom: 8 }} barCategoryGap="32%">
-            <CartesianGrid stroke="var(--grid-line)" vertical={false} />
-            <XAxis dataKey="axisLabel" interval={0} tick={{ fontSize: 11.5, fontWeight: 600, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} height={36} />
-            <YAxis yAxisId="share" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={48} />
-            <YAxis yAxisId="count" orientation="right" allowDecimals={false} tickFormatter={(value) => fmt(value)} tick={{ fontSize: 10.5, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={56} />
-            <Tooltip content={<LeadOutcomeShareTooltip />} cursor={{ fill: 'var(--chart-hover-fill)' }} />
-            <Bar yAxisId="share" dataKey="percentage" name="Share of leads" radius={[5, 5, 0, 0]} maxBarSize={72} cursor="pointer" animationDuration={650} onClick={(entry: any) => toggleStage(entry?.quality || entry?.payload?.quality)}>
-             {outcomeShareSeries.map((item) => <Cell key={item.quality} fill={item.color} opacity={qualityFilter.length && !qualityFilter.includes(item.quality) ? .32 : 1} />)}
-             <LabelList dataKey="percentage" position="top" formatter={(value: any) => `${Number(value).toFixed(1)}%`} fill="var(--text)" fontSize={11.5} fontWeight={750} />
-            </Bar>
-            <Line yAxisId="count" type="monotone" dataKey="count" name="Lead count" stroke="var(--yellow-strong)" strokeWidth={1.6} strokeOpacity={.72} dot={{ r: 4, fill: 'var(--surface)', stroke: 'var(--yellow-strong)', strokeWidth: 2 }} activeDot={{ r: 6 }} animationDuration={750} />
-           </ComposedChart>
-          </ResponsiveContainer>
-         </div>
-       ) : <p className="lead-chart-empty">No lead outcomes in this view.</p>}
-       </article>
-
        <article className="lead-chart-panel lead-spend-outcomes">
        <div className="lead-chart-head">
         <div>
