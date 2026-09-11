@@ -1655,6 +1655,41 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(saved["activities"][0]["action"], "qualified")
         self.assertEqual(saved["activities"][0]["from_status"], "Qualified")
 
+    def test_followup_inline_edits_preserve_untouched_fields(self):
+        created = core.create_lead_event(
+            self.lead_payload(lead_quality="Qualified", customer_name="Inline Lead"),
+            retrain=False,
+        )
+        core.save_followup(created["created"], {
+            "outcome": "qualified",
+            "note": "Keep this note.",
+            "assigned_to": "Dara",
+            "next_follow_up_at": "2026-09-08T10:00:00",
+        }, "sales@example.com")
+
+        core.update_followup_inline(
+            created["created"],
+            {"customer_name": "Edited Inline Lead"},
+            "sales@example.com",
+        )
+        saved = core.update_followup_inline(
+            created["created"],
+            {
+                "lead_quality": "Awaiting Document and Payment",
+                "follow_up_result": "awaiting_document_and_payment",
+                "next_follow_up_at": "2026-09-18T09:30",
+            },
+            "sales@example.com",
+        )
+
+        self.assertEqual(saved["lead"]["customer_name"], "Edited Inline Lead")
+        self.assertEqual(saved["lead"]["latest_note"], "Keep this note.")
+        self.assertEqual(saved["lead"]["assigned_to"], "Dara")
+        self.assertEqual(saved["lead"]["next_follow_up_at"], "2026-09-18T09:30")
+        self.assertEqual(saved["lead"]["lead_quality"], "Awaiting Document and Payment")
+        self.assertEqual(saved["lead"]["follow_up_result"], "awaiting_document_and_payment")
+        self.assertEqual(saved["activities"][0]["action"], "inline_update")
+
     def test_followup_queue_filters_by_campaign_name(self):
         first = core.create_lead_event(
             self.lead_payload(

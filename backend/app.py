@@ -24,7 +24,7 @@ from .core import (
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
                    bulk_update_lead_quality, get_lead_filter_options, get_lead_pipeline_summary,
-                   get_followup_lead, get_followup_leads, save_followup,
+                   get_followup_lead, get_followup_leads, save_followup, update_followup_inline,
                    list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
 
 # Refuse to boot open on a deployment that declares itself public (Render, or an explicit
@@ -151,6 +151,7 @@ class LeadBulkDelete(BaseModel):
 
 
 class LeadUpdate(BaseModel):
+    platform: str | None = None
     status: str | None = None
     lead_quality: str | None = None
     created_at: str | None = None
@@ -191,6 +192,18 @@ class FollowupUpdate(BaseModel):
     selected_service: str | None = None
     payment_status: str | None = None
     conversion_remarks: str | None = None
+
+
+class FollowupInlineUpdate(BaseModel):
+    customer_name: str | None = None
+    lead_quality: str | None = None
+    platform: str | None = None
+    utm_campaign: str | None = None
+    last_contacted_at: str | None = None
+    next_follow_up_at: str | None = None
+    assigned_to: str | None = None
+    follow_up_result: str | None = None
+    latest_note: str | None = None
 
 
 # Mirrors AD_PERFORMANCE_UPDATE_FIELDS in core.py. `leads` and
@@ -1084,6 +1097,15 @@ def followup_lead(lead_id: int):
 def update_followup_lead(lead_id: int, payload: FollowupUpdate, request: Request):
     try:
         return save_followup(lead_id, payload.dict(exclude_unset=True), _current_user(request))
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(404 if message == "Lead not found." else 422, message) from exc
+
+
+@app.patch("/api/follow-up/leads/{lead_id}")
+def patch_followup_lead(lead_id: int, payload: FollowupInlineUpdate, request: Request):
+    try:
+        return update_followup_inline(lead_id, payload.dict(exclude_unset=True), _current_user(request))
     except ValueError as exc:
         message = str(exc)
         raise HTTPException(404 if message == "Lead not found." else 422, message) from exc

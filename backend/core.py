@@ -9988,6 +9988,7 @@ def get_weekday_profile(ad_set_id: str) -> dict | None:
 
 
 LEAD_UPDATE_FIELDS = {
+    "platform",
     "status",
     "lead_quality",
     "created_at",
@@ -10003,6 +10004,7 @@ LEAD_UPDATE_FIELDS = {
 LEAD_STATUS_OPTIONS = {"New", "Existing"}
 
 LEAD_RAW_FIELD_MAP = {
+    "platform": "Platform",
     "status": "Status",
     "lead_quality": "Lead Quality",
     "created_at": "Created At",
@@ -10430,6 +10432,88 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
                VALUES(?,?,?,?,?,?,?,?)""",
             (lead_id, actor or "Unknown user", outcome, previous_status, target_status or previous_status,
              note, json.dumps(details, ensure_ascii=False), now),
+        )
+    return get_followup_lead(lead_id)
+
+
+FOLLOWUP_INLINE_LEAD_FIELDS = {"customer_name", "lead_quality", "platform", "utm_campaign"}
+FOLLOWUP_INLINE_META_FIELDS = {
+    "last_contacted_at", "next_follow_up_at", "assigned_to", "follow_up_result", "latest_note",
+}
+
+
+def update_followup_inline(lead_id: int, changes: dict, actor: str) -> dict:
+    """Update one Follow-up table cell without replacing the rest of the lead record."""
+    allowed = FOLLOWUP_INLINE_LEAD_FIELDS | FOLLOWUP_INLINE_META_FIELDS
+    supplied = {field: value for field, value in changes.items() if field in allowed}
+    if not supplied:
+        raise ValueError("No editable follow-up fields were provided.")
+
+    meta_changes: dict[str, object] = {}
+    for field, value in supplied.items():
+        if field not in FOLLOWUP_INLINE_META_FIELDS:
+            continue
+        if field == "follow_up_result":
+            cleaned = _followup_text(value, 40).lower()
+            if cleaned and cleaned not in FOLLOWUP_OUTCOMES:
+                raise ValueError("Choose a valid follow-up result.")
+            meta_changes[field] = cleaned
+        elif field in {"last_contacted_at", "next_follow_up_at"}:
+            meta_changes[field] = _followup_text(value, 40) or None
+        elif field == "assigned_to":
+            meta_changes[field] = _followup_text(value, 200)
+        else:
+            meta_changes[field] = _followup_text(value)
+
+    lead_changes = {
+        field: _clean_lead_update_value(field, value)
+        for field, value in supplied.items()
+        if field in FOLLOWUP_INLINE_LEAD_FIELDS
+    }
+    now = utc_now()
+    with connect() as db:
+        existing = db.execute(
+            "SELECT lead_quality, raw_json FROM lead_events WHERE id=?", (lead_id,)
+        ).fetchone()
+        if not existing:
+            raise ValueError("Lead not found.")
+        previous_status = str(existing["lead_quality"] or "")
+        target_status = str(lead_changes.get("lead_quality", previous_status) or previous_status)
+        if lead_changes:
+            try:
+                raw = json.loads(existing["raw_json"] or "{}")
+            except json.JSONDecodeError:
+                raw = {}
+            for field, value in lead_changes.items():
+                raw_key = LEAD_RAW_FIELD_MAP.get(field)
+                if raw_key:
+                    raw[raw_key] = "" if value is None else str(value)
+            fields = {**lead_changes, "updated_at": now, "raw_json": json.dumps(raw, ensure_ascii=False)}
+            db.execute(
+                f"UPDATE lead_events SET {', '.join(f'{field}=?' for field in fields)} WHERE id=?",
+                [*fields.values(), lead_id],
+            )
+        if meta_changes:
+            fields = {**meta_changes, "updated_at": now}
+            columns = list(fields)
+            db.execute(
+                f"""INSERT INTO lead_followups(lead_id,{','.join(columns)}) VALUES(?,{','.join('?' for _ in columns)})
+                    ON CONFLICT(lead_id) DO UPDATE SET {','.join(f'{column}=excluded.{column}' for column in columns)}""",
+                [lead_id, *fields.values()],
+            )
+        db.execute(
+            """INSERT INTO lead_followup_activity(lead_id, actor, action, from_status, to_status, note, details_json, created_at)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                lead_id,
+                actor or "Unknown user",
+                "inline_update",
+                previous_status,
+                target_status,
+                str(meta_changes.get("latest_note") or ""),
+                json.dumps(supplied, ensure_ascii=False),
+                now,
+            ),
         )
     return get_followup_lead(lead_id)
 

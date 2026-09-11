@@ -6679,7 +6679,6 @@ const FOLLOWUP_OUTCOMES = [
  { value: 'lost', label: 'Lost' },
  { value: 'converted', label: 'Converted' },
 ];
-const LOST_REASONS = ['Price', 'No longer interested', 'Chose a competitor', 'No response', 'Postponed', 'Other'];
 const followupStageOutcome = (stage: string) => {
  if (stage === 'Intake') return 'intake';
  if (stage === 'Qualified') return 'qualified';
@@ -6689,11 +6688,21 @@ const followupStageOutcome = (stage: string) => {
  return 'intake';
 };
 
-type FollowupDraft = {
- outcome: string; note: string; next_follow_up_at: string; last_contacted_at: string;
- contact_method: string; assigned_to: string; lost_reason: string; required_documents: string;
- expected_payment_date: string; converted_at: string; selected_service: string;
- payment_status: string; conversion_remarks: string;
+const followupOutcomeStage = (outcome: string) => ({
+ intake: 'Intake', qualified: 'Qualified',
+ awaiting_document_and_payment: 'Awaiting Document and Payment',
+ converted: 'Converted', lost: 'Lost',
+}[outcome] || 'Intake');
+
+type FollowupInlineCellProps = {
+ value: any;
+ displayValue?: string;
+ type?: 'text' | 'datetime-local';
+ options?: { value: string; label: string }[];
+ emptyLabel?: string;
+ ariaLabel: string;
+ className?: string;
+ onCommit: (value: string) => Promise<void>;
 };
 
 const followupDateInput = (value: any) => {
@@ -6704,21 +6713,73 @@ const followupDateInput = (value: any) => {
  return local.toISOString().slice(0, 16);
 };
 
-const newFollowupDraft = (lead: any = {}, outcome = 'intake'): FollowupDraft => ({
- outcome,
- note: '',
- next_follow_up_at: followupDateInput(lead.next_follow_up_at),
- last_contacted_at: followupDateInput(lead.last_contacted_at) || followupDateInput(new Date().toISOString()),
- contact_method: lead.contact_method || '',
- assigned_to: lead.assigned_to || '',
- lost_reason: lead.lost_reason || '',
- required_documents: lead.required_documents || '',
- expected_payment_date: String(lead.expected_payment_date || '').slice(0, 10),
- converted_at: followupDateInput(lead.converted_at),
- selected_service: lead.selected_service || lead.fb_ad_title || '',
- payment_status: lead.payment_status || '',
- conversion_remarks: lead.conversion_remarks || '',
-});
+function FollowupInlineCell({ value, displayValue, type = 'text', options, emptyLabel = '-', ariaLabel, className = '', onCommit }: FollowupInlineCellProps) {
+ const normalized = value == null ? '' : String(value);
+ const [editing, setEditing] = useState(false);
+ const [draftValue, setDraftValue] = useState(normalized);
+ const [busy, setBusy] = useState(false);
+ const committing = useRef(false);
+
+ useEffect(() => {
+  if (!editing) setDraftValue(normalized);
+ }, [normalized, editing]);
+
+ const finish = async (nextValue = draftValue) => {
+  if (committing.current) return;
+  if (nextValue === normalized) { setEditing(false); return; }
+  committing.current = true;
+  setBusy(true);
+  try {
+   await onCommit(nextValue);
+   setEditing(false);
+  } finally {
+   setBusy(false);
+   committing.current = false;
+  }
+ };
+
+ const cancel = () => { setDraftValue(normalized); setEditing(false); };
+ const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
+  if (event.key === 'Escape') { event.preventDefault(); cancel(); }
+  if (event.key === 'Enter' && !options) { event.preventDefault(); void finish(); }
+ };
+
+ if (editing) {
+  return options ? (
+   <select
+    autoFocus
+    className={`followup-inline-editor${className ? ` ${className}` : ''}`}
+    aria-label={ariaLabel}
+    disabled={busy}
+    value={draftValue}
+    onBlur={() => void finish()}
+    onKeyDown={handleKeyDown}
+    onChange={(event) => { const nextValue = event.target.value; setDraftValue(nextValue); void finish(nextValue); }}
+   >
+    <option value="">{emptyLabel}</option>
+    {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+   </select>
+  ) : (
+   <input
+    autoFocus
+    className={`followup-inline-editor${className ? ` ${className}` : ''}`}
+    aria-label={ariaLabel}
+    disabled={busy}
+    type={type}
+    value={draftValue}
+    onBlur={() => void finish()}
+    onChange={(event) => setDraftValue(event.target.value)}
+    onKeyDown={handleKeyDown}
+   />
+  );
+ }
+
+ return (
+  <button type="button" className={`followup-inline-value${className ? ` ${className}` : ''}`} aria-label={`${ariaLabel}. Click to edit`} onClick={() => setEditing(true)}>
+   <span>{displayValue || normalized || emptyLabel}</span><Pencil size={11} aria-hidden="true" />
+  </button>
+ );
+}
 
 function FollowupPage() {
  const [rowsData, setRowsData] = useState<any>({ rows: [], total: 0, limit: 50, facets: { assigned_people: [], platforms: [], campaigns: [] } });
@@ -6740,10 +6801,7 @@ function FollowupPage() {
  const [error, setError] = useState('');
  const [message, setMessage] = useState('');
  const [refreshKey, setRefreshKey] = useState(0);
- const [detail, setDetail] = useState<any>(null);
- const [detailLoading, setDetailLoading] = useState(false);
  const [saving, setSaving] = useState(false);
- const [draft, setDraft] = useState<FollowupDraft>(() => newFollowupDraft());
 
  useEffect(() => {
   const timer = window.setTimeout(() => setSearch(searchDraft.trim()), 350);
@@ -6774,45 +6832,38 @@ function FollowupPage() {
 
  useEffect(() => { setOffset(0); }, [search, stage, due, assigned, platform, campaign, sort, direction]);
 
- const openLead = async (row: any, outcome = '') => {
-  setDetailLoading(true);
+ const saveInline = async (row: any, changes: Record<string, any>, optimistic: Record<string, any> = changes) => {
+  const previous = row;
   setError('');
+  setRowsData((current: any) => ({
+   ...current,
+   rows: current.rows.map((item: any) => item.id === row.id ? { ...item, ...optimistic } : item),
+  }));
   try {
-   const result = await api(`/follow-up/leads/${row.id}`);
-   setDetail(result);
-   setDraft(newFollowupDraft(result.lead, outcome || followupStageOutcome(result.lead.lead_quality)));
+   await api(`/follow-up/leads/${row.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes),
+   });
+   setMessage(`${row.customer_name || 'Lead'} saved.`);
+   setSelected((current) => current.filter((id) => id !== String(row.id)));
+   setRefreshKey((key) => key + 1);
+   window.setTimeout(() => setMessage(''), 2200);
   } catch (err: any) {
-   setError(err.message || 'Failed to open this lead.');
-  } finally {
-   setDetailLoading(false);
+   setRowsData((current: any) => ({
+    ...current,
+    rows: current.rows.map((item: any) => item.id === row.id ? previous : item),
+   }));
+   setError(err.message || 'Failed to save this change.');
+   throw err;
   }
  };
 
- const closeDetail = () => { if (!saving) setDetail(null); };
- const updateDraft = (field: keyof FollowupDraft, value: string) => setDraft((current) => ({ ...current, [field]: value }));
-
- const submitFollowup = async (event: FormEvent) => {
-  event.preventDefault();
-  if (!detail || saving) return;
-  if ((draft.outcome === 'converted' || draft.outcome === 'lost') && !confirm(
-   `Mark ${detail.lead.customer_name || 'this lead'} as ${draft.outcome === 'converted' ? 'Converted' : 'Lost'}? The lead will leave this active queue.`
-  )) return;
-  setSaving(true);
-  setError('');
-  try {
-   await api(`/follow-up/leads/${detail.lead.id}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft),
-   });
-   setMessage(`${detail.lead.customer_name || 'Lead'} updated successfully.`);
-   setDetail(null);
-   setSelected((current) => current.filter((id) => id !== String(detail.lead.id)));
-   setRefreshKey((key) => key + 1);
-   window.setTimeout(() => setMessage(''), 3200);
-  } catch (err: any) {
-   setError(err.message || 'Failed to save this follow-up.');
-  } finally {
-   setSaving(false);
-  }
+ const saveOutcome = (row: any, outcome: string) => {
+  const leadQuality = followupOutcomeStage(outcome);
+  return saveInline(
+   row,
+   { lead_quality: leadQuality, follow_up_result: outcome },
+   { lead_quality: leadQuality, follow_up_result: outcome },
+  );
  };
 
  const applyBulkStage = async (outcome: 'qualified' | 'awaiting_document_and_payment') => {
@@ -6935,24 +6986,26 @@ function FollowupPage() {
       <thead><tr>
        <th><BoardCheckbox checked={allPageSelected} indeterminate={selected.some((id) => pageIds.includes(id)) && !allPageSelected} label="Select every lead on this page" onChange={togglePage} /></th>
        <th>Lead name</th><th>Current status</th><th>Contact platform</th><th>Campaign name</th><th>Last contacted</th><th>Next follow-up date</th>
-       {!compact && <th>Assigned</th>}<th>Result</th>{!compact && <th>Notes</th>}<th>Updated</th><th aria-label="Actions" />
+       {!compact && <th>Assigned</th>}<th>Result</th>{!compact && <th>Notes</th>}<th>Updated</th>
       </tr></thead>
       <tbody>
        {groupedRows.map((group) => <Fragment key={group.label || 'all'}>
-        {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 10 : 12}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
+        {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 9 : 11}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
         {group.rows.map((row: any) => <tr key={row.id} className={`${isOverdue(row.next_follow_up_at) ? 'is-overdue ' : ''}${selected.includes(String(row.id)) ? 'is-selected' : ''}`}>
          <td><BoardCheckbox checked={selected.includes(String(row.id))} label={`Select ${row.customer_name || 'lead'}`} onChange={() => toggleRow(String(row.id))} /></td>
-         <td><button type="button" className="followup-lead-link" onClick={() => void openLead(row)}><strong>{row.customer_name || `Lead #${row.id}`}</strong><small>{row.utm_campaign || `Lead #${row.id}`}</small></button></td>
-         <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><MenuSelect ariaLabel={`Update ${row.customer_name || 'lead'} status`} value={followupStageOutcome(row.lead_quality)} triggerLabel={leadQualityLabel(row.lead_quality)} className="followup-status-select" menuClassName="followup-status-menu" options={FOLLOWUP_OUTCOMES.map((item) => ({ value: item.value, label: item.label }))} onChange={(value) => void openLead(row, value)} /></td>
-         <td className={`followup-platform-cell platform-${leadQualitySlug(row.platform || 'unknown')}`}><span>{row.platform || '-'}</span></td><td className="followup-service"><span>{row.utm_campaign || '-'}</span></td>
-         <td>{row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'}</td>
-         <td><button type="button" className={isOverdue(row.next_follow_up_at) ? 'followup-due overdue' : 'followup-due'} onClick={() => void openLead(row, followupStageOutcome(row.lead_quality))}>{row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'}</button></td>
-         {!compact && <td>{row.assigned_to || '-'}</td>}<td>{String(row.follow_up_result || '-').split('_').join(' ')}</td>
-         {!compact && <td className="followup-note">{row.latest_note || '-'}</td>}<td>{dateFmt(row.updated_at)}</td>
-         <td><button type="button" className="followup-row-open" aria-label={`Open ${row.customer_name || 'lead'} follow-up`} onClick={() => void openLead(row)}><Plus size={18} /></button></td>
+         <td><FollowupInlineCell value={row.customer_name} emptyLabel={`Lead #${row.id}`} ariaLabel="Edit lead name" onCommit={(value) => saveInline(row, { customer_name: value })} /></td>
+         <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><FollowupInlineCell value={followupStageOutcome(row.lead_quality)} displayValue={leadQualityLabel(row.lead_quality)} options={FOLLOWUP_OUTCOMES} ariaLabel={`Edit ${row.customer_name || 'lead'} status`} className="followup-inline-status" onCommit={(value) => saveOutcome(row, value)} /></td>
+         <td className={`followup-platform-cell platform-${leadQualitySlug(row.platform || 'unknown')}`}><FollowupInlineCell value={row.platform} options={(rowsData.facets.platforms || []).map((value: string) => ({ value, label: value }))} ariaLabel="Edit contact platform" className="followup-inline-platform" onCommit={(value) => saveInline(row, { platform: value })} /></td>
+         <td className="followup-service"><FollowupInlineCell value={row.utm_campaign} ariaLabel="Edit campaign name" onCommit={(value) => saveInline(row, { utm_campaign: value })} /></td>
+         <td><FollowupInlineCell value={followupDateInput(row.last_contacted_at)} displayValue={row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'} type="datetime-local" ariaLabel="Edit last contacted date" onCommit={(value) => saveInline(row, { last_contacted_at: value }, { last_contacted_at: value })} /></td>
+         <td><FollowupInlineCell value={followupDateInput(row.next_follow_up_at)} displayValue={row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'} type="datetime-local" ariaLabel="Edit next follow-up date" className={isOverdue(row.next_follow_up_at) ? 'overdue' : ''} onCommit={(value) => saveInline(row, { next_follow_up_at: value }, { next_follow_up_at: value })} /></td>
+         {!compact && <td><FollowupInlineCell value={row.assigned_to} emptyLabel="Unassigned" ariaLabel="Edit assigned person" onCommit={(value) => saveInline(row, { assigned_to: value })} /></td>}
+         <td><FollowupInlineCell value={row.follow_up_result} displayValue={row.follow_up_result ? String(row.follow_up_result).split('_').join(' ') : '-'} options={FOLLOWUP_OUTCOMES} ariaLabel="Edit follow-up result" onCommit={(value) => saveOutcome(row, value)} /></td>
+         {!compact && <td className="followup-note"><FollowupInlineCell value={row.latest_note} emptyLabel="Add note" ariaLabel="Edit follow-up note" onCommit={(value) => saveInline(row, { latest_note: value })} /></td>}
+         <td className="followup-readonly" title="Updated automatically after a saved change">{dateFmt(row.updated_at)}</td>
         </tr>)}
        </Fragment>)}
-       {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={12}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another campaign or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
+       {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={compact ? 9 : 11}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another campaign or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
       </tbody>
      </table>
     </div>
@@ -6960,31 +7013,6 @@ function FollowupPage() {
    </section>
 
    {!!selected.length && <div className="followup-bulk" role="region" aria-label="Selected follow-up actions"><strong>{selected.length}</strong><span>{selected.length === 1 ? 'lead selected' : 'leads selected'}</span><button onClick={() => void applyBulkStage('qualified')}>Qualified</button><button onClick={() => void applyBulkStage('awaiting_document_and_payment')}>Awaiting document & payment</button><button className="close" aria-label="Clear selection" onClick={() => setSelected([])}><X size={15} /></button></div>}
-
-   {(detail || detailLoading) && createPortal(<div className="followup-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail(); }}>
-    <form className="followup-drawer" role="dialog" aria-modal="true" aria-labelledby="followup-detail-title" onSubmit={(event) => void submitFollowup(event)}>
-     {detailLoading && !detail ? <div className="followup-detail-loading"><RefreshCw size={20} />Loading lead</div> : detail && <>
-      <header><div><span>Lead #{detail.lead.id}</span><h3 id="followup-detail-title">{detail.lead.customer_name || 'Unnamed lead'}</h3><p>{detail.lead.selected_service || detail.lead.fb_ad_title || 'No service recorded'}</p></div><button type="button" aria-label="Close follow-up" onClick={closeDetail}><X size={17} /></button></header>
-      <div className="followup-drawer-body">
-       <section className="followup-lead-summary"><div><span>Pipeline</span><strong>{detail.lead.lead_quality}</strong></div><div><span>Platform</span><strong>{detail.lead.platform || '-'}</strong></div><div><span>Campaign</span><strong>{detail.lead.utm_campaign || '-'}</strong></div></section>
-       <section className="followup-form-section"><h4>Record this follow-up</h4><div className="followup-form-grid">
-        <label><span>Outcome</span><select value={draft.outcome} onChange={(event) => updateDraft('outcome', event.target.value)}>{FOLLOWUP_OUTCOMES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
-        <label><span>Last contacted</span><input type="datetime-local" value={draft.last_contacted_at} onChange={(event) => updateDraft('last_contacted_at', event.target.value)} /></label>
-        <label><span>Contact method</span><select value={draft.contact_method} onChange={(event) => updateDraft('contact_method', event.target.value)}><option value="">Select method</option><option>Phone</option><option>Telegram</option><option>Messenger</option><option>WhatsApp</option><option>Email</option><option>In person</option></select></label>
-        <label><span>Assigned person</span><input value={draft.assigned_to} onChange={(event) => updateDraft('assigned_to', event.target.value)} placeholder="Team member" /></label>
-        <label className="wide"><span>Follow-up note</span><textarea value={draft.note} onChange={(event) => updateDraft('note', event.target.value)} placeholder="What did the lead say, and what should happen next?" /></label>
-        {(draft.outcome === 'intake' || draft.outcome === 'qualified' || draft.outcome === 'awaiting_document_and_payment') && <label><span>Next follow-up</span><input type="datetime-local" value={draft.next_follow_up_at} onChange={(event) => updateDraft('next_follow_up_at', event.target.value)} /></label>}
-        {draft.outcome === 'lost' && <label><span>Lost reason</span><select required value={draft.lost_reason} onChange={(event) => updateDraft('lost_reason', event.target.value)}><option value="">Choose a reason</option>{LOST_REASONS.map((value) => <option key={value}>{value}</option>)}</select></label>}
-        {draft.outcome === 'awaiting_document_and_payment' && <label className="wide"><span>Documents still required</span><textarea value={draft.required_documents} onChange={(event) => updateDraft('required_documents', event.target.value)} placeholder="List the outstanding documents" /></label>}
-        {draft.outcome === 'awaiting_document_and_payment' && <label><span>Expected payment date</span><input type="date" value={draft.expected_payment_date} onChange={(event) => updateDraft('expected_payment_date', event.target.value)} /></label>}
-        {draft.outcome === 'converted' && <><label><span>Conversion date</span><input type="datetime-local" value={draft.converted_at} onChange={(event) => updateDraft('converted_at', event.target.value)} /></label><label><span>Payment status</span><select value={draft.payment_status} onChange={(event) => updateDraft('payment_status', event.target.value)}><option value="">Not recorded</option><option>Pending</option><option>Partial</option><option>Paid</option></select></label><label className="wide"><span>Selected service</span><input value={draft.selected_service} onChange={(event) => updateDraft('selected_service', event.target.value)} /></label><label className="wide"><span>Conversion remarks</span><textarea value={draft.conversion_remarks} onChange={(event) => updateDraft('conversion_remarks', event.target.value)} /></label></>}
-       </div></section>
-       <section className="followup-history"><h4>Activity history</h4>{detail.activities.length ? detail.activities.map((activity: any) => <article key={activity.id}><i /><div><strong>{String(activity.action).split('_').join(' ')}</strong><span>{activity.actor} · {dateFmt(activity.created_at)}</span>{activity.note && <p>{activity.note}</p>}<small>{activity.from_status} → {activity.to_status}</small></div></article>) : <p className="followup-history-empty">No previous follow-up activity.</p>}</section>
-      </div>
-      <footer><button type="button" className="secondary" disabled={saving} onClick={closeDetail}>Cancel</button><button type="submit" className={`primary${draft.outcome === 'lost' ? ' danger' : ''}`} disabled={saving}>{saving ? <RefreshCw size={14} /> : <Check size={14} />}{saving ? 'Saving' : 'Save follow-up'}</button></footer>
-     </>}
-    </form>
-   </div>, document.body)}
   </div>
  );
 }
