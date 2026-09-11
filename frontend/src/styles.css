@@ -7163,10 +7163,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .followup-alert.error { border-color: color-mix(in srgb, var(--danger) 28%, transparent); background: color-mix(in srgb, var(--danger) 7%, transparent); color: var(--danger); }
 .followup-table-wrap { overflow: auto; transition: opacity .18s ease; }
 .followup-table-wrap.is-loading { opacity: .58; }
-.followup-table { width: 100%; min-width: 1370px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.followup-table { width: 100%; min-width: 1180px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 .followup-table th { position: sticky; top: 0; z-index: 2; height: 38px; padding: 0 10px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, var(--canvas)); color: var(--dim); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-align: left; text-transform: uppercase; white-space: nowrap; }
 .followup-table th:first-child, .followup-table td:first-child { width: 42px; text-align: center; }
-.followup-table th:nth-child(2) { width: 185px; }.followup-table th:nth-child(3) { width: 174px; }.followup-table th:nth-child(4) { width: 100px; }.followup-table th:nth-child(5) { width: 155px; }.followup-table th:nth-child(6), .followup-table th:nth-child(7) { width: 112px; }.followup-table th:last-child { width: 104px; }
+.followup-table th:nth-child(2) { width: 210px; }.followup-table th:nth-child(3) { width: 220px; }.followup-table th:nth-child(4) { width: 300px; }.followup-table th:nth-child(5) { width: 150px; }.followup-table th:nth-child(6) { width: 168px; }.followup-table th:nth-child(7) { width: 240px; }.followup-table th:last-child { width: 112px; }
 .followup-table td { height: 52px; padding: 7px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .followup-table tr:last-child td { border-bottom: 0; }
 .followup-table tbody tr:not(.followup-group-row):hover td { background: color-mix(in srgb, var(--gold) 3.5%, var(--surface)); }
@@ -7266,10 +7266,10 @@ tr:hover .benchmark-bar span { opacity: 1; }
 
 .followup-table-wrap { margin: 0 0 0 10px; overflow: auto; border-left: 6px solid var(--fu-blue); opacity: 1; transition: opacity .16s ease; }
 .followup-table-wrap.is-loading { opacity: .52; }
-.followup-table { width: 100%; min-width: 1660px; border-collapse: collapse; table-layout: fixed; background: var(--fu-surface); }
+.followup-table { width: 100%; min-width: 1260px; border-collapse: collapse; table-layout: fixed; background: var(--fu-surface); }
 .followup-table th { position: sticky; z-index: 3; top: 0; height: 36px; padding: 0 10px; border-right: 1px solid var(--fu-grid); border-top: 1px solid var(--fu-grid); border-bottom: 1px solid var(--fu-grid); background: var(--fu-surface); color: var(--text); font-family: var(--font-body); font-size: 13px; font-weight: 400; letter-spacing: 0; text-align: center; text-transform: none; }
 .followup-table th:first-child, .followup-table td:first-child { width: 38px; padding: 0; text-align: center; }
-.followup-table th:nth-child(2) { width: 210px; }.followup-table th:nth-child(3) { width: 264px; }.followup-table th:nth-child(4) { width: 145px; }.followup-table th:nth-child(5) { width: 260px; }.followup-table th:nth-child(6) { width: 150px; }.followup-table th:nth-child(7) { width: 168px; }.followup-table th:last-child { width: 112px; }
+.followup-table th:nth-child(2) { width: 220px; }.followup-table th:nth-child(3) { width: 260px; }.followup-table th:nth-child(4) { width: 340px; }.followup-table th:nth-child(5) { width: 160px; }.followup-table th:nth-child(6) { width: 180px; }.followup-table th:nth-child(7) { width: 260px; }.followup-table th:last-child { width: 120px; }
 .followup-table td { height: 36px; padding: 0 10px; border-right: 1px solid var(--fu-grid); border-bottom: 1px solid var(--fu-grid); background: var(--fu-surface); color: var(--muted); font-size: 13px; font-weight: 400; vertical-align: middle; }
 .followup-table tbody tr:not(.followup-group-row):hover td:not(.followup-status-cell):not(.followup-platform-cell), .followup-table tr.is-selected td:not(.followup-status-cell):not(.followup-platform-cell) { background: var(--fu-blue-soft); color: var(--text); }
 .followup-table tr.is-overdue td:first-child { box-shadow: inset 3px 0 0 var(--fu-overdue); }

@@ -6985,27 +6985,24 @@ function FollowupPage() {
      <table className="followup-table">
       <thead><tr>
        <th><BoardCheckbox checked={allPageSelected} indeterminate={selected.some((id) => pageIds.includes(id)) && !allPageSelected} label="Select every lead on this page" onChange={togglePage} /></th>
-       <th>Lead name</th><th>Current status</th><th>Contact platform</th><th>Campaign name</th><th>Last contacted</th><th>Next follow-up date</th>
-       {!compact && <th>Assigned</th>}<th>Result</th>{!compact && <th>Notes</th>}<th>Updated</th>
+       <th>Lead name</th><th>Current status</th><th>Campaign name</th><th>Last contacted</th><th>Next follow-up date</th>
+       {!compact && <th>Notes</th>}<th>Updated</th>
       </tr></thead>
       <tbody>
        {groupedRows.map((group) => <Fragment key={group.label || 'all'}>
-        {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 9 : 11}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
+        {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 7 : 8}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
         {group.rows.map((row: any) => <tr key={row.id} className={`${isOverdue(row.next_follow_up_at) ? 'is-overdue ' : ''}${selected.includes(String(row.id)) ? 'is-selected' : ''}`}>
          <td><BoardCheckbox checked={selected.includes(String(row.id))} label={`Select ${row.customer_name || 'lead'}`} onChange={() => toggleRow(String(row.id))} /></td>
          <td><FollowupInlineCell value={row.customer_name} emptyLabel={`Lead #${row.id}`} ariaLabel="Edit lead name" onCommit={(value) => saveInline(row, { customer_name: value })} /></td>
          <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><FollowupInlineCell value={followupStageOutcome(row.lead_quality)} displayValue={leadQualityLabel(row.lead_quality)} options={FOLLOWUP_OUTCOMES} ariaLabel={`Edit ${row.customer_name || 'lead'} status`} className="followup-inline-status" onCommit={(value) => saveOutcome(row, value)} /></td>
-         <td className={`followup-platform-cell platform-${leadQualitySlug(row.platform || 'unknown')}`}><FollowupInlineCell value={row.platform} options={(rowsData.facets.platforms || []).map((value: string) => ({ value, label: value }))} ariaLabel="Edit contact platform" className="followup-inline-platform" onCommit={(value) => saveInline(row, { platform: value })} /></td>
          <td className="followup-service"><FollowupInlineCell value={row.utm_campaign} ariaLabel="Edit campaign name" onCommit={(value) => saveInline(row, { utm_campaign: value })} /></td>
          <td><FollowupInlineCell value={followupDateInput(row.last_contacted_at)} displayValue={row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'} type="datetime-local" ariaLabel="Edit last contacted date" onCommit={(value) => saveInline(row, { last_contacted_at: value }, { last_contacted_at: value })} /></td>
          <td><FollowupInlineCell value={followupDateInput(row.next_follow_up_at)} displayValue={row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : 'Not scheduled'} type="datetime-local" ariaLabel="Edit next follow-up date" className={isOverdue(row.next_follow_up_at) ? 'overdue' : ''} onCommit={(value) => saveInline(row, { next_follow_up_at: value }, { next_follow_up_at: value })} /></td>
-         {!compact && <td><FollowupInlineCell value={row.assigned_to} emptyLabel="Unassigned" ariaLabel="Edit assigned person" onCommit={(value) => saveInline(row, { assigned_to: value })} /></td>}
-         <td><FollowupInlineCell value={row.follow_up_result} displayValue={row.follow_up_result ? String(row.follow_up_result).split('_').join(' ') : '-'} options={FOLLOWUP_OUTCOMES} ariaLabel="Edit follow-up result" onCommit={(value) => saveOutcome(row, value)} /></td>
          {!compact && <td className="followup-note"><FollowupInlineCell value={row.latest_note} emptyLabel="Add note" ariaLabel="Edit follow-up note" onCommit={(value) => saveInline(row, { latest_note: value })} /></td>}
          <td className="followup-readonly" title="Updated automatically after a saved change">{dateFmt(row.updated_at)}</td>
         </tr>)}
        </Fragment>)}
-       {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={compact ? 9 : 11}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another campaign or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
+       {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={compact ? 7 : 8}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another campaign or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
       </tbody>
      </table>
     </div>
