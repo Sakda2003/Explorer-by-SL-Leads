@@ -13,6 +13,7 @@ import {
  CalendarDays,
  Check,
  ChevronDown,
+ Clock,
  Columns3,
  Copy,
  ChevronLeft,
@@ -6713,6 +6714,180 @@ const followupDateInput = (value: any) => {
  return local.toISOString().slice(0, 16);
 };
 
+const FOLLOWUP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const FOLLOWUP_WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+const followupPad = (value: number) => String(value).padStart(2, '0');
+const followupDatePart = (date: Date) => `${date.getFullYear()}-${followupPad(date.getMonth() + 1)}-${followupPad(date.getDate())}`;
+const followupTimePart = (date: Date) => `${followupPad(date.getHours())}:${followupPad(date.getMinutes())}`;
+const followupReadableDate = (value: string) => {
+ const [year, month, day] = value.split('-');
+ return year && month && day ? `${month}/${day}/${year}` : '';
+};
+const followupParseDatePart = (value: string) => {
+ const [year, month, day] = value.split('-').map(Number);
+ if (!year || !month || !day) return null;
+ const date = new Date(year, month - 1, day);
+ return Number.isNaN(date.getTime()) ? null : date;
+};
+
+function FollowupDateEditor({
+ value,
+ ariaLabel,
+ busy,
+ className = '',
+ onApply,
+ onCancel,
+}: {
+ value: string;
+ ariaLabel: string;
+ busy: boolean;
+ className?: string;
+ onApply: (value: string) => void;
+ onCancel: () => void;
+}) {
+ const parsed = followupParseDatePart(value.slice(0, 10));
+ const initialDate = parsed || new Date();
+ const [datePart, setDatePart] = useState(parsed ? followupDatePart(parsed) : '');
+ const [dateText, setDateText] = useState(parsed ? followupReadableDate(followupDatePart(parsed)) : '');
+ const [timePart, setTimePart] = useState(value.includes('T') ? value.slice(11, 16) : '');
+ const [viewMonth, setViewMonth] = useState(new Date(initialDate.getFullYear(), initialDate.getMonth(), 1));
+ const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
+ const rootRef = useRef<HTMLDivElement>(null);
+ const popoverRef = useRef<HTMLDivElement>(null);
+ const dateInputRef = useRef<HTMLInputElement>(null);
+ const selectedDate = followupParseDatePart(datePart);
+ const todayPart = followupDatePart(new Date());
+
+ useEffect(() => {
+  const handlePointerDown = (event: PointerEvent) => {
+   const target = event.target as Node;
+   if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) onCancel();
+  };
+  document.addEventListener('pointerdown', handlePointerDown);
+  return () => document.removeEventListener('pointerdown', handlePointerDown);
+ }, [onCancel]);
+
+ useLayoutEffect(() => {
+  const updatePosition = () => {
+   const rect = rootRef.current?.getBoundingClientRect();
+   if (!rect) return;
+   const popoverWidth = 280;
+   const popoverHeight = 350;
+   const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
+   const opensAbove = rect.bottom + popoverHeight + 10 > window.innerHeight && rect.top > popoverHeight + 10;
+   setPopoverStyle({
+    position: 'fixed',
+    left,
+    top: opensAbove ? rect.top - popoverHeight - 8 : rect.bottom + 8,
+    width: popoverWidth,
+   });
+  };
+  updatePosition();
+  window.addEventListener('resize', updatePosition);
+  window.addEventListener('scroll', updatePosition, true);
+  return () => {
+   window.removeEventListener('resize', updatePosition);
+   window.removeEventListener('scroll', updatePosition, true);
+  };
+ }, []);
+
+ const monthDays = useMemo(() => {
+  const start = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+  const offset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - offset);
+  return Array.from({ length: 42 }, (_, index) => {
+   const date = new Date(start);
+   date.setDate(start.getDate() + index);
+   return date;
+  });
+ }, [viewMonth]);
+
+ const setToday = () => {
+  const now = new Date();
+  const today = followupDatePart(now);
+  setDatePart(today);
+  setDateText(followupReadableDate(today));
+  setTimePart((current) => current || followupTimePart(now));
+  setViewMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+ };
+
+ const apply = () => {
+  if (!datePart) { onApply(''); return; }
+  onApply(`${datePart}T${timePart || '00:00'}`);
+ };
+
+ const popover = (
+  <div ref={popoverRef} className="followup-date-popover" style={popoverStyle} role="dialog" aria-label={`${ariaLabel} calendar`}>
+   <header>
+    <select
+     aria-label="Month"
+     value={viewMonth.getMonth()}
+     onChange={(event) => setViewMonth(new Date(viewMonth.getFullYear(), Number(event.target.value), 1))}
+    >
+     {FOLLOWUP_MONTHS.map((month, index) => <option key={month} value={index}>{month}</option>)}
+    </select>
+    <select
+     aria-label="Year"
+     value={viewMonth.getFullYear()}
+     onChange={(event) => setViewMonth(new Date(Number(event.target.value), viewMonth.getMonth(), 1))}
+    >
+     {Array.from({ length: 7 }, (_, index) => viewMonth.getFullYear() - 3 + index).map((year) => <option key={year} value={year}>{year}</option>)}
+    </select>
+    <button type="button" aria-label="Previous month" onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1))}><ChevronLeft size={16} /></button>
+    <button type="button" aria-label="Next month" onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1))}><ChevronRight size={16} /></button>
+   </header>
+   <div className="followup-date-weekdays">{FOLLOWUP_WEEKDAYS.map((day) => <span key={day}>{day}</span>)}</div>
+   <div className="followup-date-grid">
+    {monthDays.map((day) => {
+     const part = followupDatePart(day);
+     const isSelected = selectedDate && part === followupDatePart(selectedDate);
+     return (
+      <button
+       key={part}
+       type="button"
+       className={`${day.getMonth() === viewMonth.getMonth() ? '' : 'muted'}${isSelected ? ' selected' : ''}${part === todayPart ? ' today' : ''}`}
+       onClick={() => { setDatePart(part); setDateText(followupReadableDate(part)); }}
+      >
+       {day.getDate()}
+      </button>
+     );
+    })}
+   </div>
+   <label className="followup-date-time"><Clock size={14} /><span>Time</span><input type="time" value={timePart} onChange={(event) => setTimePart(event.target.value)} /></label>
+   <footer>
+    <button type="button" onClick={() => { setDatePart(''); setDateText(''); setTimePart(''); }}>Reset</button>
+    <button type="button" onClick={onCancel}>Cancel</button>
+    <button type="button" className="primary" disabled={busy} onClick={apply}>Apply</button>
+   </footer>
+  </div>
+ );
+
+ return (
+  <div ref={rootRef} className={`followup-date-editor${className ? ` ${className}` : ''}`} onKeyDown={(event) => { if (event.key === 'Escape') onCancel(); }}>
+   <div className="followup-date-trigger">
+    <button type="button" onClick={setToday} disabled={busy}>Today</button>
+    <input
+     ref={dateInputRef}
+     aria-label={ariaLabel}
+     value={dateText}
+     placeholder="mm/dd/yyyy"
+     disabled={busy}
+     onChange={(event) => {
+      const raw = event.target.value;
+      setDateText(raw);
+      const [month, day, year] = raw.split('/');
+      if (month?.length === 2 && day?.length === 2 && year?.length === 4) setDatePart(`${year}-${month}-${day}`);
+     }}
+     autoFocus
+     onFocus={(event) => event.target.select()}
+    />
+    <Clock size={15} aria-hidden="true" />
+   </div>
+   {createPortal(popover, document.body)}
+  </div>
+ );
+}
+
 function FollowupInlineCell({ value, displayValue, type = 'text', options, emptyLabel = '-', ariaLabel, className = '', onCommit }: FollowupInlineCellProps) {
  const normalized = value == null ? '' : String(value);
  const [editing, setEditing] = useState(false);
@@ -6745,6 +6920,9 @@ function FollowupInlineCell({ value, displayValue, type = 'text', options, empty
  };
 
  if (editing) {
+  if (type === 'datetime-local') {
+   return <FollowupDateEditor value={draftValue} ariaLabel={ariaLabel} busy={busy} className={className} onCancel={cancel} onApply={(nextValue) => { setDraftValue(nextValue); void finish(nextValue); }} />;
+  }
   return options ? (
    <select
     autoFocus
