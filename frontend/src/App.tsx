@@ -4345,7 +4345,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  <div className="scatter-model-copy">
  <h3>{scatterModelTitle}</h3>
  <div className="scatter-model-legend" aria-label="Chart legend">
- {spendFittedCurveBand.length > 1 && <span><i className="band" />95% confidence interval</span>}
+ {spendFittedCurveBand.length > 1 && <span><i className="bounds" />95% confidence bounds</span>}
  <span><i className="fit" />{scatterModelEquation}</span>
  <span><i className="points" />observed days</span>
  </div>
@@ -4415,12 +4415,39 @@ function ForecastPage({ role }: { role: UserRole }) {
  activeDot={false}
  />
  )}
+ {spendFittedCurveBand.length > 1 && (
+ <>
+ <Line
+ data={spendFittedCurveBand}
+ dataKey="upper_ci"
+ stroke="var(--scatter-bound)"
+ strokeWidth={2.1}
+ dot={false}
+ activeDot={false}
+ isAnimationActive={false}
+ type="monotone"
+ legendType="none"
+ />
+ <Line
+ data={spendFittedCurveBand}
+ dataKey="lower_ci"
+ stroke="var(--scatter-bound)"
+ strokeWidth={2.1}
+ dot={false}
+ activeDot={false}
+ isAnimationActive={false}
+ type="monotone"
+ legendType="none"
+ />
+ </>
+ )}
  {spendFittedCurve.length > 1 && (
  <Line
  data={spendFittedCurveBand.length ? spendFittedCurveBand : spendFittedCurve}
  dataKey="actual_leads"
- stroke="var(--scatter-fit)"
- strokeWidth={2.8}
+ stroke={spendFittedCurveBand.length ? 'var(--scatter-fit-muted)' : 'var(--scatter-fit)'}
+ strokeWidth={spendFittedCurveBand.length ? 1.7 : 2.8}
+ strokeDasharray={spendFittedCurveBand.length ? '5 5' : undefined}
  dot={false}
  activeDot={false}
  isAnimationActive={false}
