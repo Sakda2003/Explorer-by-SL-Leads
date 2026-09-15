@@ -2925,6 +2925,12 @@ function ForecastPage({ role }: { role: UserRole }) {
  }).filter((campaign: any) => campaign.primaryAdSetId), [campaignMix, sets]);
  const visibleCampaigns = showAllCampaigns ? campaignMix : campaignMix.slice(0, 10);
  const selectedCampaign = campaignMix.find((item: any) => campaignScopeValue(item) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(item), selectedCampaignId)) || campaignMix[0] || null;
+ const selectedCampaignAdSetIds = Array.isArray(selectedCampaign?.ad_set_ids)
+ ? selectedCampaign.ad_set_ids.map((value: any) => String(value)).filter(Boolean)
+ : [];
+ const selectedCampaignAdSetLabel = selectedCampaignAdSetIds.length
+ ? selectedCampaignAdSetIds.join(', ')
+ : '-';
  const selectedCampaignOption = campaignOptions.find((item: any) => String(item.campaign_id) === String(selectedCampaignId) || campaignScopeIncludesId(String(item.campaign_id), selectedCampaignId)) || campaignOptions[0] || null;
  const trackingScopeName = selectedId
  ? `${selectedCampaignOption?.campaign || 'Selected campaign'} - Ad set ${String(selectedId).slice(-6)}`
@@ -4570,7 +4576,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  })}
  </div>
  {selectedCampaign && <div className="campaign-detail" aria-live="polite">
- <div><span>Selected campaign</span><strong>{selectedCampaign.campaign}</strong><code>{selectedCampaign.campaign_id}</code></div>
+ <div><span>Selected campaign</span><strong>{selectedCampaign.campaign}</strong><code title={selectedCampaignAdSetLabel}>{selectedCampaignAdSetLabel}</code></div>
  <div><span>Total leads</span><strong>{fmt(selectedCampaign.leads)}</strong></div>
  <div><span>Traffic share</span><strong>{selectedCampaign.sharePercent.toFixed(1)}%</strong></div>
  <div><span>Ad sets</span><strong>{fmt(selectedCampaign.ad_set_count)}</strong></div>

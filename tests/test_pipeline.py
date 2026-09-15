@@ -317,7 +317,15 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(insights["unique_campaigns"], 1)
         self.assertEqual(campaigns["Engagement | VISA | ALL | KHM"]["leads"], 2)
         self.assertEqual(campaigns["Engagement | VISA | ALL | KHM"]["ad_set_count"], 2)
+        self.assertEqual(
+            campaigns["Engagement | VISA | ALL | KHM"]["ad_set_ids"],
+            ["120246730013810078", "120249276038040078"],
+        )
         self.assertEqual(campaigns["Unattributed"]["leads"], 2)
+        self.assertEqual(
+            campaigns["Unattributed"]["ad_set_ids"],
+            ["120236399148520078", "120244916977830078"],
+        )
         self.assertFalse(any(row["campaign"].startswith("Campaign ") for row in insights["campaigns"]))
 
     def test_scientific_notation_id_is_rejected(self):

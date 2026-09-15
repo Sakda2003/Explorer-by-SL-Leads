@@ -3591,9 +3591,11 @@ def get_dashboard_insights() -> dict:
     campaign_rows = []
     for row in normalized_campaigns.values():
         campaign_ids = sorted(row.pop("campaign_ids"))
+        ad_set_ids = sorted(str(value) for value in row.pop("ad_set_ids") if value)
         row["campaign_ids"] = campaign_ids
         row["campaign_id"] = ",".join(campaign_ids) if campaign_ids else row["campaign_id"]
-        row["ad_set_count"] = len(row.pop("ad_set_ids"))
+        row["ad_set_ids"] = ad_set_ids
+        row["ad_set_count"] = len(ad_set_ids)
         row["share"] = row["leads"] / total if total else 0.0
         campaign_rows.append(row)
     campaign_rows.sort(key=lambda item: (-item["recent_leads"], -item["leads"], item["campaign"]))
