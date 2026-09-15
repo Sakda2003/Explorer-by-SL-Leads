@@ -1493,9 +1493,8 @@ main:has(.upload-v2-page) {
  --scatter-point: color-mix(in srgb, var(--cyan-strong) 72%, var(--status-info-fill));
  --scatter-point-glow: color-mix(in srgb, var(--cyan-strong) 62%, transparent);
  --scatter-fit: var(--yellow-strong);
- --scatter-fit-muted: color-mix(in srgb, var(--yellow-strong) 46%, transparent);
- --scatter-bound: color-mix(in srgb, var(--yellow-strong) 92%, var(--text));
- --scatter-band: color-mix(in srgb, var(--gold) 22%, transparent);
+ --scatter-bound: color-mix(in srgb, var(--yellow-strong) 62%, transparent);
+ --scatter-band: color-mix(in srgb, var(--gold) 23%, transparent);
  --scatter-grid: color-mix(in srgb, var(--muted) 12%, transparent);
  --scatter-axis: color-mix(in srgb, var(--text) 72%, var(--muted));
  --scatter-muted: color-mix(in srgb, var(--muted) 86%, transparent);
@@ -1605,20 +1604,14 @@ main:has(.upload-v2-page) {
  height: 11px;
  border-radius: 2px;
  background: var(--scatter-band);
-}
-.forecast-v2-page .scatter-model-legend .bounds {
- position: relative;
- width: 34px;
- height: 12px;
- border-top: 2px solid var(--scatter-bound);
- border-bottom: 2px solid var(--scatter-bound);
- background: linear-gradient(180deg, transparent, var(--scatter-band), transparent);
+ box-shadow: inset 0 1px var(--scatter-bound), inset 0 -1px var(--scatter-bound);
 }
 .forecast-v2-page .scatter-model-legend .fit {
  width: 34px;
  height: 2px;
  border-radius: 999px;
- background: repeating-linear-gradient(90deg, var(--scatter-fit-muted) 0 6px, transparent 6px 10px);
+ background: var(--scatter-fit);
+ box-shadow: 0 0 10px color-mix(in srgb, var(--scatter-fit) 24%, transparent);
 }
 .forecast-v2-page .scatter-model-legend .points {
  width: 9px;
