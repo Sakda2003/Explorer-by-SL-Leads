@@ -1699,6 +1699,20 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         queue = core.get_followup_leads(search="Edited Inline Lead")
         self.assertEqual(queue["rows"][0]["messenger_psid"], "psid-9988")
         self.assertEqual(queue["rows"][0]["telegram_id"], "tg-1122")
+        cleared = core.update_followup_inline(
+            created["created"],
+            {
+                "latest_note": "",
+                "next_follow_up_at": "",
+                "messenger_psid": "",
+                "telegram_id": "",
+            },
+            "sales@example.com",
+        )
+        self.assertEqual(cleared["lead"]["latest_note"], "")
+        self.assertIsNone(cleared["lead"]["next_follow_up_at"])
+        self.assertEqual(cleared["lead"]["messenger_psid"], "")
+        self.assertEqual(cleared["lead"]["telegram_id"], "")
 
     def test_followup_queue_filters_by_campaign_name(self):
         first = core.create_lead_event(

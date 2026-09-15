@@ -6866,6 +6866,12 @@ function FollowupDateEditor({
   if (!datePart) { onApply(''); return; }
   onApply(`${datePart}T${timePart || '00:00'}`);
  };
+ const clear = () => {
+  setDatePart('');
+  setDateText('');
+  setTimePart('');
+  onApply('');
+ };
 
  const popover = (
   <div ref={popoverRef} className="followup-date-popover" style={popoverStyle} role="dialog" aria-label={`${ariaLabel} calendar`}>
@@ -6906,6 +6912,7 @@ function FollowupDateEditor({
    </div>
    <label className="followup-date-time"><Clock size={14} /><span>Time</span><input type="time" value={timePart} onChange={(event) => setTimePart(event.target.value)} /></label>
    <footer>
+    <button type="button" onClick={clear} disabled={busy}>Clear</button>
     <button type="button" onClick={() => { setDatePart(''); setDateText(''); setTimePart(''); }}>Reset</button>
     <button type="button" onClick={onCancel}>Cancel</button>
     <button type="button" className="primary" disabled={busy} onClick={apply}>Apply</button>
@@ -6926,6 +6933,11 @@ function FollowupDateEditor({
      onChange={(event) => {
       const raw = event.target.value;
       setDateText(raw);
+      if (!raw.trim()) {
+       setDatePart('');
+       setTimePart('');
+       return;
+      }
       const [month, day, year] = raw.split('/');
       if (month?.length === 2 && day?.length === 2 && year?.length === 4) setDatePart(`${year}-${month}-${day}`);
      }}
@@ -6998,6 +7010,7 @@ function FollowupInlineCell({ value, displayValue, type = 'text', options, empty
     value={draftValue}
     onBlur={() => void finish()}
     onChange={(event) => setDraftValue(event.target.value)}
+    onFocus={(event) => event.target.select()}
     onKeyDown={handleKeyDown}
    />
   );
