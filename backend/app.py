@@ -185,6 +185,8 @@ class FollowupUpdate(BaseModel):
     last_contacted_at: str | None = None
     contact_method: str | None = None
     assigned_to: str | None = None
+    messenger_psid: str | None = None
+    telegram_id: str | None = None
     lost_reason: str | None = None
     required_documents: str | None = None
     expected_payment_date: str | None = None
@@ -204,6 +206,8 @@ class FollowupInlineUpdate(BaseModel):
     assigned_to: str | None = None
     follow_up_result: str | None = None
     latest_note: str | None = None
+    messenger_psid: str | None = None
+    telegram_id: str | None = None
 
 
 # Mirrors AD_PERFORMANCE_UPDATE_FIELDS in core.py. `leads` and

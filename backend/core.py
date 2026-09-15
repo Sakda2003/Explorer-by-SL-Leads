@@ -357,6 +357,8 @@ def init_db() -> None:
           assigned_to TEXT,
           follow_up_result TEXT,
           latest_note TEXT,
+          messenger_psid TEXT,
+          telegram_id TEXT,
           lost_reason TEXT,
           required_documents TEXT,
           expected_payment_date TEXT,
@@ -606,6 +608,13 @@ def init_db() -> None:
         ):
             if name not in existing_upload_columns:
                 db.execute(f"ALTER TABLE raw_uploads ADD COLUMN {name} {definition}")
+        existing_followup_columns = {row[1] for row in db.execute("PRAGMA table_info(lead_followups)")}
+        for name, definition in (
+            ("messenger_psid", "TEXT"),
+            ("telegram_id", "TEXT"),
+        ):
+            if name not in existing_followup_columns:
+                db.execute(f"ALTER TABLE lead_followups ADD COLUMN {name} {definition}")
         existing_daily_columns = {row[1] for row in db.execute("PRAGMA table_info(forecast_daily_predictions)")}
         for name, definition in (
             ("weekday_name", "TEXT"), ("weekday_factor", "REAL"),
@@ -10311,6 +10320,7 @@ def get_followup_leads(
                       l.utm_campaign_id,
                       l.fb_ad_title, f.next_follow_up_at, f.last_contacted_at,
                       f.contact_method, f.assigned_to, f.follow_up_result, f.latest_note,
+                      f.messenger_psid, f.telegram_id,
                       f.required_documents, f.expected_payment_date,
                       COALESCE(f.selected_service, l.fb_ad_title) AS service_requested,
                       COALESCE(f.updated_at, l.updated_at, l.created_at) AS updated_at
@@ -10350,6 +10360,7 @@ def get_followup_lead(lead_id: int) -> dict:
         lead = db.execute(
             """SELECT l.*, f.next_follow_up_at, f.last_contacted_at, f.contact_method,
                       f.assigned_to, f.follow_up_result, f.latest_note, f.lost_reason,
+                      f.messenger_psid, f.telegram_id,
                       f.required_documents, f.expected_payment_date, f.converted_at,
                       f.selected_service, f.payment_status, f.conversion_remarks
                FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id WHERE l.id=?""",
@@ -10395,6 +10406,8 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
         "assigned_to": _followup_text(values.get("assigned_to"), 200),
         "follow_up_result": outcome,
         "latest_note": note,
+        "messenger_psid": _followup_text(values.get("messenger_psid"), 200),
+        "telegram_id": _followup_text(values.get("telegram_id"), 200),
         "lost_reason": lost_reason,
         "required_documents": _followup_text(values.get("required_documents")),
         "expected_payment_date": _followup_text(values.get("expected_payment_date"), 40) or None,
@@ -10439,6 +10452,7 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
 FOLLOWUP_INLINE_LEAD_FIELDS = {"customer_name", "lead_quality", "platform", "utm_campaign"}
 FOLLOWUP_INLINE_META_FIELDS = {
     "last_contacted_at", "next_follow_up_at", "assigned_to", "follow_up_result", "latest_note",
+    "messenger_psid", "telegram_id",
 }
 
 
@@ -10460,7 +10474,7 @@ def update_followup_inline(lead_id: int, changes: dict, actor: str) -> dict:
             meta_changes[field] = cleaned
         elif field in {"last_contacted_at", "next_follow_up_at"}:
             meta_changes[field] = _followup_text(value, 40) or None
-        elif field == "assigned_to":
+        elif field in {"assigned_to", "messenger_psid", "telegram_id"}:
             meta_changes[field] = _followup_text(value, 200)
         else:
             meta_changes[field] = _followup_text(value)

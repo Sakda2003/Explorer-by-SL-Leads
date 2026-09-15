@@ -1678,6 +1678,8 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
                 "lead_quality": "Awaiting Document and Payment",
                 "follow_up_result": "awaiting_document_and_payment",
                 "next_follow_up_at": "2026-09-18T09:30",
+                "messenger_psid": "psid-9988",
+                "telegram_id": "tg-1122",
             },
             "sales@example.com",
         )
@@ -1686,9 +1688,14 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(saved["lead"]["latest_note"], "Keep this note.")
         self.assertEqual(saved["lead"]["assigned_to"], "Dara")
         self.assertEqual(saved["lead"]["next_follow_up_at"], "2026-09-18T09:30")
+        self.assertEqual(saved["lead"]["messenger_psid"], "psid-9988")
+        self.assertEqual(saved["lead"]["telegram_id"], "tg-1122")
         self.assertEqual(saved["lead"]["lead_quality"], "Awaiting Document and Payment")
         self.assertEqual(saved["lead"]["follow_up_result"], "awaiting_document_and_payment")
         self.assertEqual(saved["activities"][0]["action"], "inline_update")
+        queue = core.get_followup_leads(search="Edited Inline Lead")
+        self.assertEqual(queue["rows"][0]["messenger_psid"], "psid-9988")
+        self.assertEqual(queue["rows"][0]["telegram_id"], "tg-1122")
 
     def test_followup_queue_filters_by_campaign_name(self):
         first = core.create_lead_event(
