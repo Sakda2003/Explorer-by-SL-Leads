@@ -3397,9 +3397,19 @@ function ForecastPage({ role }: { role: UserRole }) {
  .map((item: any) => {
  const spendShare = totalSpend ? (Number(item.spend || 0) / totalSpend) * 100 : 0;
  const leadShare = totalLeads ? (Number(item.actual_leads || 0) / totalLeads) * 100 : 0;
+ const campaignName = String(item.campaign_name || item.campaign_id);
+ const normalizedCampaignName = campaignName.replace(/^Leads\s*\|\s*/i, '').trim().toLowerCase();
  return {
  campaign_id: String(item.campaign_id),
- shortName: String(item.campaign_name || item.campaign_id).replace(/^Leads\s*\|\s*/i, '').slice(0, 30),
+ shortName: campaignName.replace(/^Leads\s*\|\s*/i, '').slice(0, 30),
+ ad_set_ids: (adSpend.ad_sets || [])
+ .filter((set: any) => {
+ const setCampaignName = String(set.campaign_name || '').replace(/^Leads\s*\|\s*/i, '').trim().toLowerCase();
+ return campaignMatchesScope(set, String(item.campaign_id)) || (!!setCampaignName && setCampaignName === normalizedCampaignName);
+ })
+ .map((set: any) => String(set.ad_set_id || ''))
+ .filter(Boolean)
+ .sort(),
  spend_share: spendShare,
  lead_share: leadShare,
  gap: leadShare - spendShare,
@@ -3416,6 +3426,9 @@ function ForecastPage({ role }: { role: UserRole }) {
  return allocationRows.find((item: any) => campaignMatchesScope(item, selectedCampaignId)) || allocationRows[0] || null;
  }, [allocationRows, selectedCampaignId]);
  const selectedAllocationStatus = selectedAllocationRow ? allocationStatusFor(selectedAllocationRow.gap) : '';
+ const selectedAllocationAdSetLabel = Array.isArray(selectedAllocationRow?.ad_set_ids) && selectedAllocationRow.ad_set_ids.length
+ ? selectedAllocationRow.ad_set_ids.join(', ')
+ : '-';
 
  // Spend-vs-leads scatter. The slope of a point from the origin IS its cost per lead, so a
  // benchmark ray at the blended portfolio CPL splits the cloud into cheaper-than-average
@@ -4533,7 +4546,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  </div>
  {selectedAllocationRow && (
  <div className={`allocation-detail-v2 ${Number(selectedAllocationRow.gap || 0) >= 3 ? 'under' : Number(selectedAllocationRow.gap || 0) <= -3 ? 'over' : 'balanced'}`} aria-live="polite">
- <div className="allocation-detail-name"><span>Selected campaign</span><strong>{selectedAllocationRow.shortName}</strong></div>
+ <div className="allocation-detail-name"><span>Selected campaign</span><strong>{selectedAllocationRow.shortName}</strong><code title={selectedAllocationAdSetLabel}>{selectedAllocationAdSetLabel}</code></div>
  <div><span>Spend share</span><strong>{Number(selectedAllocationRow.spend_share || 0).toFixed(1)}%</strong><small>{money(selectedAllocationRow.spend)} spent</small></div>
  <div><span>Lead share</span><strong>{Number(selectedAllocationRow.lead_share || 0).toFixed(1)}%</strong><small>{fmt(selectedAllocationRow.actual_leads)} leads</small></div>
  <div className="allocation-detail-status"><span>Funding status</span><strong>{selectedAllocationStatus}</strong></div>

@@ -1873,6 +1873,16 @@ main:has(.upload-v2-page) {
  color: var(--dim);
  font-size: 12px;
 }
+.forecast-v2-page .allocation-detail-name code {
+ overflow: hidden;
+ color: var(--dim);
+ font-family: "JetBrains Mono", ui-monospace, monospace;
+ font-size: 12px;
+ font-weight: 600;
+ line-height: 1.35;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+}
 .forecast-v2-page .allocation-detail-v2.under .allocation-detail-status strong { color: var(--success); }
 .forecast-v2-page .allocation-detail-v2.over .allocation-detail-status strong { color: var(--danger); }
 .forecast-v2-page .allocation-detail-v2.balanced .allocation-detail-status strong { color: var(--muted); }
