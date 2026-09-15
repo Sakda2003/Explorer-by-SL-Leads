@@ -1738,18 +1738,37 @@ const spendEquationText = (summary: any, formKey: string) => {
  return 'fit unavailable';
 };
 
-const spendCurveWithBand = (curve: any[], summary: any, maxLeads: number) => {
- const rmse = Number(summary?.rmse);
- if (!curve.length || !Number.isFinite(rmse) || rmse <= 0) return [];
- const upperCap = Math.max(1, Math.ceil(maxLeads * 1.28));
- const halfWidth = 1.96 * rmse;
+const spendCurveDesignVector = (formKey: string, spend: number): number[] | null => {
+ if (formKey === 'linear') return [1, spend];
+ if (formKey === 'quadratic') return [1, spend, spend * spend];
+ if (formKey === 'log') return spend > 0 ? [1, Math.log(spend)] : null;
+ if (formKey === 'sqrt') return spend >= 0 ? [1, Math.sqrt(spend)] : null;
+ return null;
+};
+
+const spendCurveConfidenceBand = (curve: any[], summary: any, formKey: string, maxLeads: number) => {
+ const mseResid = Number(summary?.mse_resid);
+ const inverse = summary?.design_inverse;
+ if (!curve.length || !Number.isFinite(mseResid) || mseResid <= 0 || !Array.isArray(inverse)) return [];
+ const upperCap = Math.max(1, Math.ceil(maxLeads * 1.34));
  return curve.map((point) => {
   const fit = Number(point.actual_leads);
+  const vector = spendCurveDesignVector(formKey, Number(point.spend));
+  if (!vector || inverse.length !== vector.length) return null;
+  const variance = vector.reduce((sum, left, rowIndex) => {
+   const row = Array.isArray(inverse[rowIndex]) ? inverse[rowIndex] : [];
+   const inner = vector.reduce((acc, right, columnIndex) => acc + right * Number(row[columnIndex] || 0), 0);
+   return sum + left * inner;
+  }, 0);
+  if (!Number.isFinite(variance) || variance < 0) return null;
+  const halfWidth = 1.96 * Math.sqrt(mseResid * variance);
   return {
    ...point,
+   lower_ci: Math.max(0, fit - halfWidth),
+   upper_ci: Math.min(upperCap, fit + halfWidth),
    fit_band: [Math.max(0, fit - halfWidth), Math.min(upperCap, fit + halfWidth)],
   };
- });
+ }).filter(Boolean);
 };
 
 // One small chart per functional form, drawn side by side so the four shapes can be compared
@@ -3459,9 +3478,13 @@ function ForecastPage({ role }: { role: UserRole }) {
  ? null
  : ols?.univariate_forms?.forms?.[activeSpendCurveForm];
  const spendFittedCurveBand = useMemo(
- () => spendCurveWithBand(spendFittedCurve, activeSpendCurveSummary, dailySpendLeadsScatter.maxLeads),
- [spendFittedCurve, activeSpendCurveSummary, dailySpendLeadsScatter.maxLeads],
+ () => spendCurveConfidenceBand(spendFittedCurve, activeSpendCurveSummary, activeSpendCurveForm, dailySpendLeadsScatter.maxLeads),
+ [spendFittedCurve, activeSpendCurveSummary, activeSpendCurveForm, dailySpendLeadsScatter.maxLeads],
  );
+ const spendScatterYAxisMax = useMemo(() => {
+ const upperCi = spendFittedCurveBand.map((point: any) => Number(point.upper_ci || 0));
+ return Math.max(dailySpendLeadsScatter.maxLeads, ...upperCi);
+ }, [dailySpendLeadsScatter.maxLeads, spendFittedCurveBand]);
  const scatterModelTitle = activeSpendCurveSummary
  ? `leads vs spent · R2 = ${olsStat(activeSpendCurveSummary.r_squared, 3)}, p ${olsPValue(activeSpendCurveSummary.f_p_value)}`
  : `leads vs spent · ${activeSpendCurveOption?.label || 'fit'}`;
@@ -4322,7 +4345,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  <div className="scatter-model-copy">
  <h3>{scatterModelTitle}</h3>
  <div className="scatter-model-legend" aria-label="Chart legend">
- {spendFittedCurveBand.length > 1 && <span><i className="band" />95% fit band</span>}
+ {spendFittedCurveBand.length > 1 && <span><i className="band" />95% confidence interval</span>}
  <span><i className="fit" />{scatterModelEquation}</span>
  <span><i className="points" />observed days</span>
  </div>
@@ -4366,7 +4389,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  type="number"
  dataKey="actual_leads"
  name="Daily leads"
- domain={[0, Math.ceil(dailySpendLeadsScatter.maxLeads * 1.12)]}
+ domain={[0, Math.ceil(spendScatterYAxisMax * 1.12)]}
  allowDecimals={false}
  tick={{ fontSize: 12.5, fill: 'var(--scatter-axis)' }}
  axisLine={false}

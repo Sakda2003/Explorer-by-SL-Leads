@@ -562,6 +562,9 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("spent", terms)
         self.assertAlmostEqual(terms["spent"]["coef"], 0.5, places=6)
         self.assertLess(terms["spent"]["p_value"], 0.001)
+        self.assertGreaterEqual(summary["mse_resid"], 0)
+        self.assertEqual(len(summary["design_inverse"]), 2)
+        self.assertEqual(len(summary["design_inverse"][0]), 2)
 
     def test_univariate_spend_forms_fit_all_four_shapes(self):
         """Linear, quadratic, log and sqrt, all fitted on the same rows.

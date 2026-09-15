@@ -5590,6 +5590,11 @@ def _fit_ols_summary(values: np.ndarray, feature_rows: list[dict[str, float]], f
         "aic": float(2 * parameter_count - 2 * log_likelihood),
         "bic": float(math.log(len(y)) * parameter_count - 2 * log_likelihood),
         "rmse": float(rmse),
+        "mse_resid": float(mse_resid),
+        "design_inverse": [
+            [float(cell) for cell in row]
+            for row in xtx_inv.tolist()
+        ],
         # The residual vector itself, for the per-form residual-vs-spend plots. The scalar
         # diagnostics below (skew / kurtosis / Durbin-Watson / Jarque-Bera) summarise these,
         # but a summary statistic cannot show *where* a fit goes wrong -- a residual cloud
