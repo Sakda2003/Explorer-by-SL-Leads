@@ -7490,6 +7490,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .followup-compact-filters {
   width: 100%;
   min-height: 48px;
+  justify-content: flex-end;
   gap: 7px;
   padding: 8px 2px;
   border-top: 1px solid #23272f;
@@ -7655,6 +7656,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 @media (max-width: 900px) {
   .page-content.followup-page { padding: 0 0 76px; }
   .followup-toolbar { flex-wrap: wrap; gap: 8px 14px; padding: 10px 16px; }
+  .followup-compact-filters { justify-content: flex-start; }
   .followup-search { flex: 1 1 100%; width: auto; }
   .followup-search:focus-within { width: auto; }
   .followup-views { padding: 0 16px; }
