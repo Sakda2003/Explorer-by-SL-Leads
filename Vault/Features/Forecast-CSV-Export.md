@@ -18,7 +18,10 @@ second request or introduce a second aggregation path.
   the CSV.
 - One, two, or any larger number of selected scopes.
 - Independent from/to dates. The dialog starts from the Forecast page range, clamped to the
-  actual spend-data range so future forecast dates do not produce a misleading filename.
+  actual spend-data range so future forecast dates do not produce a misleading filename. The
+  date control reuses the Forecast range calendar with month navigation, highlighted start/end
+  and in-range days, plus draft Reset, Cancel, and Apply actions. Its popover is portaled and
+  viewport-aware so the export dialog cannot clip it.
 - A live selected-scope and output-row count. Download stays disabled until the selection and
   range produce at least one row.
 - Escape/backdrop close, restored trigger focus, background `inert` state while open, visible

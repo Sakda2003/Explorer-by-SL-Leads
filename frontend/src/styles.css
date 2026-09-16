@@ -827,20 +827,24 @@ main:has(.upload-v2-page) {
 .forecast-export-options b { overflow: hidden; color: var(--text); font-size: 13px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
 .forecast-export-options small { overflow: hidden; color: var(--dim); font-family: var(--font-mono); font-size: 10px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .forecast-export-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
-.forecast-export-date-fields { display: grid; grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr); align-items: end; gap: 8px; }
-.forecast-export-date-fields > i { height: 1px; margin-bottom: 21px; background: var(--line-strong); }
-.forecast-export-date-fields label { display: grid; gap: 8px; color: var(--dim); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.forecast-export-date-fields input {
- width: 100%;
- min-width: 0;
- height: 43px;
- padding: 0 11px;
- border: 1px solid var(--line);
- border-radius: 6px;
+.forecast-export-date-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 0 0 8px; padding: 0 12px 0 43px; color: var(--dim); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.forecast-export-date-fields { min-width: 0; }
+.forecast-export-date-picker,
+.forecast-export-date-picker .date-range-trigger { width: 100%; }
+.forecast-export-date-picker .date-range-trigger {
+ min-height: 44px;
+ display: grid;
+ grid-template-columns: 18px minmax(0, 1fr) 20px minmax(0, 1fr);
+ gap: 8px;
+ padding: 0 12px;
+ border-radius: 7px;
  background: var(--surface);
- color: var(--text);
- font: 650 11px/1 var(--font-mono);
+ font-size: 11px;
+ text-align: left;
+ cursor: pointer;
 }
+.forecast-export-date-picker .date-range-trigger > i { height: 1px; background: var(--line-strong); font-size: 0; }
+.date-range-popover.portaled { z-index: 280; }
 .forecast-export-error { margin: 10px 0 0; color: var(--danger); font-size: 12px; }
 .forecast-export-full-range {
  width: 100%;

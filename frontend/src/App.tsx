@@ -688,31 +688,65 @@ function InteractiveDistributionDot({ cx, cy, payload, selectedId, onSelect }: a
  );
 }
 
-function DateRangePicker({ startDate, endDate, minDate, maxDate, onApply, onReset }: any) {
+function DateRangePicker({ startDate, endDate, minDate, maxDate, onApply, onReset, portal = false, className = '' }: any) {
  const [open, setOpen] = useState(false);
  const [draftStart, setDraftStart] = useState(startDate);
  const [draftEnd, setDraftEnd] = useState(endDate);
  const [viewDate, setViewDate] = useState(() => new Date(`${startDate || minDate || isoDate(new Date())}T12:00:00`));
+ const [pos, setPos] = useState({ top: 0, left: 0 });
  const wrapRef = useRef<HTMLDivElement>(null);
+ const triggerRef = useRef<HTMLButtonElement>(null);
+ const popoverRef = useRef<HTMLDivElement>(null);
+
+ const reposition = () => {
+  if (!portal || !triggerRef.current) return;
+  const rect = triggerRef.current.getBoundingClientRect();
+  const width = 300;
+  const height = popoverRef.current?.getBoundingClientRect().height || 346;
+  let left = rect.right - width;
+  if (left < 8) left = 8;
+  if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+  let top = rect.bottom + 8;
+  if (top + height > window.innerHeight - 8) {
+   const above = rect.top - height - 8;
+   top = above > 8 ? above : Math.max(8, window.innerHeight - height - 8);
+  }
+  setPos({ top, left });
+ };
+
+ useLayoutEffect(() => {
+  if (!open || !portal) return;
+  reposition();
+ }, [open, portal]);
 
  useEffect(() => {
  if (!open) return;
  const handler = (event: MouseEvent) => {
- if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false);
+ const target = event.target as Node;
+ if (wrapRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+ setOpen(false);
  };
  const escHandler = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+ const reflowHandler = () => reposition();
  document.addEventListener('mousedown', handler);
  document.addEventListener('keydown', escHandler);
+ if (portal) {
+  window.addEventListener('scroll', reflowHandler, true);
+  window.addEventListener('resize', reflowHandler);
+ }
  return () => {
  document.removeEventListener('mousedown', handler);
  document.removeEventListener('keydown', escHandler);
+ window.removeEventListener('scroll', reflowHandler, true);
+ window.removeEventListener('resize', reflowHandler);
  };
- }, [open]);
+ }, [open, portal]);
 
  const openPicker = () => {
  setDraftStart(startDate);
  setDraftEnd(endDate);
  setViewDate(new Date(`${startDate || minDate || isoDate(new Date())}T12:00:00`));
+ reposition();
  setOpen(true);
  };
 
@@ -746,16 +780,14 @@ function DateRangePicker({ startDate, endDate, minDate, maxDate, onApply, onRese
  trailDay += 1;
  }
 
- return (
- <div className="date-range-picker" ref={wrapRef}>
- <button type="button" className="date-range-trigger" onClick={() => (open ? setOpen(false) : openPicker())} aria-expanded={open} aria-haspopup="dialog">
- <CalendarDays size={15} />
- <span>{rangeLabel(startDate)}</span>
- <i aria-hidden="true">-</i>
- <span>{rangeLabel(endDate)}</span>
- </button>
- {open && (
- <div className="date-range-popover" role="dialog" aria-label="Select date range">
+ const popover = (
+ <div
+  className={`date-range-popover${portal ? ' portaled' : ''}`}
+  role="dialog"
+  aria-label="Select date range"
+  ref={popoverRef}
+  style={portal ? { position: 'fixed', top: pos.top, left: pos.left } : undefined}
+ >
  <div className="date-range-nav">
  <button type="button" aria-label="Previous month" onClick={() => setViewDate(new Date(year, month - 1, 1))}><ChevronLeft size={16} /></button>
  <span>{new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(viewDate)}</span>
@@ -788,7 +820,17 @@ function DateRangePicker({ startDate, endDate, minDate, maxDate, onApply, onRese
  </div>
  </div>
  </div>
- )}
+ );
+
+ return (
+ <div className={`date-range-picker${className ? ` ${className}` : ''}`} ref={wrapRef}>
+ <button ref={triggerRef} type="button" className="date-range-trigger" onClick={() => (open ? setOpen(false) : openPicker())} aria-expanded={open} aria-haspopup="dialog">
+ <CalendarDays size={15} />
+ <span>{rangeLabel(startDate)}</span>
+ <i aria-hidden="true">-</i>
+ <span>{rangeLabel(endDate)}</span>
+ </button>
+ {open && (portal ? createPortal(popover, document.body) : popover)}
  </div>
  );
 }
@@ -2756,10 +2798,18 @@ function ForecastCsvExport({
 
         <section className="forecast-export-dates" aria-labelledby="forecast-export-dates-title">
          <div className="forecast-export-section-head"><div><span>02</span><b id="forecast-export-dates-title">Date window</b></div></div>
+         <div className="forecast-export-date-labels" aria-hidden="true"><span>From</span><span>To</span></div>
          <div className="forecast-export-date-fields">
-          <label><span>From</span><input type="date" value={startDate} min={minDate || undefined} max={endDate || maxDate || undefined} onChange={(event) => { setStartDate(event.target.value); setDownloaded(false); }} /></label>
-          <i aria-hidden="true" />
-          <label><span>To</span><input type="date" value={endDate} min={startDate || minDate || undefined} max={maxDate || undefined} onChange={(event) => { setEndDate(event.target.value); setDownloaded(false); }} /></label>
+          <DateRangePicker
+           startDate={startDate}
+           endDate={endDate}
+           minDate={minDate}
+           maxDate={maxDate}
+           portal
+           className="forecast-export-date-picker"
+           onApply={(start: string, end: string) => { setStartDate(start); setEndDate(end); setDownloaded(false); }}
+           onReset={() => { setStartDate(minDate); setEndDate(maxDate); setDownloaded(false); }}
+          />
          </div>
          {invalidDates && <p className="forecast-export-error">The start date must be before the end date.</p>}
          <button type="button" className="forecast-export-full-range" onClick={() => { setStartDate(minDate); setEndDate(maxDate); setDownloaded(false); }}>
