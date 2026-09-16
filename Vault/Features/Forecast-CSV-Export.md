@@ -16,6 +16,11 @@ second request or introduce a second aggregation path.
   fallback labels such as `Campaign 850078`. A catalog campaign can still map to multiple
   underlying IDs; selecting it includes rows for every mapped ID and uses the approved name in
   the CSV.
+- Ad-set choices use the exact Ad Set ID as the primary label and its resolved campaign as
+  secondary context. Campaign ownership is resolved from the lead-derived ad-set mapping first,
+  then the approved campaign ID map and source name. Missing source attribution is labeled
+  `Campaign not attributed` instead of displaying a generated campaign name. Search matches
+  either the full Ad Set ID or its campaign, and multi-select/select-all remain available.
 - One, two, or any larger number of selected scopes.
 - Independent from/to dates. The dialog starts from the Forecast page range, clamped to the
   actual spend-data range so future forecast dates do not produce a misleading filename. The

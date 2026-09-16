@@ -2517,7 +2517,7 @@ function ChangeEventButton({ adSetId, onChange, retraining = false }: { adSetId:
 
 type ForecastExportScope = 'campaign' | 'adset';
 type ForecastCampaignExportOption = { id: string; name: string; sourceIds: string[] };
-type ForecastAdSetExportOption = { id: string; name: string };
+type ForecastAdSetExportOption = { id: string; name: string; campaignId: string; campaignName: string };
 
 const FORECAST_EXPORT_CAMPAIGNS = [
  'Leads | VISA | AU | KHM',
@@ -2554,10 +2554,11 @@ function csvValue(value: unknown): string {
 }
 
 function ForecastCsvExport({
- adSpend, campaigns, ready, currentCampaignId, currentAdSetId, currentStartDate, currentEndDate,
+ adSpend, campaigns, adSets, ready, currentCampaignId, currentAdSetId, currentStartDate, currentEndDate,
 }: {
  adSpend: any;
  campaigns: any[];
+ adSets: any[];
  ready: boolean;
  currentCampaignId: string;
  currentAdSetId: string;
@@ -2601,21 +2602,40 @@ function ForecastCsvExport({
    return { id: `campaign:${key}`, name, sourceIds: Array.from(sourceIdsByName.get(key) || []) };
   });
  }, [adSpend, campaigns]);
+ const campaignNameBySourceId = useMemo(() => {
+  const names = new Map<string, string>();
+  campaignOptions.forEach((option) => option.sourceIds.forEach((id) => names.set(id, option.name)));
+  return names;
+ }, [campaignOptions]);
  const adSetOptions = useMemo<ForecastAdSetExportOption[]>(() => {
-  const byId = new Map<string, { id: string; name: string }>();
+  const campaignIdByAdSet = new Map<string, string>();
+  adSets.forEach((row: any) => {
+   const adSetId = String(row.utm_ad_set_id || '').trim();
+   const campaignId = String(row.utm_campaign_id || '').trim();
+   if (adSetId && campaignId) campaignIdByAdSet.set(adSetId, campaignId);
+  });
+  const approvedNameByKey = new Map(FORECAST_EXPORT_CAMPAIGNS.map((name) => [campaignNameKey(name), name]));
+  const byId = new Map<string, ForecastAdSetExportOption>();
   (adSpend?.daily_ad_sets || []).forEach((row: any) => {
    const id = String(row.ad_set_id || '').trim();
-   if (id && !byId.has(id)) byId.set(id, { id, name: String(row.campaign_name || `Campaign ${String(row.campaign_id || '').slice(-6)}`) });
+   if (!id || byId.has(id)) return;
+   const campaignId = campaignIdByAdSet.get(id) || String(row.campaign_id || '').trim();
+   const rawCampaignName = String(row.campaign_name || '').trim();
+   const sourceName = approvedNameByKey.get(campaignNameKey(rawCampaignName))
+    || (!rawCampaignName || /^Campaign\s+\d+$/i.test(rawCampaignName) ? '' : rawCampaignName);
+   const campaignName = campaignNameBySourceId.get(campaignId) || sourceName || 'Campaign not attributed';
+   byId.set(id, { id, name: id, campaignId, campaignName });
   });
-  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
- }, [adSpend]);
+  return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+ }, [adSets, adSpend, campaignNameBySourceId]);
  const options: Array<ForecastCampaignExportOption | ForecastAdSetExportOption> = scope === 'campaign' ? campaignOptions : adSetOptions;
  const visibleOptions = useMemo(() => {
   const needle = search.trim().toLowerCase();
   if (!needle) return options;
   return options.filter((option) => {
    const searchableIds = 'sourceIds' in option ? option.sourceIds.join(' ') : option.id;
-   return `${option.name} ${searchableIds}`.toLowerCase().includes(needle);
+   const campaignName = 'campaignName' in option ? option.campaignName : option.name;
+   return `${option.name} ${searchableIds} ${campaignName}`.toLowerCase().includes(needle);
   });
  }, [options, search]);
  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -2624,11 +2644,7 @@ function ForecastCsvExport({
    .filter((option) => selectedSet.has(option.id))
    .flatMap((option) => option.sourceIds),
  ), [campaignOptions, selectedSet]);
- const campaignNameBySourceId = useMemo(() => {
-  const names = new Map<string, string>();
-  campaignOptions.forEach((option) => option.sourceIds.forEach((id) => names.set(id, option.name)));
-  return names;
- }, [campaignOptions]);
+ const adSetCampaignNameById = useMemo(() => new Map(adSetOptions.map((option) => [option.id, option.campaignName])), [adSetOptions]);
  const exportRows = useMemo(() => {
   const source = scope === 'campaign' ? (adSpend?.daily_campaigns || []) : (adSpend?.daily_ad_sets || []);
   return source.filter((row: any) => {
@@ -2722,7 +2738,9 @@ function ForecastCsvExport({
    ? ['Date', 'Campaign ID', 'Campaign', 'Amount Spent (USD)', 'Actual Leads']
    : ['Date', 'Campaign ID', 'Campaign', 'Ad Set ID', 'Amount Spent (USD)', 'Actual Leads'];
   const body = exportRows.map((row: any) => {
-   const campaignName = campaignNameBySourceId.get(String(row.campaign_id)) || row.campaign_name;
+   const campaignName = scope === 'adset'
+    ? adSetCampaignNameById.get(String(row.ad_set_id)) || row.campaign_name
+    : campaignNameBySourceId.get(String(row.campaign_id)) || row.campaign_name;
    const values: unknown[] = [row.day, row.campaign_id, campaignName];
    if (scope === 'adset') values.push(row.ad_set_id);
    values.push(Number(row.spend || 0).toFixed(2), Number(row.actual_leads || 0));
@@ -2772,7 +2790,7 @@ function ForecastCsvExport({
          </div>
          <label className="forecast-export-search">
           <Search size={15} /><span className="sr-only">Search {scope === 'campaign' ? 'campaigns' : 'ad sets'}</span>
-          <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${scope === 'campaign' ? 'campaign name or ID' : 'campaign or ad set ID'}...`} />
+          <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${scope === 'campaign' ? 'campaign name or ID' : 'ad set ID or campaign'}...`} />
           {search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X size={13} /></button>}
          </label>
          <button type="button" className="forecast-export-select-all" onClick={toggleVisible} disabled={!visibleOptions.length}>
@@ -2784,11 +2802,12 @@ function ForecastCsvExport({
            const selected = selectedSet.has(option.id);
            const optionMeta = scope === 'campaign' && 'sourceIds' in option
             ? `Campaign${option.sourceIds.length ? ` · ${option.sourceIds.join(', ')}` : ''}`
-            : `Ad set · ${option.id}`;
+            : `Campaign · ${'campaignName' in option ? option.campaignName : 'Campaign not attributed'}`;
+           const optionLabel = scope === 'adset' ? option.id : option.name;
            return (
             <button type="button" role="option" aria-selected={selected} className={selected ? 'selected' : ''} key={option.id} onClick={() => toggleId(option.id)}>
              <span className={`forecast-export-checkbox${selected ? ' checked' : ''}`}>{selected && <Check size={12} />}</span>
-             <span><b>{option.name}</b><small>{optionMeta}</small></span>
+             <span><b className={scope === 'adset' ? 'forecast-export-adset-id' : undefined}>{optionLabel}</b><small>{optionMeta}</small></span>
             </button>
            );
           })}
@@ -4037,6 +4056,7 @@ function ForecastPage({ role }: { role: UserRole }) {
   <ForecastCsvExport
    adSpend={adSpend}
    campaigns={campaignOptions}
+   adSets={sets}
    ready={adSpendReady}
    currentCampaignId={selectedCampaignId}
    currentAdSetId={selectedId}
