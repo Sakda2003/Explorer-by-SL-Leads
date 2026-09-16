@@ -10,6 +10,12 @@ second request or introduce a second aggregation path.
 `ForecastCsvExport` opens a focused, portaled dialog. It supports:
 
 - Campaign or ad-set scope, with searchable multi-select and select-all for the visible results.
+- Campaign choices use the approved 18-name Forecast campaign catalog and resolve each name to
+  its real IDs from both normalized campaign insights and daily spend rows. The export does not
+  expose legacy/paused names, raw duplicate-ID entries, unattributed entries, or generated
+  fallback labels such as `Campaign 850078`. A catalog campaign can still map to multiple
+  underlying IDs; selecting it includes rows for every mapped ID and uses the approved name in
+  the CSV.
 - One, two, or any larger number of selected scopes.
 - Independent from/to dates. The dialog starts from the Forecast page range, clamped to the
   actual spend-data range so future forecast dates do not produce a misleading filename.
