@@ -635,6 +635,273 @@ main:has(.upload-v2-page) {
  font-size: 14px;
  line-height: 1.4;
 }
+.forecast-export-trigger {
+ min-width: 128px;
+ min-height: 42px;
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
+ gap: 9px;
+ padding: 0 16px;
+ border: 1px solid color-mix(in srgb, var(--gold) 58%, var(--line));
+ border-radius: 7px;
+ background: color-mix(in srgb, var(--gold) 9%, var(--surface));
+ color: var(--text);
+ font: 750 12px/1 "Inter Tight", var(--font-body);
+ letter-spacing: .01em;
+ cursor: pointer;
+ transition: border-color .18s ease, background-color .18s ease, color .18s ease;
+}
+.forecast-export-trigger svg { color: var(--gold); }
+.forecast-export-trigger:hover { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 15%, var(--surface)); }
+.forecast-export-trigger:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.forecast-export-trigger:disabled { opacity: .42; cursor: not-allowed; }
+
+/* Export stays in a focused dialog instead of expanding the header into a large filter form.
+   It is portaled to body, so these rules deliberately are not scoped under .forecast-v2-page. */
+.forecast-export-backdrop {
+ position: fixed;
+ inset: 0;
+ z-index: 250;
+ display: grid;
+ place-items: start center;
+ overflow-y: auto;
+ padding: max(28px, 6vh) 18px 28px;
+ background: rgb(var(--shadow-ink) / .64);
+ backdrop-filter: blur(5px);
+ animation: forecast-export-fade .18s ease both;
+}
+.forecast-export-dialog {
+ width: min(880px, 100%);
+ overflow: hidden;
+ border: 1px solid var(--line-strong);
+ border-radius: 12px;
+ background: var(--canvas);
+ color: var(--text);
+ box-shadow: 0 30px 90px rgb(var(--shadow-ink) / .52), inset 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+ font-family: "Inter Tight", var(--font-body);
+ animation: forecast-export-enter .22s cubic-bezier(.2, .8, .2, 1) both;
+}
+.forecast-export-dialog > header {
+ display: flex;
+ align-items: flex-start;
+ justify-content: space-between;
+ gap: 24px;
+ padding: 24px 26px 20px;
+ border-bottom: 1px solid var(--line);
+ background: color-mix(in srgb, var(--surface) 58%, var(--canvas));
+}
+.forecast-export-kicker {
+ display: inline-flex;
+ align-items: center;
+ gap: 7px;
+ color: var(--gold);
+ font-family: var(--font-mono);
+ font-size: 9px;
+ font-weight: 800;
+ letter-spacing: .12em;
+ text-transform: uppercase;
+}
+.forecast-export-heading h3 { margin: 8px 0 0; font-size: 22px; line-height: 1.12; font-weight: 750; letter-spacing: -.025em; }
+.forecast-export-heading p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.forecast-export-close {
+ width: 36px;
+ height: 36px;
+ flex: none;
+ display: inline-grid;
+ place-items: center;
+ border: 1px solid var(--line);
+ border-radius: 7px;
+ background: transparent;
+ color: var(--muted);
+ cursor: pointer;
+ transition: color .16s ease, border-color .16s ease, background-color .16s ease;
+}
+.forecast-export-close:hover { color: var(--text); border-color: var(--line-strong); background: var(--surface-soft); }
+.forecast-export-close:focus-visible,
+.forecast-export-dialog button:focus-visible,
+.forecast-export-dialog input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.forecast-export-body { padding: 20px 26px 24px; }
+.forecast-export-scope {
+ width: fit-content;
+ display: grid;
+ grid-template-columns: repeat(2, minmax(132px, 1fr));
+ padding: 3px;
+ border: 1px solid var(--line);
+ border-radius: 8px;
+ background: var(--surface-tint);
+}
+.forecast-export-scope button {
+ min-height: 36px;
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
+ gap: 7px;
+ padding: 0 14px;
+ border: 0;
+ border-radius: 5px;
+ background: transparent;
+ color: var(--muted);
+ font: 750 11px/1 inherit;
+ cursor: pointer;
+ transition: color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.forecast-export-scope button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 5px rgb(var(--shadow-ink) / .2); }
+.forecast-export-scope button.active svg { color: var(--gold); }
+.forecast-export-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .9fr); gap: 24px; margin-top: 22px; }
+.forecast-export-selection,
+.forecast-export-dates { min-width: 0; }
+.forecast-export-dates { padding-left: 24px; border-left: 1px solid var(--line); }
+.forecast-export-section-head { min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.forecast-export-section-head > div { display: flex; align-items: center; gap: 9px; }
+.forecast-export-section-head > div > span {
+ display: inline-grid;
+ place-items: center;
+ width: 23px;
+ height: 23px;
+ border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line));
+ color: var(--gold);
+ font-family: var(--font-mono);
+ font-size: 8px;
+ font-weight: 800;
+}
+.forecast-export-section-head b { color: var(--text); font-size: 12px; font-weight: 760; }
+.forecast-export-section-head > strong { color: var(--gold); font-size: 10px; font-weight: 750; }
+.forecast-export-search {
+ min-height: 40px;
+ display: flex;
+ align-items: center;
+ gap: 9px;
+ padding: 0 11px;
+ border: 1px solid var(--line);
+ border-radius: 7px;
+ background: var(--surface);
+ color: var(--muted);
+}
+.forecast-export-search:focus-within { border-color: var(--line-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 10%, transparent); }
+.forecast-export-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font: 650 11px/1.2 inherit; }
+.forecast-export-search input::placeholder { color: color-mix(in srgb, var(--muted) 72%, transparent); }
+.forecast-export-search button { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.forecast-export-select-all,
+.forecast-export-options > button {
+ width: 100%;
+ display: flex;
+ align-items: center;
+ gap: 10px;
+ border: 0;
+ background: transparent;
+ color: var(--text);
+ text-align: left;
+ cursor: pointer;
+}
+.forecast-export-select-all { min-height: 36px; margin-top: 4px; padding: 0 9px; color: var(--muted); font: 700 10px/1 inherit; }
+.forecast-export-select-all small { margin-left: auto; color: var(--dim); font-family: var(--font-mono); }
+.forecast-export-checkbox {
+ width: 17px;
+ height: 17px;
+ flex: none;
+ display: inline-grid;
+ place-items: center;
+ border: 1px solid var(--line-strong);
+ border-radius: 4px;
+ background: var(--canvas);
+ color: var(--canvas);
+}
+.forecast-export-checkbox.checked { border-color: var(--gold); background: var(--gold); }
+.forecast-export-options {
+ height: 238px;
+ overflow-y: auto;
+ border: 1px solid var(--line);
+ border-radius: 7px;
+ background: color-mix(in srgb, var(--surface) 58%, transparent);
+ scrollbar-width: thin;
+ scrollbar-color: var(--line-strong) transparent;
+}
+.forecast-export-options > button { min-height: 52px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.forecast-export-options > button:last-of-type { border-bottom: 0; }
+.forecast-export-options > button:hover { background: var(--surface-soft); }
+.forecast-export-options > button.selected { background: color-mix(in srgb, var(--gold) 8%, var(--surface)); }
+.forecast-export-options > button > span:last-child { min-width: 0; display: grid; gap: 4px; }
+.forecast-export-options b { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.forecast-export-options small { overflow: hidden; color: var(--dim); font-family: var(--font-mono); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.forecast-export-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--dim); font-size: 10px; }
+.forecast-export-date-fields { display: grid; grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr); align-items: end; gap: 7px; }
+.forecast-export-date-fields > i { height: 1px; margin-bottom: 19px; background: var(--line-strong); }
+.forecast-export-date-fields label { display: grid; gap: 6px; color: var(--dim); font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.forecast-export-date-fields input {
+ width: 100%;
+ min-width: 0;
+ height: 39px;
+ padding: 0 9px;
+ border: 1px solid var(--line);
+ border-radius: 6px;
+ background: var(--surface);
+ color: var(--text);
+ font: 650 10px/1 var(--font-mono);
+}
+.forecast-export-error { margin: 8px 0 0; color: var(--danger); font-size: 10px; }
+.forecast-export-full-range {
+ width: 100%;
+ min-height: 47px;
+ margin-top: 12px;
+ display: grid;
+ grid-template-columns: 18px minmax(0, 1fr);
+ grid-template-rows: auto auto;
+ column-gap: 8px;
+ align-items: center;
+ padding: 8px 10px;
+ border: 1px solid var(--line);
+ border-radius: 7px;
+ background: transparent;
+ color: var(--text);
+ text-align: left;
+ cursor: pointer;
+}
+.forecast-export-full-range:hover { border-color: var(--line-strong); background: var(--surface-soft); }
+.forecast-export-full-range svg { grid-row: 1 / 3; color: var(--gold); }
+.forecast-export-full-range span { font-size: 10px; font-weight: 750; }
+.forecast-export-full-range small { color: var(--dim); font-family: var(--font-mono); font-size: 8.5px; }
+.forecast-export-file-map { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.forecast-export-file-map > span { color: var(--dim); font-family: var(--font-mono); font-size: 8.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.forecast-export-file-map > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.forecast-export-file-map b { padding: 5px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-tint); color: var(--muted); font-family: var(--font-mono); font-size: 8px; font-weight: 650; }
+.forecast-export-dialog > footer {
+ min-height: 68px;
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ gap: 18px;
+ padding: 13px 26px;
+ border-top: 1px solid var(--line);
+ background: var(--surface);
+}
+.forecast-export-dialog > footer > div:last-child { display: flex; gap: 8px; }
+.forecast-export-summary { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 10px; font-weight: 650; }
+.forecast-export-summary > i { width: 3px; height: 3px; border-radius: 50%; background: var(--line-strong); }
+.forecast-export-summary strong { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 750; }
+.forecast-export-cancel,
+.forecast-export-download { min-height: 39px; padding: 0 14px; border-radius: 6px; font: 750 11px/1 inherit; cursor: pointer; }
+.forecast-export-cancel { border: 1px solid var(--line); background: transparent; color: var(--muted); }
+.forecast-export-cancel:hover { color: var(--text); border-color: var(--line-strong); }
+.forecast-export-download { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--gold); background: var(--gold); color: var(--canvas); }
+.forecast-export-download:hover:not(:disabled) { filter: brightness(1.06); }
+.forecast-export-download:disabled { opacity: .38; cursor: not-allowed; }
+@keyframes forecast-export-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes forecast-export-enter { from { opacity: 0; transform: translateY(10px) scale(.99); } to { opacity: 1; transform: none; } }
+@media (max-width: 700px) {
+ .forecast-export-backdrop { padding: 8px; place-items: end center; }
+ .forecast-export-dialog { max-height: calc(100vh - 16px); overflow-y: auto; border-radius: 10px; }
+ .forecast-export-dialog > header, .forecast-export-body, .forecast-export-dialog > footer { padding-left: 17px; padding-right: 17px; }
+ .forecast-export-grid { grid-template-columns: 1fr; gap: 20px; }
+ .forecast-export-dates { padding: 20px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+ .forecast-export-dialog > footer { align-items: stretch; flex-direction: column; }
+ .forecast-export-dialog > footer > div:last-child { display: grid; grid-template-columns: 1fr 1.4fr; }
+ .forecast-export-summary { min-height: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+ .forecast-export-backdrop, .forecast-export-dialog { animation: none; }
+ .forecast-export-trigger, .forecast-export-dialog button { transition: none; }
+}
 .forecast-v2-kpis {
  display: grid;
  grid-template-columns: repeat(5, minmax(0, 1fr));

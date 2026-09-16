@@ -2473,6 +2473,259 @@ function ChangeEventButton({ adSetId, onChange, retraining = false }: { adSetId:
  );
 }
 
+type ForecastExportScope = 'campaign' | 'adset';
+
+function csvValue(value: unknown): string {
+ const raw = value == null ? '' : String(value);
+ // Spreadsheet apps interpret these prefixes as formulas. Campaign names and IDs are user
+ // data, so neutralize them before wrapping every value in standard CSV quotes.
+ const safe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+ return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function ForecastCsvExport({
+ adSpend, ready, currentCampaignId, currentAdSetId, currentStartDate, currentEndDate,
+}: {
+ adSpend: any;
+ ready: boolean;
+ currentCampaignId: string;
+ currentAdSetId: string;
+ currentStartDate: string;
+ currentEndDate: string;
+}) {
+ const [open, setOpen] = useState(false);
+ const [scope, setScope] = useState<ForecastExportScope>('campaign');
+ const [selectedIds, setSelectedIds] = useState<string[]>([]);
+ const [search, setSearch] = useState('');
+ const [startDate, setStartDate] = useState('');
+ const [endDate, setEndDate] = useState('');
+ const [downloaded, setDownloaded] = useState(false);
+ const triggerRef = useRef<HTMLButtonElement>(null);
+ const searchRef = useRef<HTMLInputElement>(null);
+ const downloadedTimer = useRef<number | null>(null);
+
+ const minDate = String(adSpend?.summary?.date_start || adSpend?.summary?.spend_date_start || '');
+ const maxDate = String(adSpend?.summary?.date_end || adSpend?.summary?.spend_date_end || '');
+ const campaignOptions = useMemo(() => {
+  const byId = new Map<string, { id: string; name: string }>();
+  (adSpend?.daily_campaigns || []).forEach((row: any) => {
+   const id = String(row.campaign_id || '').trim();
+   if (id && !byId.has(id)) byId.set(id, { id, name: String(row.campaign_name || `Campaign ${id.slice(-6)}`) });
+  });
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+ }, [adSpend]);
+ const adSetOptions = useMemo(() => {
+  const byId = new Map<string, { id: string; name: string }>();
+  (adSpend?.daily_ad_sets || []).forEach((row: any) => {
+   const id = String(row.ad_set_id || '').trim();
+   if (id && !byId.has(id)) byId.set(id, { id, name: String(row.campaign_name || `Campaign ${String(row.campaign_id || '').slice(-6)}`) });
+  });
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+ }, [adSpend]);
+ const options = scope === 'campaign' ? campaignOptions : adSetOptions;
+ const visibleOptions = useMemo(() => {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return options;
+  return options.filter((option) => `${option.name} ${option.id}`.toLowerCase().includes(needle));
+ }, [options, search]);
+ const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+ const exportRows = useMemo(() => {
+  const source = scope === 'campaign' ? (adSpend?.daily_campaigns || []) : (adSpend?.daily_ad_sets || []);
+  return source.filter((row: any) => {
+   const id = String(scope === 'campaign' ? row.campaign_id : row.ad_set_id);
+   const day = String(row.day || '');
+   return selectedSet.has(id) && (!startDate || day >= startDate) && (!endDate || day <= endDate);
+  }).sort((a: any, b: any) => (
+   String(a.day).localeCompare(String(b.day))
+   || String(a.campaign_name || '').localeCompare(String(b.campaign_name || ''))
+   || String(a.ad_set_id || '').localeCompare(String(b.ad_set_id || ''))
+  ));
+ }, [adSpend, scope, selectedSet, startDate, endDate]);
+ const invalidDates = Boolean(startDate && endDate && startDate > endDate);
+ const canExport = selectedIds.length > 0 && exportRows.length > 0 && !invalidDates;
+
+ const openDialog = () => {
+  const nextScope: ForecastExportScope = currentAdSetId ? 'adset' : 'campaign';
+  const candidateIds = nextScope === 'adset'
+   ? [String(currentAdSetId)]
+   : String(currentCampaignId || '').split(',').map((id) => id.trim()).filter(Boolean);
+  const validIds = new Set((nextScope === 'adset' ? adSetOptions : campaignOptions).map((option) => option.id));
+  const clampToAvailableRange = (value: string, fallback: string) => {
+   if (!value) return fallback;
+   if (minDate && value < minDate) return minDate;
+   if (maxDate && value > maxDate) return maxDate;
+   return value;
+  };
+  setScope(nextScope);
+  setSelectedIds(candidateIds.filter((id) => validIds.has(id)));
+  setStartDate(clampToAvailableRange(currentStartDate, minDate));
+  setEndDate(clampToAvailableRange(currentEndDate, maxDate));
+  setSearch('');
+  setDownloaded(false);
+  setOpen(true);
+ };
+
+ const closeDialog = () => {
+  setOpen(false);
+  window.setTimeout(() => triggerRef.current?.focus(), 0);
+ };
+
+ useEffect(() => {
+  if (!open) return;
+  const previousOverflow = document.body.style.overflow;
+  const appRoot = document.getElementById('root');
+  const rootWasInert = appRoot?.hasAttribute('inert') ?? false;
+  document.body.style.overflow = 'hidden';
+  appRoot?.setAttribute('inert', '');
+  const onKeyDown = (event: KeyboardEvent) => {
+   if (event.key === 'Escape') closeDialog();
+  };
+  window.addEventListener('keydown', onKeyDown);
+  window.setTimeout(() => searchRef.current?.focus(), 0);
+  return () => {
+   document.body.style.overflow = previousOverflow;
+   if (!rootWasInert) appRoot?.removeAttribute('inert');
+   window.removeEventListener('keydown', onKeyDown);
+  };
+ }, [open]);
+
+ useEffect(() => () => {
+  if (downloadedTimer.current != null) window.clearTimeout(downloadedTimer.current);
+ }, []);
+
+ const changeScope = (nextScope: ForecastExportScope) => {
+  setScope(nextScope);
+  setSelectedIds([]);
+  setSearch('');
+  setDownloaded(false);
+ };
+ const toggleId = (id: string) => {
+  setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  setDownloaded(false);
+ };
+ const allVisibleSelected = visibleOptions.length > 0 && visibleOptions.every((option) => selectedSet.has(option.id));
+ const toggleVisible = () => {
+  const visibleIds = new Set(visibleOptions.map((option) => option.id));
+  setSelectedIds((current) => allVisibleSelected
+   ? current.filter((id) => !visibleIds.has(id))
+   : Array.from(new Set([...current, ...visibleIds])));
+  setDownloaded(false);
+ };
+
+ const downloadCsv = () => {
+  if (!canExport) return;
+  const headers = scope === 'campaign'
+   ? ['Date', 'Campaign ID', 'Campaign', 'Amount Spent (USD)', 'Actual Leads']
+   : ['Date', 'Campaign ID', 'Campaign', 'Ad Set ID', 'Amount Spent (USD)', 'Actual Leads'];
+  const body = exportRows.map((row: any) => {
+   const values: unknown[] = [row.day, row.campaign_id, row.campaign_name];
+   if (scope === 'adset') values.push(row.ad_set_id);
+   values.push(Number(row.spend || 0).toFixed(2), Number(row.actual_leads || 0));
+   return values.map(csvValue).join(',');
+  });
+  const blob = new Blob([`\uFEFF${headers.map(csvValue).join(',')}\r\n${body.join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `forecast-${scope === 'campaign' ? 'campaigns' : 'ad-sets'}-${startDate || 'start'}-to-${endDate || 'end'}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setDownloaded(true);
+  if (downloadedTimer.current != null) window.clearTimeout(downloadedTimer.current);
+  downloadedTimer.current = window.setTimeout(() => setDownloaded(false), 2400);
+ };
+
+ return (
+  <>
+   <button ref={triggerRef} type="button" className="forecast-export-trigger" onClick={openDialog} disabled={!ready || !adSpend?.available} aria-haspopup="dialog">
+    <Download size={16} /><span>Export CSV</span>
+   </button>
+   {open && createPortal(
+    <div className="forecast-export-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
+     <section className="forecast-export-dialog" role="dialog" aria-modal="true" aria-labelledby="forecast-export-title">
+      <header>
+       <div className="forecast-export-heading">
+        <span className="forecast-export-kicker"><Download size={14} /> Data export</span>
+        <h3 id="forecast-export-title">Export spend &amp; lead volume</h3>
+        <p>Choose the scopes and dates to include. Each row represents one day from the chart.</p>
+       </div>
+       <button type="button" className="forecast-export-close" onClick={closeDialog} aria-label="Close export dialog"><X size={17} /></button>
+      </header>
+
+      <div className="forecast-export-body">
+       <div className="forecast-export-scope" role="group" aria-label="Export scope">
+        <button type="button" className={scope === 'campaign' ? 'active' : ''} aria-pressed={scope === 'campaign'} onClick={() => changeScope('campaign')}><Megaphone size={15} />Campaigns</button>
+        <button type="button" className={scope === 'adset' ? 'active' : ''} aria-pressed={scope === 'adset'} onClick={() => changeScope('adset')}><Layers3 size={15} />Ad sets</button>
+       </div>
+
+       <div className="forecast-export-grid">
+        <section className="forecast-export-selection" aria-labelledby="forecast-export-selection-title">
+         <div className="forecast-export-section-head">
+          <div><span>01</span><b id="forecast-export-selection-title">Select {scope === 'campaign' ? 'campaigns' : 'ad sets'}</b></div>
+          <strong>{selectedIds.length} selected</strong>
+         </div>
+         <label className="forecast-export-search">
+          <Search size={15} /><span className="sr-only">Search {scope === 'campaign' ? 'campaigns' : 'ad sets'}</span>
+          <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${scope === 'campaign' ? 'campaign name or ID' : 'campaign or ad set ID'}...`} />
+          {search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X size={13} /></button>}
+         </label>
+         <button type="button" className="forecast-export-select-all" onClick={toggleVisible} disabled={!visibleOptions.length}>
+          <span className={`forecast-export-checkbox${allVisibleSelected ? ' checked' : ''}`}>{allVisibleSelected && <Check size={12} />}</span>
+          {allVisibleSelected ? 'Clear visible' : `Select all${search ? ' results' : ''}`}<small>{visibleOptions.length}</small>
+         </button>
+         <div className="forecast-export-options" role="listbox" aria-multiselectable="true">
+          {visibleOptions.map((option) => {
+           const selected = selectedSet.has(option.id);
+           return (
+            <button type="button" role="option" aria-selected={selected} className={selected ? 'selected' : ''} key={option.id} onClick={() => toggleId(option.id)}>
+             <span className={`forecast-export-checkbox${selected ? ' checked' : ''}`}>{selected && <Check size={12} />}</span>
+             <span><b>{option.name}</b><small>{scope === 'campaign' ? 'Campaign' : 'Ad set'} · {option.id}</small></span>
+            </button>
+           );
+          })}
+          {!visibleOptions.length && <div className="forecast-export-empty"><Search size={18} /><span>No matching {scope === 'campaign' ? 'campaigns' : 'ad sets'}</span></div>}
+         </div>
+        </section>
+
+        <section className="forecast-export-dates" aria-labelledby="forecast-export-dates-title">
+         <div className="forecast-export-section-head"><div><span>02</span><b id="forecast-export-dates-title">Date window</b></div></div>
+         <div className="forecast-export-date-fields">
+          <label><span>From</span><input type="date" value={startDate} min={minDate || undefined} max={endDate || maxDate || undefined} onChange={(event) => { setStartDate(event.target.value); setDownloaded(false); }} /></label>
+          <i aria-hidden="true" />
+          <label><span>To</span><input type="date" value={endDate} min={startDate || minDate || undefined} max={maxDate || undefined} onChange={(event) => { setEndDate(event.target.value); setDownloaded(false); }} /></label>
+         </div>
+         {invalidDates && <p className="forecast-export-error">The start date must be before the end date.</p>}
+         <button type="button" className="forecast-export-full-range" onClick={() => { setStartDate(minDate); setEndDate(maxDate); setDownloaded(false); }}>
+          <CalendarDays size={14} /><span>Use full available range</span><small>{dateFmt(minDate)} – {dateFmt(maxDate)}</small>
+         </button>
+         <div className="forecast-export-file-map">
+          <span>CSV columns</span>
+          <div><b>Date</b><b>Campaign</b>{scope === 'adset' && <b>Ad set ID</b>}<b>Amount spent</b><b>Actual leads</b></div>
+         </div>
+        </section>
+       </div>
+      </div>
+
+      <footer>
+       <div className="forecast-export-summary" aria-live="polite">
+        <span>{selectedIds.length} {scope === 'campaign' ? 'campaigns' : 'ad sets'}</span><i /><span>{invalidDates ? 'Fix date range' : `${fmt(exportRows.length)} CSV rows`}</span>
+        {downloaded && <strong><Check size={13} /> Downloaded</strong>}
+       </div>
+       <div>
+        <button type="button" className="forecast-export-cancel" onClick={closeDialog}>Cancel</button>
+        <button type="button" className="forecast-export-download" disabled={!canExport} onClick={downloadCsv}><Download size={15} />Download CSV</button>
+       </div>
+      </footer>
+     </section>
+    </div>,
+    document.body,
+   )}
+  </>
+ );
+}
+
 function ForecastPage({ role }: { role: UserRole }) {
  const canWrite = role !== 'staff';
  const [summary, setSummary] = useState<any>({});
@@ -3666,10 +3919,18 @@ function ForecastPage({ role }: { role: UserRole }) {
  return (
  <div className="page-content dashboard-page forecast-v2-page">
  <section className="forecast-v2-header hero-heading">
- <div>
- <h2>Forecast</h2>
- <p>Understand the past. Project what the next spend curve returns.</p>
- </div>
+  <div>
+  <h2>Forecast</h2>
+  <p>Understand the past. Project what the next spend curve returns.</p>
+  </div>
+  <ForecastCsvExport
+   adSpend={adSpend}
+   ready={adSpendReady}
+   currentCampaignId={selectedCampaignId}
+   currentAdSetId={selectedId}
+   currentStartDate={trackingStartDate}
+   currentEndDate={trackingEndDate}
+  />
  </section>
 
  <section id="kpis" className="forecast-v2-kpis dashboard-kpis" aria-label="Forecast overview">

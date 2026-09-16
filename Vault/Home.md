@@ -35,6 +35,7 @@ codebase.
 - [[Ad-Decision-Engine]] — boost/cut verdicts on the Ad Performance / Optimization page
 - [[Budget-Optimization-Tab]] — CPL-vs-budget response signal, merged into the same page
 - [[CPL-Trend-Chart]] — the daily spend-per-day chart on the Forecast page
+- [[Forecast-CSV-Export]] — multi-campaign/ad-set CSV export for the Forecast spend and lead-volume chart, with an independent date window
 - [[Forecast-Page-OLS-Panel]] — the OLS cards under the forecast chart; scoped to the selected campaign/ad set, and why thin scopes refuse to fit
 - [[Lead-Management-Page]] — the CRM workspace for rating leads; four-cell bento, why the funnel describes the scope and not the stage selection, and why rating skips the retrain
 - [[Follow-up-Page]] — the active sales queue for Qualified / Awaiting leads, follow-up history, scheduling, and terminal Converted/Lost outcomes
