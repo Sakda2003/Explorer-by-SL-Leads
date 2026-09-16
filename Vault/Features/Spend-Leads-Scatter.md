@@ -223,3 +223,16 @@ errors).
 
 **Pre-existing, not caused by this:** `.scatter-plot` (the large chart) overflows its card by
 ~12px. The panel grid itself fits exactly and the page does not scroll horizontally.
+
+## Date-range filtering fix (2026-09-16)
+
+The residual plot now follows the Forecast page's selected date range. Previously its points
+were built by zipping the full-scope `univariate_forms.spend_values` and `residuals` arrays from
+`/api/ols-summary`, while the fit scatter above used the date-filtered `spendDaily` rows. This
+left the residual cloud unchanged when the date picker narrowed the visible period.
+
+`spendFormPanels` now evaluates each form's returned coefficients for the currently visible
+`dailySpendLeadsScatter.points` and calculates `actual_leads - predicted` for those rows. The
+model is still fitted over the scope's active dates, consistent with the fitted curve and stats;
+only the displayed observations are filtered. `spendFormPrediction` is shared by the curve and
+residual calculation so the two cannot drift to different equation implementations.

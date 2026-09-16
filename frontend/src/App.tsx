@@ -1660,6 +1660,31 @@ const UNIVARIATE_FORM_LABELS: { key: string; label: string; formula: string }[] 
  { key: 'sqrt', label: 'Square root', formula: 'Leads ~ sqrt(Spend)' },
 ];
 
+// Evaluate one spend value with the fitted coefficients returned by the backend. Both the
+// drawn curve and the residual plot use this helper so they cannot disagree about the model.
+function spendFormPrediction(summary: any, formKey: string, spend: number): number | null {
+ const intercept = spendCoefficient(summary, 'Intercept');
+ if (intercept == null || !Number.isFinite(spend)) return null;
+ if (formKey === 'linear') {
+  const b = spendCoefficient(summary, 'spend');
+  return b == null ? null : intercept + b * spend;
+ }
+ if (formKey === 'quadratic') {
+  const b = spendCoefficient(summary, 'spend');
+  const c = spendCoefficient(summary, 'spend_sq');
+  return b == null || c == null ? null : intercept + b * spend + c * spend * spend;
+ }
+ if (formKey === 'log') {
+  const b = spendCoefficient(summary, 'spend_log');
+  return b == null || spend <= 0 ? null : intercept + b * Math.log(spend);
+ }
+ if (formKey === 'sqrt') {
+  const b = spendCoefficient(summary, 'spend_sqrt');
+  return b == null || spend < 0 ? null : intercept + b * Math.sqrt(spend);
+ }
+ return null;
+}
+
 // Evaluate a fitted form across the observed spend range, for drawing. Reads the coefficients
 // straight off the summary the backend already returns, so there is no second source of truth
 // for the curve and no extra request to draw it.
@@ -1670,36 +1695,10 @@ function spendFormCurve(
  summary: any, formKey: string, minX: number, maxX: number, steps = 60,
 ): { spend: number; actual_leads: number }[] {
  if (!summary || !(maxX > minX)) return [];
- const coefficient = (feature: string) => {
-  const row = (summary.coefficients || []).find((item: any) => item.feature === feature);
-  return row ? Number(row.coef) : null;
- };
- const intercept = coefficient('Intercept');
- if (intercept == null || !Number.isFinite(intercept)) return [];
- const evaluate = (x: number): number | null => {
-  if (formKey === 'linear') {
-   const b = coefficient('spend');
-   return b == null ? null : intercept + b * x;
-  }
-  if (formKey === 'quadratic') {
-   const b = coefficient('spend');
-   const c = coefficient('spend_sq');
-   return b == null || c == null ? null : intercept + b * x + c * x * x;
-  }
-  if (formKey === 'log') {
-   const b = coefficient('spend_log');
-   return b == null || x <= 0 ? null : intercept + b * Math.log(x);
-  }
-  if (formKey === 'sqrt') {
-   const b = coefficient('spend_sqrt');
-   return b == null || x < 0 ? null : intercept + b * Math.sqrt(x);
-  }
-  return null;
- };
  const out: { spend: number; actual_leads: number }[] = [];
  for (let i = 0; i <= steps; i++) {
   const x = minX + ((maxX - minX) * i) / steps;
-  const y = evaluate(x);
+  const y = spendFormPrediction(summary, formKey, x);
   // Same floor the LOESS curve uses: a fit dipping below zero is an artifact of the form,
   // not a claim that a day could return negative leads.
   if (y != null && Number.isFinite(y)) out.push({ spend: x, actual_leads: Math.max(0, y) });
@@ -1707,11 +1706,11 @@ function spendFormCurve(
  return out;
 }
 
-const spendCoefficient = (summary: any, feature: string) => {
+function spendCoefficient(summary: any, feature: string): number | null {
  const row = (summary?.coefficients || []).find((item: any) => item.feature === feature);
  const value = row ? Number(row.coef) : null;
  return value != null && Number.isFinite(value) ? value : null;
-};
+}
 
 const spendEquationText = (summary: any, formKey: string) => {
  const intercept = spendCoefficient(summary, 'Intercept');
@@ -3521,25 +3520,29 @@ function ForecastPage({ role }: { role: UserRole }) {
  const xs = points.map((item: any) => Number(item.spend));
  const minX = Math.min(...xs);
  const maxX = Math.max(...xs);
- // The x axis for every residual plot. One array for all four forms, because all four are
- // fitted on the same rows -- which is what lets the residual clouds be read against each
- // other point for point.
- const spendAxis: number[] = ols?.univariate_forms?.spend_values || [];
  return UNIVARIATE_FORM_LABELS
  .filter((item) => forms[item.key])
  .map((item) => {
- const residuals: number[] = forms[item.key].residuals || [];
- return {
- ...item,
- summary: forms[item.key],
- isBest: item.key === best,
- curve: spendFormCurve(forms[item.key], item.key, minX, maxX),
- // Zipped against the shared spend axis. Guarded on equal length: a mismatch would
- // silently pair each residual with the wrong day, which looks like a real pattern.
- residualPoints: residuals.length === spendAxis.length
- ? residuals.map((residual, index) => ({ spend: spendAxis[index], residual }))
- : [],
- };
+  const summary = forms[item.key];
+  return {
+   ...item,
+   summary,
+   isBest: item.key === best,
+   curve: spendFormCurve(summary, item.key, minX, maxX),
+   // Residuals must use the same date-filtered observations as the fit scatter above. The
+   // backend's residual vector covers the full model scope, so using it here left this chart
+   // unchanged when the page date range changed. Re-evaluating the returned equation for the
+   // visible points preserves the fitted model while making the diagnostic honor the filter.
+   residualPoints: points.flatMap((point: any) => {
+    const predicted = spendFormPrediction(summary, item.key, Number(point.spend));
+    return predicted == null || !Number.isFinite(predicted) ? [] : [{
+     day: point.day,
+     spend: Number(point.spend),
+     actual_leads: Number(point.actual_leads),
+     residual: Number(point.actual_leads) - predicted,
+    }];
+   }),
+  };
  });
  }, [ols, dailySpendLeadsScatter]);
 
