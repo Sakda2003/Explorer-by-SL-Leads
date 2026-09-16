@@ -2649,7 +2649,6 @@ function ForecastCsvExport({
        <div className="forecast-export-heading">
         <span className="forecast-export-kicker"><Download size={14} /> Data export</span>
         <h3 id="forecast-export-title">Export spend &amp; lead volume</h3>
-        <p>Choose the scopes and dates to include. Each row represents one day from the chart.</p>
        </div>
        <button type="button" className="forecast-export-close" onClick={closeDialog} aria-label="Close export dialog"><X size={17} /></button>
       </header>
@@ -2700,10 +2699,6 @@ function ForecastCsvExport({
          <button type="button" className="forecast-export-full-range" onClick={() => { setStartDate(minDate); setEndDate(maxDate); setDownloaded(false); }}>
           <CalendarDays size={14} /><span>Use full available range</span><small>{dateFmt(minDate)} – {dateFmt(maxDate)}</small>
          </button>
-         <div className="forecast-export-file-map">
-          <span>CSV columns</span>
-          <div><b>Date</b><b>Campaign</b>{scope === 'adset' && <b>Ad set ID</b>}<b>Amount spent</b><b>Actual leads</b></div>
-         </div>
         </section>
        </div>
       </div>

@@ -18,6 +18,9 @@ second request or introduce a second aggregation path.
 - Escape/backdrop close, restored trigger focus, background `inert` state while open, visible
   focus styles, reduced-motion handling, and token-driven light/dark themes.
 
+The dialog keeps the visible controls to scope selection, date range, export summary, and the
+download action. Column details stay in this documentation rather than being shown in the UI.
+
 The active campaign or ad set is preselected when the dialog opens. Switching between Campaigns
 and Ad sets intentionally clears the selection rather than guessing an equivalent scope.
 
