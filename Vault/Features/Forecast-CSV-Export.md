@@ -20,6 +20,9 @@ second request or introduce a second aggregation path.
 
 The dialog keeps the visible controls to scope selection, date range, export summary, and the
 download action. Column details stay in this documentation rather than being shown in the UI.
+Its visual hierarchy uses a readable 12–14px control and metadata scale, roomier list rows,
+44px-class inputs, and a fixed header/footer with a scrollable body so the workflow remains
+clear and usable on shorter viewports.
 
 The active campaign or ad set is preselected when the dialog opens. Switching between Campaigns
 and Ad sets intentionally clears the selection rather than guessing an equivalent scope.
