@@ -1,0 +1,73 @@
+.forecast-diagnostics { margin: 24px 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--text); min-width: 0; }
+.fd-heading { padding: 24px; display: flex; justify-content: space-between; align-items: start; gap: 24px; border-bottom: 1px solid var(--line); }
+.fd-eyebrow { color: var(--gold-strong); font: 11px var(--font-mono); text-transform: uppercase; letter-spacing: .1em; }
+.fd-heading h3 { margin: 8px 0; font-size: 24px; letter-spacing: -.03em; }
+.fd-heading p, .fd-help { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 6px 0 16px; }
+.fd-heading p { margin-bottom: 0; }
+.fd-scope { text-align: right; font: 12px/1.6 var(--font-mono); color: var(--text); }
+.fd-scope small { display: block; color: var(--muted); font: 13px/1.6 var(--font-body); }
+.fd-controls, .fd-correlation, .fd-regression { padding: 20px; min-width: 0; }
+.fd-controls, .fd-correlation { border-bottom: 1px solid var(--line); }
+.fd-section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.fd-section-heading h4 { margin: 0; font-size: 18px; }
+.fd-section-heading .fd-help { margin-bottom: 0; }
+.forecast-diagnostics button { min-height: 44px; cursor: pointer; color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); padding: 8px 12px; font-size: 14px; transition: background-color 150ms; }
+.forecast-diagnostics button:hover { background: var(--surface-tint); border-color: var(--gold-dim); }
+.forecast-diagnostics :is(button, input, summary, [tabindex]):focus-visible { outline: 2px solid var(--gold-strong); outline-offset: 3px; }
+.forecast-diagnostics .fd-disclosure { padding: 0; border: 0; background: transparent; display: flex; gap: 8px; align-items: center; font-weight: 700; font-size: 18px; }
+.fd-disclosure svg { transition: transform 150ms; }
+.fd-disclosure .is-closed { transform: rotate(-90deg); }
+.fd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.fd-variable-group { border: 0; padding: 0; margin: 20px 0; min-width: 0; }
+.fd-variable-group legend { color: var(--muted); font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.fd-variable-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 24px; }
+.fd-variable { display: flex; align-items: flex-start; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); cursor: pointer; min-width: 0; }
+.fd-variable input { accent-color: var(--gold); width: 18px; height: 18px; margin: 2px 0 0; flex: 0 0 18px; cursor: pointer; }
+.fd-variable-copy { display: block; min-width: 0; }
+.fd-variable-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.fd-source { display: block; font: 11px/1.6 var(--font-mono); color: var(--muted); overflow-wrap: anywhere; margin: 5px 0; }
+.fd-variable-detail { display: block; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.fd-status { display: inline-block; font: 11px/1.4 var(--font-body); padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); white-space: nowrap; }
+.fd-status.included { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.fd-status.candidate { color: var(--gold-strong); border-color: var(--line-accent); }
+.fd-status.outcome { color: var(--cyan-strong); }
+.fd-target-note { display: flex; gap: 16px; padding: 16px; border-radius: var(--r-sm); background: var(--surface-2); font-size: 13px; line-height: 1.5; }
+.fd-target-note b { white-space: nowrap; }
+.fd-target-note span { color: var(--muted); }
+.fd-message { padding: 24px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.fd-message button { display: inline-flex; align-items: center; gap: 8px; }
+.fd-view { display: flex; gap: 4px; }
+.fd-view button[aria-pressed="true"] { color: var(--gold-strong); border-color: var(--gold-dim); }
+.fd-matrix-key { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+.fd-scroll { overflow: hidden; max-width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.forecast-diagnostics table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 10px; table-layout: fixed; }
+.forecast-diagnostics th, .forecast-diagnostics td { padding: 6px 3px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); vertical-align: middle; }
+.forecast-diagnostics tr:last-child > * { border-bottom: 0; }
+.forecast-diagnostics tr > :last-child { border-right: 0; }
+.forecast-diagnostics th { font-weight: 700; text-align: left; background: var(--surface-2); }
+.forecast-diagnostics th small { display: none; }
+.fd-matrix th { overflow: visible; overflow-wrap: anywhere; word-break: normal; hyphens: auto; white-space: normal; line-height: 1.18; text-overflow: clip; }
+.fd-matrix th:first-child { width: 9.25rem; border-right: 1px solid var(--line-accent); }
+.fd-matrix th.outcome { border-top: 2px solid var(--cyan); }
+.fd-matrix th.excluded, .fd-matrix th.unavailable, .fd-matrix th.descriptive-only { color: var(--muted); }
+.fd-matrix td { height: 38px; padding: 0; text-align: center; font-family: var(--font-mono); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.fd-matrix td span { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 38px; padding: 0 1px; }
+.fd-muted-cell { color: var(--muted); }
+.fd-fit { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin: 20px 0; }
+.fd-fit dt { color: var(--muted); font-size: 12px; }
+.fd-fit dd { margin: 6px 0 0; font: 600 20px var(--font-mono); }
+.fd-coefficients { min-width: 820px; }
+.fd-coefficients td:nth-child(n+3) { font-family: var(--font-mono); white-space: nowrap; text-align: right; }
+.fd-selection { margin-top: 24px; }
+.fd-selection summary { cursor: pointer; min-height: 44px; padding: 12px 0; font-size: 14px; font-weight: 600; }
+.fd-selection summary span { color: var(--muted); font-size: 12px; margin-left: 12px; font-weight: 400; }
+.fd-selection-table { min-width: 960px; }
+.fd-selection-table td:last-child { min-width: 260px; }
+.fd-selection-table td span, .fd-selection-table td small { display: block; color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 4px; }
+.fd-selection-table td b { text-transform: capitalize; }
+@media (max-width: 1300px) { .fd-variable-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fd-fit { grid-template-columns: repeat(3, 1fr); } }
+/* The legacy page's 860px floor otherwise clips the new controls on phones.
+   Wide diagnostic tables scroll inside their own regions, not the page. */
+@media (max-width: 860px) { .page-content.forecast-v2-page { min-width: 0; } .forecast-v2-page .performance-tracking { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .fd-heading { flex-direction: column; } .fd-scope { text-align: left; } .fd-heading, .fd-controls, .fd-correlation, .fd-regression { padding: 16px; } .fd-variable-grid { grid-template-columns: 1fr; } .fd-target-note { flex-direction: column; gap: 6px; } .fd-fit { grid-template-columns: repeat(2, 1fr); } .fd-actions { gap: 4px; } .fd-actions button { font-size: 12px; } }
+@media (prefers-reduced-motion: reduce) { .forecast-diagnostics button, .fd-disclosure svg { transition: none; } }

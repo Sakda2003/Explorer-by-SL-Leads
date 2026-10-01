@@ -2,6 +2,8 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { createPortal } from 'react-dom';
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react';
 import explorerLogo from './assets/explorer-logo.png';
+import { ForecastDiagnostics } from './ForecastDiagnostics';
+import { VISA_SERVICE_CATEGORIES, VISA_SERVICES, type VisaServiceCategory } from './visaServices';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import {
  Activity,
@@ -229,6 +231,12 @@ const UPLOAD_COLUMN_WIDTHS: Record<string, number> = {
 
 const dateFmt = (value: any) => value
  ? new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value))
+ : '-';
+
+const dateTimeFmt = (value: any) => value
+ ? new Intl.DateTimeFormat('en', {
+  month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+ }).format(new Date(value))
  : '-';
 
 const compactDateRangeFmt = (start: any, end: any) => {
@@ -1421,7 +1429,24 @@ const olsPValue = (value: any) => value == null || !Number.isFinite(Number(value
 // print a 19-digit integer, so large values switch to scientific notation the way statsmodels'
 // own summary table does.
 const olsCondNo = (value: any) => value == null || !Number.isFinite(Number(value)) ? '-' : Number(value) >= 10000 ? Number(value).toExponential(2) : Number(value).toFixed(2);
-const OLS_MAIN_FEATURES = new Set(['spend', 'frequency', 'days_since_adset_started', 'ad_change_recency', 'ad_set_change_recency']);
+const OLS_MAIN_FEATURES = new Set([
+ 'spend',
+ 'frequency',
+ 'days_since_adset_started',
+ 'ad_change_recency',
+ 'ad_set_change_recency',
+ 'messaging_conversations_started',
+ 'cost_per_messaging_conversation',
+ 'reach',
+ 'impressions',
+ 'ctr_all',
+ 'cpm',
+ 'link_clicks',
+ 'clicks_all',
+ 'source_leads',
+ 'cost_per_lead',
+ 'meta_leads',
+]);
 const olsTermKind = (row: any): 'baseline' | 'main' | 'categorical' | 'other' => {
  const feature = String(row?.feature || '');
  if (feature === 'Intercept') return 'baseline';
@@ -1498,6 +1523,78 @@ function loessCurve(
 // `view` narrows which of the two fits render (Dataset shows one at a time behind a tab),
 // and `collapseTerms` truncates a long coefficient table to the top rows with a
 // "show all" expander.
+const olsDepVariableLabel = (value: any) => String(value || '').toLowerCase() === 'leads'
+ ? 'Leads (CRM outcome)'
+ : String(value ?? '-');
+
+const olsSummaryRows = (summary: any): [[string, string], [string, string] | null][] => [
+ [['Dep. Variable', olsDepVariableLabel(summary.dep_variable)], ['R-squared', olsStat(summary.r_squared, 3)]],
+ [['Model', String(summary.model ?? '-')], ['Adj. R-squared', olsStat(summary.adjusted_r_squared, 3)]],
+ [['Method', String(summary.method ?? '-')], ['F-statistic', olsStat(summary.f_statistic, 2)]],
+ [['No. Observations', fmt(summary.no_observations)], ['Prob (F-statistic)', olsPValue(summary.f_p_value)]],
+ [['Df Residuals', fmt(summary.df_residuals)], ['Log-Likelihood', olsStat(summary.log_likelihood, 2)]],
+ [['Df Model', fmt(summary.df_model)], ['AIC', olsStat(summary.aic, 1)]],
+ [['Covariance Type', String(summary.covariance_type ?? '-')], ['BIC', olsStat(summary.bic, 1)]],
+];
+
+function OlsSummaryPrintout({ summary }: { summary: any }) {
+ return (
+  <div className="model-gov-ols-printout model-gov-ols-summary-printout" aria-label="OLS model summary">
+   <div className="model-gov-ols-print-summary">
+    {olsSummaryRows(summary).map(([left, right]) => (
+     <div className="model-gov-ols-print-summary-row" key={left[0]}>
+      <span className="model-gov-ols-print-label">{left[0]}:</span>
+      <b>{left[1]}</b>
+      {right ? (
+       <>
+        <span className="model-gov-ols-print-label">{right[0]}:</span>
+        <b>{right[1]}</b>
+       </>
+      ) : (
+       <>
+        <span />
+        <span />
+       </>
+      )}
+     </div>
+    ))}
+   </div>
+  </div>
+ );
+}
+
+function OlsCoefficientTable({ rows, tableKey }: { rows: any[]; tableKey: string }) {
+ return (
+  <div className="model-gov-ols-table">
+   <div className="model-gov-ols-table-head"><span>Term</span><span className="num">Coef</span><span className="num">Std err</span><span className="num">t</span><span className="num">P&gt;|t|</span><span className="num">95% CI</span></div>
+   {rows.map((row: any) => {
+    const kind = olsTermKind(row);
+    return (
+     <div className={`model-gov-ols-table-row term-${kind}`} key={`${tableKey}-${row.feature}`}>
+      <span className="model-gov-ols-term">
+       <i>{olsTermKindLabel(kind)}</i>
+       <b>{row.term}</b>
+      </span>
+      <span className="num">{olsStat(row.coef, 4)}</span>
+      <span className="num">{olsStat(row.std_err, 4)}</span>
+      <span className="num">{olsStat(row.t, 3)}</span>
+      <span className="num">{olsPValue(row.p_value)}</span>
+      <span className="num">{olsStat(row.ci_low, 2)} to {olsStat(row.ci_high, 2)}</span>
+     </div>
+    );
+   })}
+  </div>
+ );
+}
+
+function OlsTableDetailBlock({ summary, tableKey }: { summary: any; tableKey: string }) {
+ return (
+  <div className="model-gov-ols-detail model-gov-ols-table-detail">
+   <OlsCoefficientTable rows={summary.coefficients || []} tableKey={tableKey} />
+  </div>
+ );
+}
+
 // The statsmodels-style "OLS Regression Results" printout -- summary block, full coefficient
 // table (both CI bounds as separate columns, matching statsmodels' own [0.025, 0.975] layout
 // rather than the compact "X to Y" single column the always-on coefficient table above uses),
@@ -1507,13 +1604,7 @@ function OlsDetailBlock({ summary }: { summary: any }) {
  const rule = '='.repeat(94);
  const thinRule = '-'.repeat(94);
  const summaryRows: [[string, string], [string, string] | null][] = [
-  [['Dep. Variable', String(summary.dep_variable ?? '-')], ['R-squared', olsStat(summary.r_squared, 3)]],
-  [['Model', String(summary.model ?? '-')], ['Adj. R-squared', olsStat(summary.adjusted_r_squared, 3)]],
-  [['Method', String(summary.method ?? '-')], ['F-statistic', olsStat(summary.f_statistic, 2)]],
-  [['No. Observations', fmt(summary.no_observations)], ['Prob (F-statistic)', olsPValue(summary.f_p_value)]],
-  [['Df Residuals', fmt(summary.df_residuals)], ['Log-Likelihood', olsStat(summary.log_likelihood, 2)]],
-  [['Df Model', fmt(summary.df_model)], ['AIC', olsStat(summary.aic, 1)]],
-  [['Covariance Type', String(summary.covariance_type ?? '-')], ['BIC', olsStat(summary.bic, 1)]],
+  ...olsSummaryRows(summary),
   [['RMSE', olsStat(summary.rmse, 2)], null],
  ];
  const diagnosticRows: [[string, string], [string, string]][] = [
@@ -2078,8 +2169,8 @@ function OlsFormComparison({ univariateForms }: { univariateForms: any }) {
 }
 
 function OlsResultCards(
- { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle }:
- { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string },
+ { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle, showFeatureSummary = true, showModelSummary = false, compactMultivariateDetail = 'printout' }:
+ { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string; showFeatureSummary?: boolean; showModelSummary?: boolean; compactMultivariateDetail?: 'printout' | 'table' },
 ) {
  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
@@ -2105,39 +2196,28 @@ function OlsResultCards(
      <article className="model-gov-ols-card" key={key}>
       <div className="model-gov-ols-card-head">
        <span>{label}</span>
-       {coefficients && <b>{fmt(summary.features?.length || summary.df_model)} var{Number(summary.features?.length || summary.df_model) === 1 ? '' : 's'}</b>}
+       {(coefficients || key === 'multivariate') && <b>{fmt(summary.variable_count || summary.features?.length || summary.df_model)} var{Number(summary.variable_count || summary.features?.length || summary.df_model) === 1 ? '' : 's'}</b>}
       </div>
       <div className={`model-gov-ols-fit${coefficients ? '' : ' is-only'}`}>
        {fitRows(summary).map((item) => <div key={`${key}-${item.label}`}><span>{item.label}</span><b className={item.warm ? 'warm' : ''}>{item.value}</b></div>)}
       </div>
+      {showModelSummary && <OlsSummaryPrintout summary={summary} />}
       {key === 'univariate' && <OlsFormComparison univariateForms={ols?.univariate_forms} />}
+      {showFeatureSummary && key === 'multivariate' && summary.variable_status && (() => {
+       const omitted = summary.variable_status.filter((item: any) => item.status !== 'included');
+       return <p className="model-gov-ols-features" title={omitted.map((item: any) => `${item.name}: ${item.reason}`).join('\n')}>
+        Outcome: CRM Leads. Meta Leads remains a separate predictor. All {summary.variable_count} available variables are included{omitted.length ? `; ${omitted.length} unavailable or redundant in this scope` : ''}.
+       </p>;
+      })()}
       {coefficients && (
        <>
-        <div className="model-gov-ols-table">
-         <div className="model-gov-ols-table-head"><span>Term</span><span className="num">Coef</span><span className="num">Std err</span><span className="num">t</span><span className="num">P&gt;|t|</span><span className="num">95% CI</span></div>
-         {visibleTerms.map((row: any) => {
-          const kind = olsTermKind(row);
-          return (
-          <div className={`model-gov-ols-table-row term-${kind}`} key={`${key}-${row.feature}`}>
-           <span className="model-gov-ols-term">
-            <i>{olsTermKindLabel(kind)}</i>
-            <b>{row.term}</b>
-           </span>
-           <span className="num">{olsStat(row.coef, 4)}</span>
-           <span className="num">{olsStat(row.std_err, 4)}</span>
-           <span className="num">{olsStat(row.t, 3)}</span>
-           <span className="num">{olsPValue(row.p_value)}</span>
-           <span className="num">{olsStat(row.ci_low, 2)} to {olsStat(row.ci_high, 2)}</span>
-          </div>
-          );
-         })}
-        </div>
+        <OlsCoefficientTable rows={visibleTerms} tableKey={key} />
         {collapseTerms && summary.coefficients.length > 6 && (
          <button className="dataset-link-btn" onClick={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}>
           {isCollapsed ? `Show all ${summary.coefficients.length} terms` : 'Show fewer terms'}
          </button>
         )}
-        <p className="model-gov-ols-features">{summary.features?.length ? `Variables: ${summary.features.join(', ')}` : 'No usable independent variables.'}</p>
+        {showFeatureSummary && <p className="model-gov-ols-features">{summary.features?.length ? `Variables: ${summary.features.join(', ')}` : 'No usable independent variables.'}</p>}
        </>
       )}
       {!coefficients && (
@@ -2151,7 +2231,9 @@ function OlsResultCards(
          {detailOpen[key] ? 'Hide detail' : 'Show detail'}
          <ChevronDown size={13} className={detailOpen[key] ? 'is-open' : ''} />
         </button>
-        {detailOpen[key] && <OlsDetailBlock summary={summary} />}
+        {detailOpen[key] && (key === 'multivariate' && compactMultivariateDetail === 'table'
+         ? <OlsTableDetailBlock summary={summary} tableKey={`${key}-detail`} />
+         : <OlsDetailBlock summary={summary} />)}
        </>
       )}
       {key === 'multivariate' && selectionSteps.length > 0 && (
@@ -3386,29 +3468,6 @@ function ForecastPage({ role }: { role: UserRole }) {
  : olsScope.spend_days && olsScope.spend_days < (olsScope.univariate_days_needed || 12)
  ? `Only ${plural(olsScope.spend_days, 'day')} with spend in this scope - the spend regression needs at least ${olsScope.univariate_days_needed || 12}. Pick a wider scope.`
  : 'Upload ad performance data with spend before OLS regression results are available.';
- // A multivariate card can vanish on its own while spend-only still fits, for two unrelated
- // reasons: the scope is too short for the terms it wants, or (since forward selection drives
- // this card) no declared variable beat an intercept-only model on adjusted R-squared. Those
- // read identically -- one missing card -- so the copy has to name which one happened.
- const olsMultivariateNote = !(ols?.univariate && !ols?.multivariate && olsScope.multivariate_days_needed)
- ? ''
- : olsScope.multivariate_terms_wanted
- ? `Multivariate fit needs ${olsScope.multivariate_days_needed} days for its ${olsScope.multivariate_terms_wanted} terms; this scope has ${olsDays}.`
- : 'Forward selection kept no declared variable here - none improved adjusted R-squared over predicting the average day. See the variable dictionary for the margin on each one.';
- // A phase marker needs roughly four days of x-axis to fit its label. Boundaries closer
- // than that still get their divider line, but only the first keeps the caption, so two
- // captions can never be painted over each other.
- const trackingDateIndex = new Map<string, number>(trackingTimeline.map((point: any, i: number) => [point.date, i]));
- const phaseLabelVisible = useMemo(() => {
- const out = new Set<string>();
- let lastLabelled: number | null = null;
- visibleTrackingPhases.forEach((phase: any) => {
- const at = trackingDateIndex.get(phase.active_start);
- if (at == null) return;
- if (lastLabelled == null || at - lastLabelled >= 4) { out.add(phase.phase_id); lastLabelled = at; }
- });
- return out;
- }, [visibleTrackingPhases, trackingTimeline]);
  const scenarioDaily = scenario?.daily || [];
  const scenarioByDate = useMemo(() => {
  const mapped: Record<string, any> = {};
@@ -4356,8 +4415,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  {/* Inside the chart's own bordered container, so the fit statistics read as part of the
      chart rather than a separate panel that happens to sit near it. */}
  <div className={`forecast-ols-block${olsBusy ? ' is-busy' : ''}`}>
- <OlsResultCards ols={ols} emptyCopy={olsEmptyCopy} coefficients={false} />
- {olsMultivariateNote && <p className="forecast-ols-note">{olsMultivariateNote}</p>}
+ <OlsResultCards ols={ols} emptyCopy={olsEmptyCopy} coefficients={false} compactMultivariateDetail="table" />
  </div>
  <div className="tracking-legend" aria-label="Chart legend">
  <div className="tracking-legend-keys">
@@ -4399,7 +4457,7 @@ function ForecastPage({ role }: { role: UserRole }) {
  <XAxis dataKey="date" interval="preserveStartEnd" minTickGap={35} height={42} tick={<WeekdayAxisTick />} axisLine={{ stroke: 'var(--axis-line)' }} tickLine={false} />
  <YAxis allowDecimals={false} tick={{ fontSize: 12, fontWeight: 600, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={68} />
  {showForecast && visibleTrackingPhases.map((phase: any, index: number) => (
- <ReferenceLine key={`line-${phase.phase_id}`} x={phase.active_start} stroke={index % 2 ? 'var(--series-forecast)' : 'var(--series-forecast-alt)'} strokeDasharray="3 5" label={phaseLabelVisible.has(phase.phase_id) ? { value: `PHASE ${index + 1}`, position: 'top', fill: index % 2 ? 'var(--series-forecast-strong)' : 'var(--series-forecast-alt)', fontSize: 14, fontWeight: 800 } : undefined} />
+ <ReferenceLine key={`line-${phase.phase_id}`} x={phase.active_start} stroke={index % 2 ? 'var(--series-forecast)' : 'var(--series-forecast-alt)'} strokeDasharray="3 5" />
  ))}
  <Tooltip content={<ForecastTrackingTooltip />} cursor={{ stroke: 'var(--cursor-line)', strokeWidth: 1 }} />
  <Area
@@ -5064,10 +5122,10 @@ function UploadPage({ role }: { role: UserRole }) {
  };
 
  const startImportBatch = (fileList: FileList | File[]) => {
- const files = Array.from(fileList).filter((file) => /\.(csv|xlsx)$/i.test(file.name));
+ const files = Array.from(fileList).filter((file) => /\.(csv|xlsx|xlsm)$/i.test(file.name));
  if (busy) return;
  if (!files.length) {
- setError('Choose CSV or XLSX files to import.');
+ setError('Choose CSV, XLSX or XLSM files to import.');
  return;
  }
  setBatchFiles(files);
@@ -5111,6 +5169,8 @@ function UploadPage({ role }: { role: UserRole }) {
  ].filter(Boolean).join('\n')
  : result.file_type === 'holiday_proximity'
  ? `Holiday proximity imported: ${fmt(result.imported)} calendar days stored, including ${fmt(result.holiday_count)} holidays. Forecasts have been retrained.`
+ : result.status === 'active' && result.import_id
+ ? `Dataset diagnostics version ${result.import_id} is active.`
  : 'Import complete. Forecasts have been retrained.';
 
  const previewUpload = async (file: File) => {
@@ -5159,6 +5219,7 @@ function UploadPage({ role }: { role: UserRole }) {
  const isChangeLog = preview?.file_type === 'change_log';
  const isModelDataset = preview?.file_type === 'model_dataset';
  const isHolidayProximity = preview?.file_type === 'holiday_proximity';
+ const isDiagnosticDataset = preview?.file_type === 'diagnostic_dataset';
  const changeScopes: any = preview?.by_scope || {};
  const holidayBucketCount = preview?.bucket_counts ? Object.keys(preview.bucket_counts).length : 0;
  const budgetPeriods: any[] = preview?.budget_periods || [];
@@ -5190,29 +5251,29 @@ function UploadPage({ role }: { role: UserRole }) {
  <p>Raw export in, dashboard-ready data out.</p>
  </div>
  <aside>
- <span>CSV · XLSX</span>
+ <span>CSV · XLSX · XLSM</span>
  <strong>Up to 50 MB</strong>
  </aside>
  </section>
  {!preview ? (
  <>
- <div className="upload-v2-types">Model dataset <i /> Customer traffic <i /> Meta ad performance <i /> Holiday proximity <i /> Change log</div>
+ <div className="upload-v2-types">Model dataset <i /> Dataset diagnostics <i /> Customer traffic <i /> Meta ad performance <i /> Holiday proximity <i /> Change log</div>
  <section className="upload-workspace">
  <div
  className={`upload-panel upload-panel-v2 ${dragging ? 'dragging' : ''}${busy ? ' busy' : ''}`}
  role="button"
  tabIndex={0}
- aria-label="Upload CSV or XLSX files"
+ aria-label="Upload CSV, XLSX or XLSM files"
  onClick={() => { if (!busy) input.current?.click(); }}
  onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && !busy) { event.preventDefault(); input.current?.click(); } }}
  onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
  onDragLeave={() => setDragging(false)}
  onDrop={(event) => { event.preventDefault(); setDragging(false); startImportBatch(event.dataTransfer.files); }}
  >
- <input ref={input} type="file" accept=".xlsx,.csv" multiple hidden onChange={(event) => event.target.files && startImportBatch(event.target.files)} />
+ <input ref={input} type="file" accept=".xlsx,.xlsm,.csv" multiple hidden onChange={(event) => event.target.files && startImportBatch(event.target.files)} />
  <Upload className="upload-v2-icon" aria-hidden="true" size={28} />
  <h3>{busy ? 'Cleaning your data…' : dragging ? 'Release to upload' : 'Drop your files here'}</h3>
- <p className="upload-sub">{busy ? 'This only takes a moment' : 'or click to browse — CSV or XLSX, one or many'}</p>
+ <p className="upload-sub">{busy ? 'This only takes a moment' : 'or click to browse — CSV, XLSX or XLSM, one or many'}</p>
  <button type="button" className="button primary upload-cta" disabled={busy} onClick={(event) => { event.stopPropagation(); input.current?.click(); }}>{busy ? <RefreshCw className="spin" size={16} /> : <Upload size={16} />}{busy ? 'Preparing' : 'Choose files'}</button>
  </div>
  </section>
@@ -5237,7 +5298,14 @@ function UploadPage({ role }: { role: UserRole }) {
  <b>{remainingCount ? `${fmt(remainingCount)} queued after this` : 'Last file in this batch'}</b>
  </div>
  )}
- {isModelDataset ? (
+ {isDiagnosticDataset ? (
+ <div className="mini-metrics cleaning-metrics">
+ <div><span>Source rows</span><b>{fmt(preview.source_rows)}</b></div>
+ <div className={preview.can_activate ? 'metric-ready' : 'metric-warning'}><span>Valid rows</span><b>{fmt(preview.clean_rows)}</b></div>
+ <div><span>Campaigns</span><b>{fmt(preview.campaign_count)}</b></div>
+ <div className={preview.duplicate_group_count ? 'metric-warning' : ''}><span>Duplicate groups</span><b>{fmt(preview.duplicate_group_count)}</b></div>
+ </div>
+ ) : isModelDataset ? (
  <div className="mini-metrics cleaning-metrics">
  <div><span>Source rows</span><b>{fmt(preview.source_rows)}</b></div>
  <div className="metric-ready"><span>Leads</span><b>{fmt(preview.lead_rows)}</b></div>
@@ -5269,7 +5337,13 @@ function UploadPage({ role }: { role: UserRole }) {
  </div>
  )}
  </section>
- {isModelDataset ? (
+ {isDiagnosticDataset ? (
+ <p className="upload-context-line">
+ <span><strong>{plural(preview.ad_set_count || 0, 'ad set')}</strong></span>
+ <span><strong>{fmt(preview.source_rows || 0)}</strong> full-snapshot rows</span>
+ <span className={preview.can_activate ? 'tone-good' : 'tone-warn'}>{preview.can_activate ? 'ready to activate' : 'activation blocked'}</span>
+ </p>
+ ) : isModelDataset ? (
  <p className="upload-context-line">
  <span><strong>{plural(preview.unique_ad_sets || 0, 'ad set')}</strong></span>
  <span><strong>{money(preview.total_spend)}</strong> spend across {plural(preview.ad_set_day_rows || 0, 'ad-set day')}</span>
@@ -5298,8 +5372,8 @@ function UploadPage({ role }: { role: UserRole }) {
  <span className={(preview.excluded_rows || preview.rejected_rows) ? 'tone-warn' : 'tone-good'}>{(preview.excluded_rows || preview.rejected_rows) ? `${fmt(isAdPerformance ? preview.rejected_rows || 0 : preview.excluded_rows || 0)} rows need attention` : 'nothing needs attention'}</span>
  </p>
  )}
- {(isChangeLog || isModelDataset) && (preview.warnings || []).length > 0 && (
- <section className="upload-warning"><Info size={14} /><div><b>Before you import</b><p>{(preview.warnings || []).join(' ')}</p></div></section>
+ {(isChangeLog || isModelDataset || isDiagnosticDataset) && ((preview.warnings || []).length > 0 || (preview.blocking_errors || []).length > 0) && (
+ <section className="upload-warning"><Info size={14} /><div><b>Before you import</b><p>{[...(preview.blocking_errors || []), ...(preview.warnings || [])].join(' ')}</p></div></section>
  )}
  {isAdPerformance && budgetPeriods.length > 0 && (
  <section className="table-card glass-panel budget-detected">
@@ -5326,7 +5400,7 @@ function UploadPage({ role }: { role: UserRole }) {
  </section>
  )}
  <section className="table-card glass-panel">
- <div className="card-head"><div><span>CLEAN DATA PREVIEW</span><h3>{isChangeLog ? 'First 8 change events' : isHolidayProximity ? 'First 8 holiday proximity rows' : isAdPerformance ? 'First 8 cleaned ad performance rows' : 'First 8 model-ready leads'}</h3></div><span className="schema-count">{isChangeLog ? `${(preview.sheets_read || []).length} changelog sheets read` : isModelDataset ? `${plural(preview.ad_set_day_rows || 0, 'ad-set day')} of context` : isHolidayProximity ? `${fmt(holidayBucketCount)} buckets detected` : `${preview.recognized_columns?.length || 0} source fields recognized`}</span></div>
+ <div className="card-head"><div><span>CLEAN DATA PREVIEW</span><h3>{isDiagnosticDataset ? 'First 8 diagnostic dataset rows' : isChangeLog ? 'First 8 change events' : isHolidayProximity ? 'First 8 holiday proximity rows' : isAdPerformance ? 'First 8 cleaned ad performance rows' : 'First 8 model-ready leads'}</h3></div><span className="schema-count">{isDiagnosticDataset ? `${fmt(preview.recognized_columns?.length || 0)} required fields recognized` : isChangeLog ? `${(preview.sheets_read || []).length} changelog sheets read` : isModelDataset ? `${plural(preview.ad_set_day_rows || 0, 'ad-set day')} of context` : isHolidayProximity ? `${fmt(holidayBucketCount)} buckets detected` : `${preview.recognized_columns?.length || 0} source fields recognized`}</span></div>
  <div className="table-scroll"><table><thead><tr>{preview.columns.map((column: string) => <th key={column} style={UPLOAD_COLUMN_WIDTHS[column] ? { width: UPLOAD_COLUMN_WIDTHS[column] } : undefined}>{column}</th>)}</tr></thead><tbody>{preview.rows.map((row: any, rowIndex: number) => <tr key={rowIndex}>{preview.columns.map((column: string) => {
  const variant = column === 'Created At' ? 'time' : column === 'Customer Name' ? 'name' : column === 'Status' ? 'status' : /id$/i.test(column) ? 'id' : 'default';
  const value = row[column] ?? '-';
@@ -5339,7 +5413,7 @@ function UploadPage({ role }: { role: UserRole }) {
      on the page sat below the fold on a laptop -- and the budget list's own scrollbar
      swallows the wheel, so the page looked like it had nothing more to show. The note stays
      here where its context is; the action moved to the sticky bar below. */}
- <div className="confirm-bar"><div><Info /><p><b>Ready to import {fmt(preview.clean_rows)} {isModelDataset ? 'leads with their ad set context' : isChangeLog ? 'change events' : isHolidayProximity ? 'calendar days' : isAdPerformance ? 'ad spend rows' : 'leads'}</b><span>{isModelDataset ? 'Leads and ad-set-day context land from this one file. Leads are matched by content, so re-uploading an overlapping week adds nothing twice.' : isChangeLog ? 'An ad set with confirmed events stops using detected ones entirely; ad sets you have not recorded keep the detector. Re-uploading a corrected file updates events in place.' : isHolidayProximity ? 'This replaces the forecast holiday calendar and retrains the models with the new proximity buckets.' : isAdPerformance ? 'Only rows with Amount spent (USD) are stored. Optional metrics can be blank and filled later by analytics.' : 'The raw export stays preserved. Existing lead IDs are skipped and forecasts retrain after import.'}</span></p></div></div>
+ <div className="confirm-bar"><div><Info /><p><b>{isDiagnosticDataset && !preview.can_activate ? 'Resolve the blocking source issues before activation' : `Ready to import ${fmt(preview.clean_rows)} ${isDiagnosticDataset ? 'diagnostic rows' : isModelDataset ? 'leads with their ad set context' : isChangeLog ? 'change events' : isHolidayProximity ? 'calendar days' : isAdPerformance ? 'ad spend rows' : 'leads'}`}</b><span>{isDiagnosticDataset ? 'A successful import becomes the sole source for the Dataset correlation matrix and multivariate OLS.' : isModelDataset ? 'Leads and ad-set-day context land from this one file. Leads are matched by content, so re-uploading an overlapping week adds nothing twice.' : isChangeLog ? 'An ad set with confirmed events stops using detected ones entirely; ad sets you have not recorded keep the detector. Re-uploading a corrected file updates events in place.' : isHolidayProximity ? 'This replaces the forecast holiday calendar and retrains the models with the new proximity buckets.' : isAdPerformance ? 'Only rows with Amount spent (USD) are stored. Optional metrics can be blank and filled later by analytics.' : 'The raw export stays preserved. Existing lead IDs are skipped and forecasts retrain after import.'}</span></p></div></div>
  </section>
  <div className="upload-commit-bar">
  <div className="upload-commit-facts">
@@ -5348,7 +5422,7 @@ function UploadPage({ role }: { role: UserRole }) {
  </div>
  <div className="upload-commit-actions">
  <button className="button secondary" disabled={busy} onClick={resetPreview}>{queuedCount > 1 && remainingCount ? 'Skip file' : 'Discard'}</button>
- <button className="button primary" disabled={busy} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : queuedCount > 1 ? `Import ${fmt(filesToImportCount)} files` : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isHolidayProximity ? 'Import holiday calendar' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
+ <button className="button primary" disabled={busy || (isDiagnosticDataset && !preview.can_activate)} onClick={confirmImport}>{busy ? <RefreshCw className="spin" /> : <Check />}{busy ? 'Importing' : queuedCount > 1 ? `Import ${fmt(filesToImportCount)} files` : isDiagnosticDataset ? 'Activate diagnostic dataset' : isModelDataset ? 'Import model dataset' : isChangeLog ? 'Import change log' : isHolidayProximity ? 'Import holiday calendar' : isAdPerformance ? 'Import ad spend' : 'Import clean data'}</button>
  </div>
  </div>
  </>
@@ -5653,13 +5727,15 @@ function MenuSelect({ value, options, onChange, className, menuClassName, trigge
   if (!trigger) return;
   const measure = () => {
    const rect = trigger.getBoundingClientRect();
-   const menuHeight = menuRef.current?.getBoundingClientRect().height || 220;
+   const menuRect = menuRef.current?.getBoundingClientRect();
+   const menuHeight = menuRect?.height || 220;
+   const menuWidth = menuRect?.width || Math.max(rect.width, 168);
    const roomBelow = window.innerHeight - rect.bottom - 8;
    const roomAbove = rect.top - 8;
    const openUp = menuHeight > roomBelow && roomAbove > roomBelow;
    setMenuPos({
     top: openUp ? rect.top - 6 : rect.bottom + 6,
-    left: rect.left,
+    left: Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8)),
     width: Math.max(rect.width, 168),
     openUp,
    });
@@ -6250,6 +6326,13 @@ function DatasetPage({ role }: { role: UserRole }) {
  const canWrite = role !== 'staff';
  const [correlation, setCorrelation] = useState<any>(null);
  const [ols, setOls] = useState<any>(null);
+ const [diagnosticStatus, setDiagnosticStatus] = useState<any>({ active: null, freshness: 'missing', age_days: null });
+ const [diagnosticImports, setDiagnosticImports] = useState<any[]>([]);
+ const [diagnosticScopes, setDiagnosticScopes] = useState<any>({ import_id: null, campaigns: [], ad_sets: [] });
+ const [diagnosticPreview, setDiagnosticPreview] = useState<any>(null);
+ const [diagnosticBusy, setDiagnosticBusy] = useState(false);
+ const [diagnosticError, setDiagnosticError] = useState('');
+ const diagnosticFileInput = useRef<HTMLInputElement>(null);
  const [error, setError] = useState('');
  const [diagnosticsReady, setDiagnosticsReady] = useState(false);
  const [rowsReady, setRowsReady] = useState(false);
@@ -6326,7 +6409,7 @@ function DatasetPage({ role }: { role: UserRole }) {
  // narrowed to. An ad set wins over a campaign if both happen to be set, same convention as
  // /api/ols-summary. Portfolio-wide inventory counts (above) stay unscoped by design -- see
  // Vault/Features/Dataset-Page.md.
- const [campaigns, setCampaigns] = useState<any[]>([]);
+ const campaigns: any[] = diagnosticScopes.campaigns || [];
  const [selectedCampaignId, setSelectedCampaignId] = useState('');
  const [selectedAdSetId, setSelectedAdSetId] = useState('');
  const [adSetQuery, setAdSetQuery] = useState('');
@@ -6334,11 +6417,23 @@ function DatasetPage({ role }: { role: UserRole }) {
  const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
  const campaignPickerRef = useRef<HTMLDivElement>(null);
 
+ const loadDiagnosticSource = async () => {
+  const [status, imports, scopes] = await Promise.all([
+   api('/dataset-analysis/status'),
+   api('/dataset-analysis/imports'),
+   api('/dataset-analysis/scopes'),
+  ]);
+  setDiagnosticStatus(status);
+  setDiagnosticImports(imports.imports || []);
+  setDiagnosticScopes(scopes);
+  setCampaignsReady(true);
+ };
+
  useEffect(() => {
-  api('/dashboard/insights')
-   .then((data) => setCampaigns(data.campaigns || []))
-   .catch(() => {})
-   .finally(() => setCampaignsReady(true));
+  loadDiagnosticSource().catch((err) => {
+   setCampaignsReady(true);
+   setDiagnosticError(err.message || 'Failed to load the diagnostic dataset source.');
+  });
  }, []);
 
  useEffect(() => {
@@ -6349,18 +6444,17 @@ function DatasetPage({ role }: { role: UserRole }) {
   return () => document.removeEventListener('mousedown', closeOnOutsideClick);
  }, []);
 
- const selectedCampaignName = campaigns.find((item: any) => campaignScopeValue(item) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(item), selectedCampaignId))?.campaign || '';
+ const selectedCampaignName = campaigns.find((item: any) => item.campaign_name === selectedCampaignId)?.campaign_name || '';
 
  const applyAdSetLookup = async () => {
   const term = adSetQuery.trim();
   if (!term) { setSelectedAdSetId(''); setAdSetLookupError(''); return; }
   setAdSetLookupError('');
   try {
-   const matches = await api(`/ad-sets?q=${encodeURIComponent(term)}`);
-   const exact = (matches || []).find((item: any) => String(item.utm_ad_set_id).toLowerCase() === term.toLowerCase());
+   const exact = (diagnosticScopes.ad_sets || []).find((item: any) => String(item.ad_set_id).toLowerCase() === term.toLowerCase());
    if (!exact) { setAdSetLookupError('No exact Ad Set ID was found. Check the ID and try again.'); return; }
-   setSelectedAdSetId(String(exact.utm_ad_set_id));
-   if (exact.utm_campaign_id) setSelectedCampaignId(String(exact.utm_campaign_id));
+   setSelectedAdSetId(String(exact.ad_set_id));
+   if (exact.campaign_name) setSelectedCampaignId(String(exact.campaign_name));
   } catch (err: any) {
    setAdSetLookupError(err.message || 'Ad set lookup failed.');
   }
@@ -6373,25 +6467,35 @@ function DatasetPage({ role }: { role: UserRole }) {
  const scopeParams = selectedAdSetId
   ? `ad_set_id=${encodeURIComponent(selectedAdSetId)}`
   : selectedCampaignId
-  ? `campaign_id=${encodeURIComponent(selectedCampaignId)}`
+  ? `campaign_name=${encodeURIComponent(selectedCampaignId)}`
+  : '';
+ const operationalScopeParams = selectedAdSetId
+  ? `ad_set_id=${encodeURIComponent(selectedAdSetId)}`
   : '';
 
- // Bumped by ChangeEventButton's onChange -- recording or deleting a change/start date
- // changes what the correlation matrix and OLS fit compute, but neither endpoint call
- // above is otherwise triggered by that popover's own state, so without this the page
- // keeps showing pre-edit numbers until the scope filter happens to change too.
+ // Bumped only when the active diagnostic snapshot changes. Operational edits must not
+ // refresh or alter these two analyses.
  const [dataRefreshKey, setDataRefreshKey] = useState(0);
 
- // Everything this page renders (correlation, OLS, raw rows) is computed live from the
- // recorded data, so `dataRefreshKey` alone already brings it current on save. The watcher
- // is here only to surface that the background retrain is still running -- no second refetch.
+ // The watcher remains for the operational raw-data board below. Dataset diagnostics use
+ // their own imported snapshot and never read the model-training inputs.
  const { retraining, watchRetrain } = useRetrainWatcher();
 
  useEffect(() => {
+  setDiagnosticsReady(false);
   const suffix = scopeParams ? `?${scopeParams}` : '';
-  Promise.all([api(`/dataset/correlation${suffix}`), api(`/ols-summary${suffix}`)])
-   .then(([correlationData, olsData]) => { setCorrelation(correlationData); setOls(olsData); })
-   .catch((err) => setError(err.message || 'Failed to load dataset diagnostics'))
+  Promise.all([
+   api(`/dataset-analysis/ols${suffix}`),
+   api(`/dataset-analysis/correlation${suffix}`),
+  ])
+   .then(([olsData, correlationData]) => {
+    if (olsData.import_id !== correlationData.import_id) {
+     throw new Error('Correlation and OLS returned different diagnostic dataset versions.');
+    }
+    setOls(olsData);
+    setCorrelation(correlationData);
+   })
+   .catch((err) => setError(err.message || 'Failed to load OLS diagnostics'))
    .finally(() => setDiagnosticsReady(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [scopeParams, dataRefreshKey]);
@@ -6400,7 +6504,7 @@ function DatasetPage({ role }: { role: UserRole }) {
  // Any change to this must send the pager back to page 1 -- a narrower filter should never
  // leave it stranded past the new end of the table.
  const rowsQueryKey = [
-  rowsTable, scopeParams, rowFiltersKey, rowSort?.field ?? '', rowSort?.direction ?? '', rowSearch,
+  rowsTable, operationalScopeParams, rowFiltersKey, rowSort?.field ?? '', rowSort?.direction ?? '', rowSearch,
  ].join(' ');
  const lastRowsQueryKey = useRef(rowsQueryKey);
  // Adjusted during render, not in an effect. This is React's documented "adjust state when
@@ -6425,7 +6529,7 @@ function DatasetPage({ role }: { role: UserRole }) {
 
  useEffect(() => {
   setRowsBusy(true);
-  const scoped = scopeParams ? `&${scopeParams}` : '';
+  const scoped = operationalScopeParams ? `&${operationalScopeParams}` : '';
   const filterQuery = allRowFilters.length
    ? `&filters=${encodeURIComponent(JSON.stringify(allRowFilters.map((row) => ({ field: row.field, operator: row.operator, value: row.value }))))}`
    : '';
@@ -6723,21 +6827,162 @@ function DatasetPage({ role }: { role: UserRole }) {
  const rowStart = rowsData.total ? rowsOffset + 1 : 0;
  const rowEnd = Math.min(rowsOffset + rowsData.limit, rowsData.total);
 
+ const previewDiagnosticFile = async (file: File) => {
+  setDiagnosticBusy(true);
+  setDiagnosticError('');
+  const body = new FormData();
+  body.append('file', file);
+  try {
+   const preview = await api('/dataset-analysis/preview', { method: 'POST', body });
+   setDiagnosticPreview(preview);
+  } catch (err: any) {
+   setDiagnosticPreview(null);
+   setDiagnosticError(err.message || 'The diagnostic dataset could not be previewed.');
+  } finally {
+   setDiagnosticBusy(false);
+   if (diagnosticFileInput.current) diagnosticFileInput.current.value = '';
+  }
+ };
+
+ const confirmDiagnosticImport = async () => {
+  if (!diagnosticPreview?.can_activate) return;
+  setDiagnosticBusy(true);
+  setDiagnosticError('');
+  try {
+   await api('/dataset-analysis/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: diagnosticPreview.token, file_name: diagnosticPreview.file_name }),
+   });
+   setDiagnosticPreview(null);
+   setSelectedCampaignId(''); setSelectedAdSetId(''); setAdSetQuery('');
+   await loadDiagnosticSource();
+   setDataRefreshKey((key) => key + 1);
+  } catch (err: any) {
+   setDiagnosticError(err.message || 'The diagnostic dataset could not be activated.');
+  } finally {
+   setDiagnosticBusy(false);
+  }
+ };
+
+ const reactivateDiagnosticImport = async (importId: number) => {
+  setDiagnosticBusy(true);
+  setDiagnosticError('');
+  try {
+   await api(`/dataset-analysis/imports/${importId}/activate`, { method: 'POST' });
+   setSelectedCampaignId(''); setSelectedAdSetId(''); setAdSetQuery('');
+   await loadDiagnosticSource();
+   setDataRefreshKey((key) => key + 1);
+  } catch (err: any) {
+   setDiagnosticError(err.message || 'The previous dataset version could not be activated.');
+  } finally {
+   setDiagnosticBusy(false);
+  }
+ };
+
  return (
   <div className="page-content dataset-page">
    <section className="dataset-heading">
     <div>
      <span>Dataset</span>
-     <h2>What's actually feeding the forecast</h2>
+     <h2>Correlation and regression dataset</h2>
     </div>
    </section>
 
    {error && <div className="error-banner">{error}</div>}
+   {diagnosticError && <div className="error-banner">{diagnosticError}</div>}
 
-   <section className="dataset-section">
-    {!diagnosticsReady
-     ? <SectionSkeleton variant="metrics" label="Loading model diagnostics" />
-     : <OlsResultCards ols={ols} coefficients={false} className="dataset-ols" selectionPathTitle={selectionPathTitle} emptyCopy="Upload ad performance data with spend before OLS regression results are available." />}
+   <section className={`dataset-section diagnostic-source-card freshness-${diagnosticStatus.freshness}`} aria-label="Dataset diagnostics source">
+    <div className="diagnostic-source-head">
+     <div>
+      <span>Dataset diagnostics source</span>
+      <h3>{diagnosticStatus.active?.file_name || 'No active diagnostic dataset'}</h3>
+      <p>{diagnosticStatus.active
+       ? `Version ${diagnosticStatus.active.id} · ${fmt(diagnosticStatus.active.clean_row_count)} rows · ${diagnosticStatus.active.date_min} to ${diagnosticStatus.active.date_max}`
+       : 'Import a valid full-snapshot workbook before correlation and OLS can run.'}</p>
+     </div>
+     <div className="diagnostic-source-actions">
+      {diagnosticStatus.active && (
+       <span className={`diagnostic-freshness ${diagnosticStatus.freshness}`}>
+        <Clock size={13} />{diagnosticStatus.age_days === 0
+         ? 'Refreshed today'
+         : `${fmt(diagnosticStatus.age_days)} day${diagnosticStatus.age_days === 1 ? '' : 's'} old`}
+       </span>
+      )}
+      {canWrite && (
+       <>
+        <input
+         ref={diagnosticFileInput}
+         type="file"
+         accept=".xlsx,.xlsm,.csv"
+         hidden
+         onChange={(event) => event.target.files?.[0] && void previewDiagnosticFile(event.target.files[0])}
+        />
+        <button className="button primary" disabled={diagnosticBusy} onClick={() => diagnosticFileInput.current?.click()}>
+         {diagnosticBusy ? <RefreshCw className="spin" size={15} /> : <Upload size={15} />}
+         {diagnosticBusy ? 'Checking' : 'Import snapshot'}
+        </button>
+       </>
+      )}
+     </div>
+    </div>
+    {diagnosticStatus.active && (
+     <div className="diagnostic-source-facts">
+      <span><b>Imported</b>{dateTimeFmt(diagnosticStatus.active.uploaded_at)}</span>
+      <span><b>Coverage</b>{diagnosticStatus.active.date_min} to {diagnosticStatus.active.date_max}</span>
+      <span><b>Rows</b>{fmt(diagnosticStatus.active.clean_row_count)}</span>
+      <span><b>Campaigns</b>{fmt(diagnosticStatus.active.campaign_count)}</span>
+      <span><b>Ad sets</b>{fmt(diagnosticStatus.active.ad_set_count)}</span>
+      <span><b>Validation</b>Passed · active</span>
+      <span><b>Source hash</b>{String(diagnosticStatus.active.file_sha256 || '').slice(0, 12)}</span>
+     </div>
+    )}
+    {diagnosticPreview && (
+     <div className={`diagnostic-preview${diagnosticPreview.can_activate ? ' is-ready' : ' is-blocked'}`}>
+      <div>
+       <strong>{diagnosticPreview.file_name}</strong>
+       <p>{fmt(diagnosticPreview.source_rows)} source · {fmt(diagnosticPreview.clean_rows)} valid · {fmt(diagnosticPreview.rejected_rows)} rejected · {fmt(diagnosticPreview.duplicate_group_count)} duplicate groups</p>
+       <p>{diagnosticPreview.date_min || 'No start date'} to {diagnosticPreview.date_max || 'No end date'} · {fmt(diagnosticPreview.campaign_count)} campaigns · {fmt(diagnosticPreview.ad_set_count)} ad sets</p>
+      </div>
+      {!!diagnosticPreview.blocking_errors?.length && (
+       <div className="diagnostic-preview-errors">
+        {diagnosticPreview.blocking_errors.map((message: string) => <p key={message}><AlertTriangle size={14} />{message}</p>)}
+       </div>
+      )}
+      {!!diagnosticPreview.duplicate_keys?.length && (
+       <div className="diagnostic-preview-duplicates">
+        <strong>Duplicated grain keys</strong>
+        {diagnosticPreview.duplicate_keys.slice(0, 5).map((item: any) => (
+         <p key={`${item.day}-${item.campaign_name}-${item.ad_set_id}`}>
+          {item.day} · {item.campaign_name} · {item.ad_set_id} ({item.rows} rows)
+         </p>
+        ))}
+        {diagnosticPreview.duplicate_keys.length > 5 && <small>Plus {fmt(diagnosticPreview.duplicate_keys.length - 5)} more shown in the validation report.</small>}
+       </div>
+      )}
+      <div className="diagnostic-preview-actions">
+       <button className="button ghost" onClick={() => setDiagnosticPreview(null)}>Cancel</button>
+       <button className="button primary" disabled={!diagnosticPreview.can_activate || diagnosticBusy} onClick={() => void confirmDiagnosticImport()}>
+        <Check size={15} />Confirm and activate
+       </button>
+      </div>
+     </div>
+    )}
+    {!!diagnosticImports.length && (
+     <details className="diagnostic-history">
+      <summary><History size={14} />Import history ({diagnosticImports.length})</summary>
+      <div className="diagnostic-history-list">
+       {diagnosticImports.map((item: any) => (
+        <div key={item.id}>
+         <span><b>Version {item.id}</b>{item.file_name}<small>{item.date_min} to {item.date_max} · {fmt(item.clean_row_count)} rows</small></span>
+         {item.is_active
+          ? <em>Active</em>
+          : canWrite && <button className="dataset-link-btn" disabled={diagnosticBusy} onClick={() => void reactivateDiagnosticImport(item.id)}>Reactivate</button>}
+        </div>
+       ))}
+      </div>
+     </details>
+    )}
    </section>
 
    <section className="dataset-section dataset-scope-section" aria-label="Filter by campaign or ad set">
@@ -6768,17 +7013,17 @@ function DatasetPage({ role }: { role: UserRole }) {
          <span>All campaigns</span>
         </button>
         {campaigns.map((campaign: any) => {
-         const isActive = campaignScopeValue(campaign) === selectedCampaignId || campaignScopeIncludesId(campaignScopeValue(campaign), selectedCampaignId);
+         const isActive = campaign.campaign_name === selectedCampaignId;
          return (
           <button
            type="button"
-           key={campaign.campaign_id}
+           key={campaign.campaign_name}
            role="option"
            aria-selected={isActive}
            className={`campaign-option${isActive ? ' active' : ''}`}
-           onClick={() => { setSelectedCampaignId(String(campaign.campaign_id)); setSelectedAdSetId(''); setAdSetQuery(''); setAdSetLookupError(''); setCampaignPickerOpen(false); }}
+           onClick={() => { setSelectedCampaignId(String(campaign.campaign_name)); setSelectedAdSetId(''); setAdSetQuery(''); setAdSetLookupError(''); setCampaignPickerOpen(false); }}
           >
-           <span title={campaign.campaign}>{campaign.campaign}</span>
+           <span title={campaign.campaign_name}>{campaign.campaign_name}</span>
           </button>
          );
         })}
@@ -6806,166 +7051,87 @@ function DatasetPage({ role }: { role: UserRole }) {
       </div>
       {adSetLookupError && <small className="dataset-scope-error">{adSetLookupError}</small>}
      </form>
-     {canWrite && <ChangeEventButton adSetId={selectedAdSetId} retraining={retraining} onChange={() => { setDataRefreshKey((key) => key + 1); watchRetrain(); }} />}
     </div>
    </section>
 
    <section className="dataset-section">
     <div className="dataset-section-head">
-     <div>
-      <span>Correlation</span>
-      <h3>{correlationView === 'declared' ? 'How the eight declared variables move together' : 'How the underlying feature columns move together'}</h3>
-     </div>
+     <div><span>Correlation</span><h3>Imported diagnostic dataset</h3></div>
      <div className="dataset-correlation-head-controls">
+      {correlation?.import_id && <small>Version {correlation.import_id} · {fmt(correlation.analysis_observations)} observations</small>}
       <div className="dataset-tabs">
-       <button className={correlationView === 'declared' ? 'is-active' : ''} onClick={() => setCorrelationView('declared')}>Declared</button>
-       <button className={correlationView === 'expanded' ? 'is-active' : ''} onClick={() => setCorrelationView('expanded')}>Expanded</button>
+       <button className={correlationView === 'declared' ? 'is-active' : ''} onClick={() => setCorrelationView('declared')}>Variables</button>
+       <button className={correlationView === 'expanded' ? 'is-active' : ''} onClick={() => setCorrelationView('expanded')}>Terms</button>
       </div>
-      {((correlationView === 'declared' && !!declaredCorrelation) || (correlationView === 'expanded' && !!correlation?.variables?.length)) && (
-       /* A proper colourbar rather than a two-segment strip: a continuous ramp with
-          labelled ticks at every quarter, so a cell's shade can actually be read back
-          to a number instead of only "bluer" or "redder". */
-       <div className="dataset-correlation-legend" aria-hidden="true">
-        <div className="dataset-correlation-ramp" />
-        <div className="dataset-correlation-ticks">
-         {[-1, -0.5, 0, 0.5, 1].map((tick) => (
-          <span key={tick}>{tick > 0 ? `+${tick.toFixed(2)}` : tick.toFixed(2)}</span>
-         ))}
-        </div>
-       </div>
-      )}
      </div>
     </div>
-    {!diagnosticsReady && <SectionSkeleton variant="panel" label="Loading correlation matrix" />}
-    {diagnosticsReady && correlationView === 'declared' ? (
-     !declaredCorrelation ? (
-      <div className="table-empty">Not enough data yet for a correlation matrix.</div>
-     ) : (
-      <div className="dataset-correlation-scroll">
-       <table className="dataset-correlation-table">
-        <thead>
-         <tr>
-          <th />
-          {declaredCorrelation.variables.map((v, ci: number) => (
-           // Explicit calc() width, same reasoning as the expanded matrix's own columns just
-           // below: the row-header column is a fixed 120px (see .dataset-correlation-table
-           // CSS), so each data column gets an even share of what's left, however many
-           // declared variables are actually present (up to eight with everything
-           // recorded) -- a bare 74px-per-column floor (the old default) doesn't shrink
-           // below itself, so 5 short columns left the row-header looking like it was
-           // eating the section while the other 4/5 of the table sat empty to the right.
-           <th key={v.number} className={ci === declaredHoverIdx ? 'is-hover' : ''} onMouseEnter={() => setDeclaredHoverIdx(ci)} onMouseLeave={() => setDeclaredHoverIdx(-1)} title={`#${v.number} ${v.name}`} style={{ width: `calc((100% - 120px) / ${declaredCorrelation.variables.length})`, minWidth: 0, maxWidth: 'none' }}>{DATASET_DECLARED_SHORT_LABEL[v.number] || v.name}</th>
-          ))}
-         </tr>
-        </thead>
-        <tbody>
-         {declaredCorrelation.variables.map((rowVar, ri: number) => (
-          <tr key={rowVar.number}>
-           <th className={ri === declaredHoverIdx ? 'is-hover' : ''} onMouseEnter={() => setDeclaredHoverIdx(ri)} onMouseLeave={() => setDeclaredHoverIdx(-1)} title={`#${rowVar.number} ${rowVar.name}`}>{DATASET_DECLARED_SHORT_LABEL[rowVar.number] || rowVar.name}</th>
-           {declaredCorrelation.variables.map((colVar, ci: number) => {
-            const value = declaredCorrelation.matrix[ri]?.[ci];
-            const rowLabel = DATASET_DECLARED_SHORT_LABEL[rowVar.number] || rowVar.name;
-            const colLabel = DATASET_DECLARED_SHORT_LABEL[colVar.number] || colVar.name;
-            const hasValue = typeof value === 'number' && Number.isFinite(value);
-            const title = hasValue
-             ? `${rowLabel} vs ${colLabel}: ${value.toFixed(2)}`
-             : `${rowLabel} vs ${colLabel}: undefined because one variable is constant over this window`;
-            return (
-             <td key={colVar.number} className={`${ri === declaredHoverIdx || ci === declaredHoverIdx ? 'is-hover ' : ''}${hasValue ? '' : 'is-undefined'}`} style={hasValue ? correlationCellStyle(value) : undefined} title={title}>{hasValue ? value.toFixed(2) : '-'}</td>
-            );
-           })}
-          </tr>
-         ))}
-        </tbody>
-       </table>
-      </div>
-     )
-    ) : null}
-    {diagnosticsReady && correlationView === 'declared' && !!undefinedDeclaredVariables.length && (
-     <div className="dataset-correlation-missing" aria-label="Declared variables with undefined correlations">
-      <span className="dataset-correlation-missing-head"><Info size={13} /> Undefined correlations ({undefinedDeclaredVariables.length} of the eight):</span>
-      {undefinedDeclaredVariables.map((v) => (
-       <div className="dataset-correlation-missing-row" key={v.number}>
-        <b>#{v.number} {DATASET_DECLARED_SHORT_LABEL[v.number] || v.name}</b>
-        <span>{v.detail || 'Collected, but constant over this window'}</span>
-       </div>
-      ))}
-     </div>
-    )}
-    {diagnosticsReady && correlationView === 'expanded' && (
-     !correlation?.variables?.length ? (
-      <div className="table-empty">Not enough data yet for a correlation matrix.</div>
-     ) : (
-      <div className="dataset-correlation-scroll">
-       <table className="dataset-correlation-table is-dense">
-        <thead>
-         <tr>
-          <th />
-          {correlation.variables.map((v: any, ci: number) => (
-           // Explicit calc() width, not `auto`: a CSS `transform` is paint-only and never
-           // shrinks a cell's layout box, so an "auto"-width column under table-layout:fixed
-           // sized itself off each label's un-rotated text width (e.g. "during holiday" wider
-           // than "spent") instead of dividing evenly -- the matrix kept overflowing. An
-           // explicit width computed from the live column count divides the space actually
-           // left after the fixed row-header column evenly, however many columns there are.
-           <th key={v.key} className={ci === hoverIdx ? 'is-hover' : ''} onMouseEnter={() => setHoverIdx(ci)} onMouseLeave={() => setHoverIdx(-1)} title={`${v.variable_name}: ${v.label}`} style={{ width: `calc((100% - 130px) / ${correlation.variables.length})` }}><span>{v.label}</span></th>
-          ))}
-         </tr>
-        </thead>
-        <tbody>
-         {correlation.variables.map((rowVar: any, ri: number) => (
-          <tr key={rowVar.key}>
-           <th className={ri === hoverIdx ? 'is-hover' : ''} onMouseEnter={() => setHoverIdx(ri)} onMouseLeave={() => setHoverIdx(-1)} title={`${rowVar.variable_name}: ${rowVar.label}`}>{rowVar.label}</th>
-           {correlation.variables.map((colVar: any, ci: number) => {
-            const value = correlation.matrix?.[ri]?.[ci];
-            const hasValue = typeof value === 'number' && Number.isFinite(value);
-            return (
-             <td key={colVar.key} className={`${ri === hoverIdx || ci === hoverIdx ? 'is-hover ' : ''}${hasValue ? '' : 'is-undefined'}`} style={hasValue ? correlationCellStyle(value) : undefined} title={hasValue ? `${rowVar.label} vs ${colVar.label}: ${value.toFixed(2)}` : `${rowVar.label} vs ${colVar.label}: undefined because one feature is constant or unavailable`}>{hasValue ? value.toFixed(2) : '-'}</td>
-            );
-           })}
-          </tr>
-         ))}
-        </tbody>
-       </table>
-      </div>
-     )
-    )}
-   </section>
-
-   <section className="dataset-section">
-    <div className="dataset-section-head"><div><span>Calculation</span><h3>How the correlation matrix is calculated</h3></div></div>
-    {!diagnosticsReady ? <SectionSkeleton variant="panel" label="Loading calculation details" /> : !declaredCorrelation ? (
-     <div className="table-empty">Not enough data yet to explain — no matrix above to describe.</div>
-    ) : (
-     <div className="dataset-formula-card">
-      <div className="dataset-formula">
-       <span className="dataset-formula-symbol">r</span>
-       <span className="dataset-formula-eq">=</span>
-       <span className="dataset-formula-frac">
-        <span className="dataset-formula-num">cov(x, y)</span>
-        <span className="dataset-formula-den">σx · σy</span>
-       </span>
-       <div className="dataset-formula-meta">
-        <span><b>{fmt(correlation?.sample_size || 0)}</b> days</span>
-        {correlation?.date_start && correlation?.date_end && <span>{dateFmt(correlation.date_start)} – {dateFmt(correlation.date_end)}</span>}
-        <span>{selectedAdSetId ? 'Ad set scope' : selectedCampaignId ? 'Campaign scope' : 'Portfolio scope'}</span>
-       </div>
-      </div>
-      <div className="dataset-formula-chips">
-       {declaredCorrelation.variables.map((v) => (
-        <div className="dataset-formula-chip" key={v.number} title={v.indices.map((index: number) => correlation?.variables?.[index]?.label).filter(Boolean).join(', ')}>
-         <b>{DATASET_DECLARED_SHORT_LABEL[v.number] || v.name}</b>
-         <small>{v.indices.map((index: number) => correlation?.variables?.[index]?.label).filter(Boolean).join(', ') || '—'}</small>
+    {!diagnosticsReady
+     ? <SectionSkeleton variant="table" label="Loading correlation matrix" rows={6} />
+     : !correlation?.import_id
+     ? <div className="table-empty">Import and activate a valid diagnostic dataset to calculate correlations.</div>
+     : (() => {
+       const view = correlationView === 'declared' ? declaredCorrelation : correlation;
+       const variables = view?.variables || [];
+       const matrix = view?.matrix || [];
+       const activeHover = correlationView === 'declared' ? declaredHoverIdx : hoverIdx;
+       const setActiveHover = correlationView === 'declared' ? setDeclaredHoverIdx : setHoverIdx;
+       return !variables.length ? <div className="table-empty">No variables have enough recorded variation for correlation.</div> : (
+        <div className="dataset-correlation-scroll" onMouseLeave={() => setActiveHover(-1)}>
+         <table className={`dataset-correlation-table${correlationView === 'expanded' ? ' is-dense' : ''}`}>
+          <thead><tr><th>Variable</th>{variables.map((variable: any, index: number) => (
+           <th key={`${variable.key || variable.number}-${index}`} className={activeHover === index ? 'is-hover' : ''} onMouseEnter={() => setActiveHover(index)}>
+            <span>{variable.label || variable.name || variable.variable_name}</span>
+           </th>
+          ))}</tr></thead>
+          <tbody>{variables.map((variable: any, rowIndex: number) => (
+           <tr key={`${variable.key || variable.number}-${rowIndex}`}>
+            <th className={activeHover === rowIndex ? 'is-hover' : ''} onMouseEnter={() => setActiveHover(rowIndex)}>{variable.label || variable.name || variable.variable_name}</th>
+            {(matrix[rowIndex] || []).map((value: number | null, colIndex: number) => (
+             <td
+              key={colIndex}
+              className={`${value == null ? 'is-undefined' : ''}${activeHover === rowIndex || activeHover === colIndex ? ' is-hover' : ''}`}
+              style={typeof value === 'number' ? correlationCellStyle(value) : undefined}
+              title={correlationView === 'expanded' && correlation.sample_sizes?.[rowIndex]?.[colIndex]
+               ? `n = ${correlation.sample_sizes[rowIndex][colIndex]}`
+               : undefined}
+             >{typeof value === 'number' ? value.toFixed(2) : '–'}</td>
+            ))}
+           </tr>
+          ))}</tbody>
+         </table>
         </div>
-       ))}
-      </div>
+       );
+      })()}
+    {!!undefinedDeclaredVariables.length && (
+     <div className="dataset-correlation-missing">
+      <div className="dataset-correlation-missing-head"><Info size={13} />Unavailable in this scope</div>
+      <div className="dataset-correlation-missing-row">{undefinedDeclaredVariables.map((item: any) => <span key={item.number}><b>{item.name}</b> {item.reason || item.detail}</span>)}</div>
      </div>
     )}
    </section>
 
    <section className="dataset-section">
     <div className="dataset-section-head">
-     <div><span>Raw data</span><h3>Browse the imported rows</h3></div>
+     <div><span>Regression</span><h3>Multivariate OLS</h3></div>
+     {ols?.import_id && <small>Version {ols.import_id} · {fmt(ols.analysis_observations)} complete observations</small>}
+    </div>
+    {!diagnosticsReady
+     ? <SectionSkeleton variant="metrics" label="Loading regression diagnostics" />
+     : <OlsResultCards ols={ols} view="multivariate" className="dataset-ols" selectionPathTitle={selectionPathTitle} showFeatureSummary={false} showModelSummary emptyCopy={ols?.unavailable_reason || 'Import and activate a valid diagnostic dataset before OLS results are available.'} />}
+   </section>
+
+   <ForecastDiagnostics
+    campaignId=""
+    adSetId={String(selectedAdSetId || '')}
+    startDate={rowDateRange?.from || ''}
+    endDate={rowDateRange?.to || ''}
+    refreshKey={dataRefreshKey}
+    request={api}
+   />
+
+   <section className="dataset-section">
+    <div className="dataset-section-head">
+     <div><span>Operational data</span><h3>Browse CRM and ad-performance rows</h3><p>These tables do not feed the correlation matrix or Dataset OLS above.</p></div>
      {/* Editing an ad-performance row moves a model input (spend, frequency), so the backend
          schedules a background retrain. Without this the forecast would quietly be stale for
          ~18s after an edit with nothing on screen saying so. */}
@@ -6978,12 +7144,12 @@ function DatasetPage({ role }: { role: UserRole }) {
       <button className={rowsTable === 'ad_performance_export' ? 'is-active' : ''} onClick={() => switchTable('ad_performance_export')}>Combined export</button>
      </div>
      <div className="dataset-rows-controls-right">
-      <BoardSearch value={searchDraft} onChange={setSearchDraft} />
       <PresetDateRangePicker
        value={rowDateRange}
        onApply={setRowDateRange}
        onClear={() => setRowDateRange(null)}
       />
+      <BoardSearch value={searchDraft} onChange={setSearchDraft} />
       <FilterBar
        table={rowsTable}
        filters={rowFilters}
@@ -7133,7 +7299,9 @@ function DatasetPage({ role }: { role: UserRole }) {
 // --- Follow-up -----------------------------------------------------------------------------
 // A focused CRM queue over lead_events. Follow-up metadata lives beside the imported lead,
 // while pipeline changes write the same lead_quality field that Lead Management reads.
-const FOLLOWUP_STAGES = ['Intake', 'Qualified', 'Awaiting Document and Payment'];
+const FOLLOWUP_STAGES = [
+ 'Intake', 'Qualified', 'Awaiting Document and Payment', 'Not Qualified', 'Converted',
+];
 const FOLLOWUP_DUE_VIEWS = [
  { value: '', label: 'All active' }, { value: 'overdue', label: 'Overdue' },
  { value: 'today', label: 'Due today' }, { value: 'week', label: 'Due this week' },
@@ -7141,6 +7309,7 @@ const FOLLOWUP_DUE_VIEWS = [
 ];
 const FOLLOWUP_OUTCOMES = [
  { value: 'intake', label: 'Intake' },
+ { value: 'not_qualified', label: 'Not Qualified' },
  { value: 'qualified', label: 'Qualified' },
  { value: 'awaiting_document_and_payment', label: 'Awaiting Document & Payment' },
  { value: 'lost', label: 'Lost' },
@@ -7148,6 +7317,7 @@ const FOLLOWUP_OUTCOMES = [
 ];
 const followupStageOutcome = (stage: string) => {
  if (stage === 'Intake') return 'intake';
+ if (stage === 'Not Qualified') return 'not_qualified';
  if (stage === 'Qualified') return 'qualified';
  if (stage === 'Awaiting Document' || stage === 'Awaiting Payment' || stage === 'Awaiting Document and Payment') return 'awaiting_document_and_payment';
  if (stage === 'Lost') return 'lost';
@@ -7156,7 +7326,7 @@ const followupStageOutcome = (stage: string) => {
 };
 
 const followupOutcomeStage = (outcome: string) => ({
- intake: 'Intake', qualified: 'Qualified',
+ intake: 'Intake', not_qualified: 'Not Qualified', qualified: 'Qualified',
  awaiting_document_and_payment: 'Awaiting Document and Payment',
  converted: 'Converted', lost: 'Lost',
 }[outcome] || 'Intake');
@@ -7397,25 +7567,26 @@ function FollowupInlineCell({ value, displayValue, type = 'text', options, empty
   if (event.key === 'Enter' && !options) { event.preventDefault(); void finish(); }
  };
 
+ if (options) {
+  return (
+   <MenuSelect
+    value={normalized}
+    options={options}
+    ariaLabel={ariaLabel}
+    disabled={busy}
+    className={`followup-status-select${className ? ` ${className}` : ''}`}
+    menuClassName="followup-status-menu"
+    triggerLabel={displayValue || normalized || emptyLabel}
+    onChange={(nextValue) => { setDraftValue(nextValue); void finish(nextValue); }}
+   />
+  );
+ }
+
  if (editing) {
   if (type === 'datetime-local') {
    return <FollowupDateEditor value={draftValue} ariaLabel={ariaLabel} busy={busy} className={className} onCancel={cancel} onApply={(nextValue) => { setDraftValue(nextValue); void finish(nextValue); }} />;
   }
-  return options ? (
-   <select
-    autoFocus
-    className={`followup-inline-editor${className ? ` ${className}` : ''}`}
-    aria-label={ariaLabel}
-    disabled={busy}
-    value={draftValue}
-    onBlur={() => void finish()}
-    onKeyDown={handleKeyDown}
-    onChange={(event) => { const nextValue = event.target.value; setDraftValue(nextValue); void finish(nextValue); }}
-   >
-    <option value="">{emptyLabel}</option>
-    {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-   </select>
-  ) : (
+  return (
    <input
     autoFocus
     className={`followup-inline-editor${className ? ` ${className}` : ''}`}
@@ -7435,6 +7606,257 @@ function FollowupInlineCell({ value, displayValue, type = 'text', options, empty
   <button type="button" className={`followup-inline-value${className ? ` ${className}` : ''}`} aria-label={`${ariaLabel}. Click to edit`} onClick={() => setEditing(true)}>
    <span>{displayValue || normalized || emptyLabel}</span><Pencil size={11} aria-hidden="true" />
   </button>
+ );
+}
+
+const parseSelectedServices = (value: unknown): string[] => {
+ const text = String(value || '').trim();
+ if (!text) return [];
+ try {
+  const parsed = JSON.parse(text);
+  if (Array.isArray(parsed)) return Array.from(new Set(parsed.map((item) => String(item || '').trim()).filter(Boolean)));
+ } catch {
+  // Older records stored one service as plain text; keep those values editable.
+ }
+ return [text];
+};
+
+const serializeSelectedServices = (values: string[]) => (
+ values.length ? JSON.stringify(Array.from(new Set(values))) : ''
+);
+
+const serviceCategoryFor = (service: string): VisaServiceCategory | '' => (
+ VISA_SERVICE_CATEGORIES.find((category) => VISA_SERVICES[category].includes(service)) || ''
+);
+
+function FollowupServicePicker({ value, ariaLabel, onCommit }: {
+ value: unknown;
+ ariaLabel: string;
+ onCommit: (value: string) => Promise<void>;
+}) {
+ const selected = useMemo(() => parseSelectedServices(value), [value]);
+ const [open, setOpen] = useState(false);
+ const [category, setCategory] = useState<VisaServiceCategory | ''>('');
+ const [query, setQuery] = useState('');
+ const [draft, setDraft] = useState(selected);
+ const [saving, setSaving] = useState(false);
+ const [pickerError, setPickerError] = useState('');
+ const [activeIndex, setActiveIndex] = useState(0);
+ const [panelStyle, setPanelStyle] = useState<CSSProperties>({ visibility: 'hidden' });
+ const triggerRef = useRef<HTMLButtonElement>(null);
+ const panelRef = useRef<HTMLDivElement>(null);
+ const categoryRef = useRef<HTMLSelectElement>(null);
+ const searchRef = useRef<HTMLInputElement>(null);
+ const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+ useEffect(() => { if (!open) setDraft(selected); }, [selected, open]);
+
+ const filteredServices = useMemo(() => {
+  if (!category) return [];
+  const needle = query.trim().toLocaleLowerCase();
+  const services = VISA_SERVICES[category];
+  return needle ? services.filter((service) => service.toLocaleLowerCase().includes(needle)) : [...services];
+ }, [category, query]);
+
+ const close = () => {
+  setOpen(false);
+  setQuery('');
+  setPickerError('');
+  window.setTimeout(() => triggerRef.current?.focus(), 0);
+ };
+
+ const openPicker = () => {
+  const inferredCategory = selected.map(serviceCategoryFor).find(Boolean) || '';
+  setCategory(inferredCategory);
+  setDraft(selected);
+  setQuery('');
+  setPickerError('');
+  setActiveIndex(0);
+  setPanelStyle({ visibility: 'hidden' });
+  setOpen(true);
+ };
+
+ useLayoutEffect(() => {
+  if (!open) return;
+  const reposition = () => {
+   const trigger = triggerRef.current?.getBoundingClientRect();
+   if (!trigger) return;
+   const gutter = 8;
+   const width = Math.min(390, window.innerWidth - gutter * 2);
+   const measuredHeight = panelRef.current?.getBoundingClientRect().height || 480;
+   const maxHeight = Math.max(280, Math.min(540, window.innerHeight - gutter * 2));
+   const height = Math.min(measuredHeight, maxHeight);
+   const roomBelow = window.innerHeight - trigger.bottom - gutter;
+   const roomAbove = trigger.top - gutter;
+   const openAbove = roomBelow < Math.min(height, 360) && roomAbove > roomBelow;
+   const desiredTop = openAbove ? trigger.top - height - 6 : trigger.bottom + 6;
+   setPanelStyle({
+    position: 'fixed',
+    top: Math.max(gutter, Math.min(desiredTop, window.innerHeight - height - gutter)),
+    left: Math.max(gutter, Math.min(trigger.left, window.innerWidth - width - gutter)),
+    width,
+    maxHeight,
+    visibility: 'visible',
+   });
+  };
+  reposition();
+  window.addEventListener('resize', reposition);
+  window.addEventListener('scroll', reposition, true);
+  const frame = window.requestAnimationFrame(reposition);
+  return () => {
+   window.cancelAnimationFrame(frame);
+   window.removeEventListener('resize', reposition);
+   window.removeEventListener('scroll', reposition, true);
+  };
+ }, [open, category, query, filteredServices.length]);
+
+ useEffect(() => {
+  if (!open) return;
+  const handlePointerDown = (event: PointerEvent) => {
+   const target = event.target as Node;
+   if (!triggerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
+  };
+  const handleEscape = (event: KeyboardEvent) => {
+   if (event.key === 'Escape') { event.preventDefault(); close(); }
+  };
+  document.addEventListener('pointerdown', handlePointerDown);
+  document.addEventListener('keydown', handleEscape);
+  const frame = window.requestAnimationFrame(() => (category ? searchRef.current : categoryRef.current)?.focus());
+  return () => {
+   window.cancelAnimationFrame(frame);
+   document.removeEventListener('pointerdown', handlePointerDown);
+   document.removeEventListener('keydown', handleEscape);
+  };
+ }, [open, category]);
+
+ useEffect(() => {
+  setActiveIndex(0);
+  optionRefs.current = [];
+ }, [category, query]);
+
+ const focusOption = (index: number) => {
+  if (!filteredServices.length) return;
+  const nextIndex = (index + filteredServices.length) % filteredServices.length;
+  setActiveIndex(nextIndex);
+  optionRefs.current[nextIndex]?.focus();
+ };
+
+ const saveSelection = async (next: string[]) => {
+  const previous = draft;
+  setDraft(next);
+  setSaving(true);
+  setPickerError('');
+  try {
+   await onCommit(serializeSelectedServices(next));
+  } catch (error: any) {
+   setDraft(previous);
+   setPickerError(error?.message || 'Could not save this selection.');
+  } finally {
+   setSaving(false);
+  }
+ };
+
+ const toggleService = (service: string) => {
+  if (saving) return;
+  const next = draft.includes(service) ? draft.filter((item) => item !== service) : [...draft, service];
+  void saveSelection(next);
+ };
+
+ const summary = selected.length === 0
+  ? 'Select service'
+  : selected.length === 1 ? selected[0] : `${selected.length} services selected`;
+ const fullSelection = selected.join('\n');
+
+ return (
+  <div className={`followup-service-picker${open ? ' open' : ''}`}>
+   <button
+    ref={triggerRef}
+    type="button"
+    className="followup-service-trigger"
+    aria-label={`${ariaLabel}. ${summary}`}
+    aria-haspopup="dialog"
+    aria-expanded={open}
+    title={fullSelection || 'Select an inquired service'}
+    onClick={() => open ? close() : openPicker()}
+   >
+    <span>{summary}</span><ChevronDown size={13} aria-hidden="true" />
+   </button>
+   {open && createPortal(
+    <div ref={panelRef} className="followup-service-panel" style={panelStyle} role="dialog" aria-label={ariaLabel}>
+     <header><strong>Choose items</strong><button type="button" aria-label="Close service picker" onClick={close}><X size={16} /></button></header>
+     <label className="followup-service-category">
+      <span className="sr-only">Service category</span>
+      <select
+       ref={categoryRef}
+       value={category}
+       aria-label="Service category"
+       onChange={(event) => {
+        setCategory(event.target.value as VisaServiceCategory | '');
+        setQuery('');
+        window.requestAnimationFrame(() => searchRef.current?.focus());
+       }}
+      >
+       <option value="">Select visa category</option>
+       {VISA_SERVICE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+      <ChevronDown size={15} aria-hidden="true" />
+     </label>
+     <label className={`followup-service-search${category ? '' : ' disabled'}`}>
+      <Search size={15} aria-hidden="true" />
+      <input
+       ref={searchRef}
+       value={query}
+       disabled={!category}
+       aria-label="Search services"
+       placeholder="Search by service or country code"
+       onChange={(event) => setQuery(event.target.value)}
+       onKeyDown={(event) => {
+        if (event.key === 'ArrowDown') { event.preventDefault(); focusOption(0); }
+       }}
+      />
+      {!!query && <button type="button" aria-label="Clear service search" onClick={() => { setQuery(''); searchRef.current?.focus(); }}><X size={13} /></button>}
+     </label>
+     <div className="followup-service-list-head"><span>{category ? 'All items' : 'Choose a category first'}</span>{category && <b>{filteredServices.length}</b>}</div>
+     <div className="followup-service-list" role="listbox" aria-label={category || 'Services'} aria-multiselectable="true">
+      {!category && <div className="followup-service-guidance">Select Visa - Cambodia or Visa - Foreigner to browse services.</div>}
+      {!!category && !filteredServices.length && <div className="followup-service-guidance">No services match “{query}”.</div>}
+      {filteredServices.map((service, index) => {
+       const checked = draft.includes(service);
+       return (
+        <button
+         ref={(element) => { optionRefs.current[index] = element; }}
+         key={service}
+         type="button"
+         role="option"
+         aria-selected={checked}
+         className={`followup-service-option${checked ? ' selected' : ''}${index === activeIndex ? ' active' : ''}`}
+         disabled={saving}
+         title={service}
+         onClick={() => toggleService(service)}
+         onFocus={() => setActiveIndex(index)}
+         onKeyDown={(event) => {
+          if (event.key === 'ArrowDown') { event.preventDefault(); focusOption(index + 1); }
+          if (event.key === 'ArrowUp') { event.preventDefault(); focusOption(index - 1); }
+          if (event.key === 'Home') { event.preventDefault(); focusOption(0); }
+          if (event.key === 'End') { event.preventDefault(); focusOption(filteredServices.length - 1); }
+         }}
+        >
+         <span className="followup-service-checkbox" aria-hidden="true">{checked && <Check size={13} strokeWidth={2.5} />}</span>
+         <span>{service}</span>
+        </button>
+       );
+      })}
+     </div>
+     <footer>
+      <span>{draft.length ? `${draft.length} selected` : 'No services selected'}</span>
+      <button type="button" disabled={!draft.length || saving} onClick={() => void saveSelection([])}>Clear</button>
+      <button type="button" className="primary" onClick={close}>Done</button>
+     </footer>
+     {pickerError && <p className="followup-service-error" role="alert">{pickerError}</p>}
+    </div>,
+    document.body
+   )}
+  </div>
  );
 }
 
@@ -7640,28 +8062,29 @@ function FollowupPage() {
     {error && <div className="followup-alert error" role="alert"><AlertTriangle size={15} />{error}</div>}
     <div className={`followup-table-wrap${loading ? ' is-loading' : ''}`}>
      <table className="followup-table">
-      <thead><tr>
-       <th><BoardCheckbox checked={allPageSelected} indeterminate={selected.some((id) => pageIds.includes(id)) && !allPageSelected} label="Select every lead on this page" onChange={togglePage} /></th>
-       <th>Lead name</th><th>Messenger PSID</th><th>Telegram ID</th><th>Current status</th><th>Campaign name</th><th>Last contacted</th><th>Next follow-up date</th>
-       {!compact && <th>Notes</th>}<th>Updated</th>
-      </tr></thead>
-      <tbody>
-       {groupedRows.map((group) => <Fragment key={group.label || 'all'}>
-        {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 9 : 10}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
+       <thead><tr>
+        <th><BoardCheckbox checked={allPageSelected} indeterminate={selected.some((id) => pageIds.includes(id)) && !allPageSelected} label="Select every lead on this page" onChange={togglePage} /></th>
+        <th>Lead name</th><th>Messenger PSID</th><th>Telegram ID</th><th>Current status</th><th>Campaign name</th><th>Inquired Service</th><th>Last contacted</th><th>Next follow-up date</th>
+        {!compact && <th>Notes</th>}<th>Updated</th>
+       </tr></thead>
+       <tbody>
+        {groupedRows.map((group) => <Fragment key={group.label || 'all'}>
+         {group.label && <tr className={`followup-group-row quality-${leadQualitySlug(group.label)}`}><td colSpan={compact ? 10 : 11}><ChevronDown size={15} /><strong>{group.label}</strong><span>{group.rows.length} {group.rows.length === 1 ? 'lead' : 'leads'}</span></td></tr>}
         {group.rows.map((row: any) => <tr key={row.id} className={`${isOverdue(row.next_follow_up_at) ? 'is-overdue ' : ''}${selected.includes(String(row.id)) ? 'is-selected' : ''}`}>
          <td><BoardCheckbox checked={selected.includes(String(row.id))} label={`Select ${row.customer_name || 'lead'}`} onChange={() => toggleRow(String(row.id))} /></td>
          <td><FollowupInlineCell value={row.customer_name} emptyLabel={`Lead #${row.id}`} ariaLabel="Edit lead name" onCommit={(value) => saveInline(row, { customer_name: value })} /></td>
          <td><FollowupInlineCell value={row.messenger_psid} ariaLabel="Edit Messenger PSID" onCommit={(value) => saveInline(row, { messenger_psid: value })} /></td>
          <td><FollowupInlineCell value={row.telegram_id} ariaLabel="Edit Telegram ID" onCommit={(value) => saveInline(row, { telegram_id: value })} /></td>
-         <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><FollowupInlineCell value={followupStageOutcome(row.lead_quality)} displayValue={leadQualityLabel(row.lead_quality)} options={FOLLOWUP_OUTCOMES} ariaLabel={`Edit ${row.customer_name || 'lead'} status`} className="followup-inline-status" onCommit={(value) => saveOutcome(row, value)} /></td>
-         <td className="followup-service"><FollowupInlineCell value={row.utm_campaign} ariaLabel="Edit campaign name" onCommit={(value) => saveInline(row, { utm_campaign: value })} /></td>
-         <td><FollowupInlineCell value={followupDateInput(row.last_contacted_at)} displayValue={row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'} type="datetime-local" ariaLabel="Edit last contacted date" onCommit={(value) => saveInline(row, { last_contacted_at: value }, { last_contacted_at: value })} /></td>
+          <td className={`followup-status-cell quality-${leadQualitySlug(row.lead_quality)}`}><FollowupInlineCell value={followupStageOutcome(row.lead_quality)} displayValue={leadQualityLabel(row.lead_quality)} options={FOLLOWUP_OUTCOMES} ariaLabel={`Edit ${row.customer_name || 'lead'} status`} className="followup-inline-status" onCommit={(value) => saveOutcome(row, value)} /></td>
+          <td className="followup-service"><FollowupInlineCell value={row.utm_campaign} ariaLabel="Edit campaign name" onCommit={(value) => saveInline(row, { utm_campaign: value })} /></td>
+          <td className="followup-inquired-service"><FollowupServicePicker value={row.selected_service} ariaLabel={`Choose inquired services for ${row.customer_name || 'lead'}`} onCommit={(value) => saveInline(row, { selected_service: value })} /></td>
+          <td><FollowupInlineCell value={followupDateInput(row.last_contacted_at)} displayValue={row.last_contacted_at ? dateFmt(row.last_contacted_at) : '-'} type="datetime-local" ariaLabel="Edit last contacted date" onCommit={(value) => saveInline(row, { last_contacted_at: value }, { last_contacted_at: value })} /></td>
          <td><FollowupInlineCell value={followupDateInput(row.next_follow_up_at)} displayValue={row.next_follow_up_at ? dateFmt(row.next_follow_up_at) : '-'} type="datetime-local" ariaLabel="Edit next follow-up date" className={isOverdue(row.next_follow_up_at) ? 'overdue' : ''} onCommit={(value) => saveInline(row, { next_follow_up_at: value }, { next_follow_up_at: value })} /></td>
          {!compact && <td className="followup-note"><FollowupInlineCell value={row.latest_note} emptyLabel="Add note" ariaLabel="Edit follow-up note" onCommit={(value) => saveInline(row, { latest_note: value })} /></td>}
          <td className="followup-readonly" title="Updated automatically after a saved change">{dateFmt(row.updated_at)}</td>
         </tr>)}
        </Fragment>)}
-       {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={compact ? 9 : 10}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another campaign or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
+        {!loading && !rowsData.rows.length && <tr><td className="followup-empty" colSpan={compact ? 10 : 11}><div className="followup-empty-inner"><CalendarDays size={22} /><strong>No follow-ups here</strong><span>{hasFilters || due ? 'Try another campaign or clear the filters.' : 'Qualified leads will appear here automatically.'}</span></div></td></tr>}
       </tbody>
      </table>
     </div>
@@ -8466,6 +8889,7 @@ function LeadManagementPage({ role }: { role: UserRole }) {
  const spendOutcomeSummary = {
   spend: Number(summary.matched_spend_usd || 0),
   qualified: Number(summary.qualified || 0),
+  intake: Number(summary.intake || stages.find((stage: any) => stage.quality === 'Intake')?.count || 0),
   awaiting: Number(stages.find((stage: any) => stage.quality === 'Awaiting Document and Payment')?.count || 0),
   converted: Number(summary.converted || 0),
   notQualified: Number(stages.find((stage: any) => stage.quality === 'Not Qualified')?.count || 0),
@@ -8481,6 +8905,14 @@ function LeadManagementPage({ role }: { role: UserRole }) {
    leads: spendOutcomeSummary.pendingReview,
    share: Number(stages.find((stage: any) => stage.quality === 'Pending Review')?.share || 0) * 100,
    color: 'var(--status-neutral-fill)',
+  },
+  {
+   key: 'intake',
+   quality: 'Intake',
+   label: 'Intake',
+   leads: spendOutcomeSummary.intake,
+   share: Number(stages.find((stage: any) => stage.quality === 'Intake')?.share || 0) * 100,
+   color: 'var(--status-new-fill)',
   },
   {
    key: 'qualified',

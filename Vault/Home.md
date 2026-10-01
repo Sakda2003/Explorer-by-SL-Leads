@@ -20,6 +20,7 @@ codebase.
 - [[Ad-Set-Ad-Lookup-Combine]] — one-off script merging ad-set-day performance with lead-grain Ad ID/Title lookup
 
 ## Modeling
+- [[Forecast-Variable-Controls]] — date-scoped correlation and controlled regression, separate CRM/Meta leads, optional Meta forward selection and strict missing-value aggregation
 - [[OLS-Declared-Ten-Variables]] — the multivariate OLS panel on the 10 declared variables
 - [[Univariate-Spend-Functional-Forms]] — the spend-only regression fitted four ways (linear / quadratic / log / sqrt), ranked by AIC on one shared row set; 18 of 30 ad sets get all four, the other 12 never spent
 - [[Change-History-Hand-Recording]] — the 29-ad-set manual change backfill; directional budget types, and recency becoming a 5-bucket categorical
@@ -45,6 +46,7 @@ codebase.
   password, and disabling an account now actually revokes
 - [[Access-Control]] — three auth topologies (Cloudflare Access / Tailscale Serve / Basic Auth), Docker deploy phases, hosting choice, and the Railway demo move
 - [[Dataset-Page]] — data inventory, variable dictionary, correlation matrix, and raw-row browser; portfolio-wide audit surface before trusting the forecast
+- [[Dataset-Diagnostics-Source]] — isolated, versioned full-snapshot source for Dataset correlation and multivariate OLS
 - [[Model-Performance-Removal]] — Dataset is now the sole portfolio-wide diagnostics surface
 - [[UI-Component-Inventory]] — current app pages and the pre-redesign component catalogue
 - [[Upload-Commit-Bar]] — the Upload page's import action, moved out from under the fold into a sticky bar

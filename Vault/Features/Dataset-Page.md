@@ -29,6 +29,16 @@ observations (an ad set's own history), so treat a narrow-scope correlation valu
 with the same caution as a narrow-scope OLS coefficient — it's real, computed the
 same way, just from far less data than the portfolio fit.
 
+**Diagnostics layout revised on 2026-09-18.** The newer `ForecastDiagnostics`
+panel (`GET /api/forecast/diagnostics`) renders on Dataset instead of Forecast,
+but now shows the correlation matrix only. The removed top "Model diagnostics" /
+"Variables to consider" block and its duplicate multivariate table no longer
+render. The existing `OlsResultCards` univariate + multivariate table is back at
+the top, directly under the Dataset campaign/ad-set/date scope bar and before
+the correlation matrix. That table follows campaign/ad-set scope through
+`/api/ols-summary`; the correlation matrix also uses the Dataset date window.
+Forecast keeps only its chart-level spend diagnostics.
+
 **Correlation and Correlation-expanded merged into one toggled section, 2026-08-06.**
 Was two always-visible sections stacked on the page; now one `dataset-section` with a
 `correlationView: 'declared' | 'expanded'` state and a `.dataset-tabs` pair
@@ -1074,3 +1084,64 @@ selection to "3,674 rows selected" and hid the link; Export CSV produced all 3,6
 (verified via a hooked `URL.createObjectURL`, row range Jun 6 – Aug 12) rather than the 50
 that were on screen. `tsc --noEmit` clean; backend test suite green (139 passed, 3
 pre-existing unrelated failures from a missing `jwt` module in this environment).
+
+## Meta diagnostic variables and segmented upload — 2026-09-18
+
+The top Multivariate OLS forward-selection pool and the correlation matrix now
+receive Messaging Conversation Started, Cost Per Messaging Conversation started,
+Reach, Frequency, Impressions, CTR (all), CPM, Link Clicks, Clicks (all), Leads
+(Meta export), Cost Per Lead, and Meta Leads. CRM Leads remains the outcome and is
+labelled `Leads (CRM outcome)`; `Leads` and `Meta leads` from the Meta export are
+independent stored source fields.
+
+The Upload data path accepts the supplied Age/Gender-segmented ad-performance CSV
+and rolls its partitions up to daily ad-set totals before storage. Additive source
+totals reconcile in a full-file dry run. This change is diagnostic only and does
+not add contemporaneous Meta outcomes to the production forecast.
+
+**Correlation N/A fix, 2026-09-18.** Portfolio aggregation now uses the available
+new-metric observations on each day rather than rejecting the day because another
+legacy ad-set row has NULL in that newer column. Reach is summed for diagnostic
+purposes and Frequency is recomputed from daily totals. Days with no observation
+at all remain unavailable. This restores the requested full correlation matrix
+after a mixed-history upload without changing the production forecast.
+
+## Dataset diagnostic helper text removed — 2026-09-23
+
+Removed the visible helper copy under the Dataset diagnostics on request: the
+correlation matrix no longer shows the encoded-term explainer or the -1/0/+1 legend,
+and the Dataset OLS cards no longer print the variable list or CRM/Meta Leads outcome
+note below the tables. This is presentation-only; the same variables and model metadata
+still drive the regression output.
+
+## Correlation matrix fit-to-frame — 2026-09-23
+
+The Dataset correlation matrix now uses a fixed compact layout so all columns fit in
+one visible frame instead of requiring horizontal scrolling. The grid shows full variable
+names only, with status tags such as Included/Candidate hidden from the cell labels; the
+regression variables and correlation calculations are unchanged.
+
+## Meta OLS terms labelled as main variables — 2026-09-23
+
+The OLS coefficient tables now classify the imported Meta metrics as `Main Variable`
+instead of `Other`, matching their role as primary regression variables. This includes
+Messaging Conversation Started, Cost Per Messaging Conversation started, Reach,
+Impressions, CTR (all), CPM, Link Clicks, Clicks (all), Leads (Meta export), Cost Per Lead,
+and Meta Leads.
+
+## Correlation matrix number readability — 2026-09-23
+
+Increased the Dataset correlation matrix value text from the compressed 10px treatment to
+larger, bolder 13px monospace values so the coefficients are easier to read while keeping
+the fit-to-frame matrix layout.
+
+**Alignment follow-up, 2026-09-23.** Matrix value cells now use a fixed-height, flex-centered
+numeric box with tabular figures so every coefficient sits on the same visual row baseline.
+
+## Dedicated diagnostics snapshots — 2026-10-01
+
+The correlation matrix and multivariate OLS are now isolated from the operational storage
+tables and read only from the active, versioned diagnostics snapshot. The Dataset page can
+preview, validate, activate, inspect, and roll back these imports while showing file/version
+provenance and freshness. See [[Dataset-Diagnostics-Source]] for the storage contract,
+validation grain, endpoints, and the supplied workbook's duplicate-key blocker.

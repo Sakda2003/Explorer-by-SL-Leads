@@ -1666,6 +1666,49 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(saved["activities"][0]["action"], "qualified")
         self.assertEqual(saved["activities"][0]["from_status"], "Qualified")
 
+    def test_followup_queue_only_enrolls_eligible_stages_and_retains_terminal_history(self):
+        eligible_ids = []
+        for index, quality in enumerate((
+            "Intake", "Qualified", "Awaiting Document and Payment",
+        )):
+            created = core.create_lead_event(
+                self.lead_payload(
+                    lead_quality=quality,
+                    customer_name=f"Eligible {index}",
+                    utm_ad_id=f"eligible-{index}",
+                ),
+                retrain=False,
+            )
+            eligible_ids.append(created["created"])
+
+        for index, quality in enumerate(("Not Qualified", "Converted")):
+            core.create_lead_event(
+                self.lead_payload(
+                    lead_quality=quality,
+                    customer_name=f"Direct terminal {index}",
+                    utm_ad_id=f"terminal-{index}",
+                ),
+                retrain=False,
+            )
+
+        queue = core.get_followup_leads()
+        self.assertEqual(queue["total"], 3)
+        self.assertEqual({row["id"] for row in queue["rows"]}, set(eligible_ids))
+        self.assertEqual(core.get_followup_leads(statuses=["Not Qualified"])["total"], 0)
+        self.assertEqual(core.get_followup_leads(statuses=["Converted"])["total"], 0)
+
+        core.update_lead_event(
+            eligible_ids[0], {"lead_quality": "Not Qualified"}, retrain=False,
+        )
+        core.bulk_update_lead_quality(
+            [eligible_ids[1]], "Converted", retrain=False,
+        )
+
+        not_qualified = core.get_followup_leads(statuses=["Not Qualified"])
+        converted = core.get_followup_leads(statuses=["Converted"])
+        self.assertEqual([row["id"] for row in not_qualified["rows"]], [eligible_ids[0]])
+        self.assertEqual([row["id"] for row in converted["rows"]], [eligible_ids[1]])
+
     def test_followup_inline_edits_preserve_untouched_fields(self):
         created = core.create_lead_event(
             self.lead_payload(lead_quality="Qualified", customer_name="Inline Lead"),
@@ -1722,6 +1765,29 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         self.assertEqual(cleared["lead"]["messenger_psid"], "")
         self.assertEqual(cleared["lead"]["telegram_id"], "")
 
+    def test_followup_inline_edit_persists_selected_services(self):
+        created = core.create_lead_event(
+            self.lead_payload(lead_quality="Intake", customer_name="Service Picker Lead"),
+            retrain=False,
+        )
+        selected = json.dumps([
+            "VISA-CN | TOU | SIN-V90D-30D | S | KHM",
+            "VISA-AU | TOU | BIOMETRIC FEE",
+        ])
+
+        saved = core.update_followup_inline(
+            created["created"], {"selected_service": selected}, "sales@example.com",
+        )
+
+        self.assertEqual(saved["lead"]["selected_service"], selected)
+        queue = core.get_followup_leads(search="Service Picker Lead")
+        self.assertEqual(queue["rows"][0]["selected_service"], selected)
+
+        cleared = core.update_followup_inline(
+            created["created"], {"selected_service": ""}, "sales@example.com",
+        )
+        self.assertIsNone(cleared["lead"]["selected_service"])
+
     def test_followup_queue_filters_by_campaign_name(self):
         first = core.create_lead_event(
             self.lead_payload(
@@ -1756,7 +1822,7 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
             queue["facets"]["campaigns"],
         )
 
-    def test_followup_terminal_outcomes_validate_and_leave_the_active_queue(self):
+    def test_followup_outcomes_validate_and_remain_in_the_queue(self):
         created = core.create_lead_event(
             self.lead_payload(lead_quality="Awaiting Document and Payment", customer_name="Decision Made"),
             retrain=False,
@@ -1772,12 +1838,21 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
         }, "sales@example.com")
 
         self.assertEqual(saved["lead"]["lead_quality"], "Converted")
-        self.assertEqual(core.get_followup_leads()["total"], 0)
+        self.assertEqual(core.get_followup_leads()["total"], 1)
         with core.connect() as db:
             raw = json.loads(db.execute(
                 "SELECT raw_json FROM lead_events WHERE id=?", (created["created"],),
             ).fetchone()[0])
         self.assertEqual(raw["Lead Quality"], "Converted")
+
+        not_qualified = core.update_followup_inline(created["created"], {
+            "lead_quality": "Not Qualified",
+            "follow_up_result": "not_qualified",
+        }, "sales@example.com")
+        self.assertEqual(not_qualified["lead"]["lead_quality"], "Not Qualified")
+        queue = core.get_followup_leads(statuses=["Not Qualified"])
+        self.assertEqual(queue["total"], 1)
+        self.assertEqual(queue["rows"][0]["id"], created["created"])
 
     def test_duplicate_api_scans_and_deletes_the_selected_rows(self):
         from fastapi.testclient import TestClient
@@ -1823,6 +1898,15 @@ class ManualLeadEntryTests(IsolatedDbTestCase):
             ).fetchall()]
         self.assertEqual(remaining, [{"id": oldest["created"], "customer_name": "API Keep"}])
 
+    def test_auto_retrain_can_be_disabled_for_memory_constrained_deploys(self):
+        from backend import app as app_module
+
+        with mock.patch.dict(os.environ, {"LEADLENS_AUTO_RETRAIN": "0"}):
+            with mock.patch("threading.Timer") as timer:
+                app_module._request_retrain(rebuild_aggregates_first=True)
+
+        timer.assert_not_called()
+
 
 class CurrencyParsingTests(IsolatedDbTestCase):
     """Accounting-formatted currency from exports that passed through Excel."""
@@ -1863,7 +1947,7 @@ class AdGrainRollupTests(IsolatedDbTestCase):
         rows = [
             ad_row("2026-06-01", "adA", "ad1", 1.00, leads=2, impressions=100),
             ad_row("2026-06-01", "adA", "ad2", 2.50, leads=1, impressions=250),
-            ad_row("2026-06-01", "adA", "ad3", 0.50, leads="", impressions=50),
+            ad_row("2026-06-01", "adA", "ad3", 0.50, leads=0, impressions=50),
         ]
         frame = core.read_ad_performance_tabular(ad_export_csv(rows), ".csv")
         self.assertEqual(len(frame), 1)
@@ -3006,6 +3090,240 @@ class ChangeEventEditorTests(IsolatedDbTestCase):
         # nine uncovered days are a positive "nothing changed", not a gap to fill
         self.assertEqual(coverage["covered_days"], 1)
         self.assertEqual(coverage["uncovered_days"], 9)
+
+
+class DiagnosticDatasetTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        core.DATA_DIR, core.DB_PATH = root, root / "test.db"
+        core.UPLOAD_DIR, core.PREVIEW_DIR = root / "uploads", root / "previews"
+        core.init_db()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def workbook_bytes(days=42, lead_shift=0, duplicate=False, weekday_error=False,
+                       date_mismatch=False, negative_spend=False):
+        rows = []
+        start = pd.Timestamp("2026-01-01")
+        for index in range(days):
+            day = start + pd.Timedelta(days=index)
+            spend = 8.0 + (index % 9) * 1.7
+            impressions = 800 + index * 17
+            reach = 600 + index * 11
+            conversations = 2 + index % 6
+            meta_leads = 1 + index % 5
+            link_clicks = 20 + index % 13
+            row = {
+                "Campaign name": "Leads | VISA | TEST",
+                "Ad set ID": "120236449454620078",
+                "Lead Amount": float(lead_shift + 1 + (index * 3 + index % 7) % 12),
+                "Day": day,
+                "Reach": reach,
+                "Impressions": impressions,
+                "Amount spent (USD)": -spend if negative_spend and index == 0 else spend,
+                "Frequency": impressions / reach,
+                "Ad Set Budget": 25 + index % 4,
+                "Ad Set Budget Type": "Daily",
+                "Messaging conversations started": conversations,
+                "Cost per messaging conversation started": spend / conversations,
+                "CTR (all)": link_clicks / impressions * 100,
+                "CPM (cost per 1,000 impressions)": spend / impressions * 1000,
+                "Link clicks": link_clicks,
+                "Meta Leads": meta_leads,
+                "Cost per lead": spend / meta_leads,
+                "Date": day + pd.Timedelta(days=1) if date_mismatch and index == 0 else day,
+                "Day of the week": "Monday" if weekday_error and index == 0 else day.day_name(),
+                "days_since_ad_set_started": 30 + index,
+            }
+            rows.append(row)
+        if duplicate:
+            duplicate_row = dict(rows[0])
+            duplicate_row["Amount spent (USD)"] = 99
+            rows.append(duplicate_row)
+        output = io.BytesIO()
+        pd.DataFrame(rows, columns=core.DIAGNOSTIC_DATASET_COLUMNS).to_excel(output, index=False)
+        return output.getvalue()
+
+    def import_snapshot(self, content, name="diagnostic.xlsx"):
+        preview = core.preview_diagnostic_dataset_file(content, name)
+        self.assertTrue(preview["can_activate"])
+        return core.confirm_diagnostic_dataset_preview(preview["token"], name)
+
+    @staticmethod
+    def frame_bytes(frame):
+        output = io.BytesIO()
+        frame.to_excel(output, index=False)
+        return output.getvalue()
+
+    def test_detection_precedes_generic_ad_performance_and_lead_amount_is_outcome(self):
+        content = self.workbook_bytes()
+        preview = core.preview_diagnostic_dataset_file(content, "diagnostic.xlsx")
+        self.assertEqual(preview["file_type"], core.DIAGNOSTIC_DATASET_TYPE)
+        self.assertEqual(core.detect_upload_type_from_columns(core.DIAGNOSTIC_DATASET_COLUMNS),
+                         core.DIAGNOSTIC_DATASET_TYPE)
+        imported = core.confirm_diagnostic_dataset_preview(preview["token"], "diagnostic.xlsx")
+        result = core.get_diagnostic_dataset_ols()
+        self.assertEqual(result["import_id"], imported["import_id"])
+        self.assertEqual(result["multivariate"]["dep_variable"], "Lead Amount")
+
+    def test_duplicate_grain_and_weekday_mismatch_block_activation(self):
+        duplicate = core.preview_diagnostic_dataset_file(
+            self.workbook_bytes(duplicate=True), "duplicate.xlsx"
+        )
+        self.assertEqual(duplicate["duplicate_group_count"], 1)
+        self.assertFalse(duplicate["can_activate"])
+        with self.assertRaisesRegex(ValueError, "Activation blocked"):
+            core.confirm_diagnostic_dataset_preview(duplicate["token"], "duplicate.xlsx")
+        weekday = core.preview_diagnostic_dataset_file(
+            self.workbook_bytes(weekday_error=True), "weekday.xlsx"
+        )
+        self.assertFalse(weekday["can_activate"])
+        self.assertTrue(any("weekday" in message for message in weekday["blocking_errors"]))
+        self.assertIsNone(core.get_diagnostic_dataset_status()["active"])
+
+    def test_date_mismatch_and_negative_metrics_block_activation(self):
+        date_mismatch = core.preview_diagnostic_dataset_file(
+            self.workbook_bytes(date_mismatch=True), "date-mismatch.xlsx"
+        )
+        self.assertFalse(date_mismatch["can_activate"])
+        self.assertTrue(any("Date values" in message for message in date_mismatch["blocking_errors"]))
+
+        negative = core.preview_diagnostic_dataset_file(
+            self.workbook_bytes(negative_spend=True), "negative-spend.xlsx"
+        )
+        self.assertFalse(negative["can_activate"])
+        self.assertTrue(any("negative" in message for message in negative["blocking_errors"]))
+        self.assertIsNone(core.get_diagnostic_dataset_status()["active"])
+
+    def test_failed_import_keeps_the_previous_active_version(self):
+        active = self.import_snapshot(self.workbook_bytes(), "active.xlsx")
+        invalid = core.preview_diagnostic_dataset_file(
+            self.workbook_bytes(duplicate=True), "invalid.xlsx"
+        )
+        with self.assertRaisesRegex(ValueError, "Activation blocked"):
+            core.confirm_diagnostic_dataset_preview(invalid["token"], "invalid.xlsx")
+        self.assertEqual(core.get_diagnostic_dataset_status()["active"]["id"], active["import_id"])
+
+    def test_missing_optional_values_remain_null(self):
+        frame = pd.read_excel(io.BytesIO(self.workbook_bytes()))
+        frame.loc[0, "Meta Leads"] = None
+        frame.loc[0, "Cost per lead"] = None
+        output = io.BytesIO()
+        frame.to_excel(output, index=False)
+        imported = self.import_snapshot(output.getvalue())
+        with core.connect() as db:
+            stored = db.execute(
+                "SELECT meta_leads, cost_per_lead FROM diagnostic_dataset_rows WHERE import_id=? ORDER BY source_row LIMIT 1",
+                (imported["import_id"],),
+            ).fetchone()
+        self.assertIsNone(stored["meta_leads"])
+        self.assertIsNone(stored["cost_per_lead"])
+
+    def test_version_activation_and_duplicate_hash_are_atomic(self):
+        first_content = self.workbook_bytes(lead_shift=0)
+        first = self.import_snapshot(first_content, "first.xlsx")
+        second = self.import_snapshot(self.workbook_bytes(lead_shift=5), "second.xlsx")
+        self.assertNotEqual(first["import_id"], second["import_id"])
+        self.assertEqual(core.get_diagnostic_dataset_status()["active"]["id"], second["import_id"])
+        core.activate_diagnostic_dataset_import(first["import_id"])
+        self.assertEqual(core.get_diagnostic_dataset_status()["active"]["id"], first["import_id"])
+        repeated = self.import_snapshot(first_content, "first-again.xlsx")
+        self.assertTrue(repeated["duplicate_file"])
+        self.assertEqual(repeated["import_id"], first["import_id"])
+        self.assertEqual(len(core.list_diagnostic_dataset_imports()), 2)
+
+        correlation = core.get_diagnostic_dataset_correlation()
+        ols = core.get_diagnostic_dataset_ols()
+        self.assertEqual((correlation["import_id"], ols["import_id"]),
+                         (first["import_id"], first["import_id"]))
+
+    def test_scopes_use_only_active_import_and_ad_set_takes_precedence(self):
+        frame = pd.read_excel(io.BytesIO(self.workbook_bytes()), dtype={"Ad set ID": str})
+        other = frame.copy()
+        other["Campaign name"] = "Leads | VISA | OTHER"
+        other["Ad set ID"] = "120236449454620079"
+        other["Lead Amount"] = other["Lead Amount"] + 5
+        imported = self.import_snapshot(
+            self.frame_bytes(pd.concat([frame, other], ignore_index=True)), "scopes.xlsx"
+        )
+        scopes = core.get_diagnostic_dataset_scopes()
+        self.assertEqual(scopes["import_id"], imported["import_id"])
+        self.assertEqual(len(scopes["campaigns"]), 2)
+        self.assertEqual(len(scopes["ad_sets"]), 2)
+
+        campaign = core.get_diagnostic_dataset_correlation(campaign_name="Leads | VISA | OTHER")
+        ad_set = core.get_diagnostic_dataset_ols(
+            ad_set_id="120236449454620079", campaign_name="Leads | VISA | TEST"
+        )
+        self.assertEqual(campaign["analysis_observations"], 42)
+        self.assertEqual(ad_set["analysis_observations"], 42)
+        self.assertEqual(ad_set["scope"]["level"], "ad_set")
+        self.assertEqual((campaign["import_id"], ad_set["import_id"]),
+                         (imported["import_id"], imported["import_id"]))
+
+    def test_ols_explains_constant_rank_dependent_and_insufficient_terms(self):
+        frame = pd.read_excel(io.BytesIO(self.workbook_bytes()), dtype={"Ad set ID": str})
+        frame["Reach"] = 700
+        imported = self.import_snapshot(self.frame_bytes(frame), "exclusions.xlsx")
+        result = core.get_diagnostic_dataset_ols()
+        self.assertEqual(result["import_id"], imported["import_id"])
+        exclusions = {item["key"]: item["reason"] for item in result["excluded_variables"]}
+        self.assertIn("reach", exclusions)
+        self.assertIn("No recorded variation", exclusions["reach"])
+        self.assertTrue(any(
+            key.startswith("weekday_") and "Rank-dependent" in reason
+            for key, reason in exclusions.items()
+        ))
+
+        self.import_snapshot(self.workbook_bytes(days=10, lead_shift=20), "too-small.xlsx")
+        too_small = core.get_diagnostic_dataset_ols()
+        self.assertIsNone(too_small["multivariate"])
+        self.assertIn("complete observations", too_small["unavailable_reason"])
+
+    def test_diagnostic_import_does_not_change_forecast_ols(self):
+        before = core.get_ols_model_summaries()
+        self.import_snapshot(self.workbook_bytes(), "isolated.xlsx")
+        self.assertEqual(before, core.get_ols_model_summaries())
+
+    def test_operational_tables_do_not_change_diagnostic_results(self):
+        self.import_snapshot(self.workbook_bytes())
+        before_correlation = core.get_diagnostic_dataset_correlation()
+        before_ols = core.get_diagnostic_dataset_ols()
+        now = core.utc_now()
+        with core.connect() as db:
+            db.execute(
+                """INSERT INTO lead_events(event_hash, created_at, customer_name, utm_ad_set_id, raw_json)
+                   VALUES('diagnostic-isolation','2026-01-03','Other','unrelated','{}')"""
+            )
+            db.execute(
+                """INSERT INTO raw_uploads(id,file_name,stored_path,file_sha256,file_type,uploaded_at,row_count)
+                   VALUES(900,'other.xlsx','other.xlsx','other','ad_performance',?,1)""", (now,)
+            )
+            db.execute(
+                """INSERT INTO daily_ad_performance(
+                   upload_id,day,campaign_id,campaign_name,ad_set_id,amount_spent_usd,raw_json,created_at,updated_at)
+                   VALUES(900,'2026-01-03','other','Other','unrelated',999,'{}',?,?)""", (now, now)
+            )
+        self.assertEqual(before_correlation, core.get_diagnostic_dataset_correlation())
+        self.assertEqual(before_ols, core.get_diagnostic_dataset_ols())
+
+    def test_supplied_workbook_preview_reports_duplicate_blockers(self):
+        sample = Path(__file__).resolve().parents[1] / "Dataset" / "Datsaa" / "Dataset Template" / "Full Information Dataset" / "Meta Ads Spending" / "Ad-Performance-06-06--28-09.xlsm"
+        if not sample.exists():
+            self.skipTest("The supplied diagnostic workbook is not available in this checkout.")
+        preview = core.preview_diagnostic_dataset_file(sample.read_bytes(), sample.name)
+        self.assertEqual(preview["source_rows"], 1158)
+        self.assertEqual((preview["date_min"], preview["date_max"]),
+                         ("2026-06-06", "2026-09-28"))
+        self.assertEqual(preview["campaign_count"], 11)
+        self.assertEqual(preview["ad_set_count"], 11)
+        self.assertEqual(preview["duplicate_group_count"], 39)
+        self.assertFalse(preview["can_activate"])
+        with self.assertRaisesRegex(ValueError, "39 duplicate"):
+            core.confirm_diagnostic_dataset_preview(preview["token"], sample.name)
 
 
 if __name__ == "__main__":

@@ -52,3 +52,6 @@ logs/
 # would be most of the repo's weight. Kept locally, out of the history.
 Redesign Reference/
 
+# Generated analysis exports can contain customer-level workbook data and are never runtime
+# inputs. Keep them local just like Dataset/ and data/ above.
+outputs/

@@ -68,14 +68,15 @@ lock with no benefit at demo traffic.
    curl -si https://<service>.up.railway.app/api/health | head -1
    ```
 
-   `/api/health` is exempt and must return `200`. Then check that the dashboard is not:
+   `/api/health` is exempt and must return `200`. The SPA shell at `/` is also public so the
+   login screen can load; verify a data endpoint instead:
 
    ```bash
-   curl -si https://<service>.up.railway.app/ | head -1
+   curl -si https://<service>.up.railway.app/api/dashboard/summary | head -1
    ```
 
-   Must be `401`, with a `WWW-Authenticate: Basic` header. If it returns `200`, the gate is
-   inert — stop and fix the variables before sharing the URL.
+   It must return `401`, with a `WWW-Authenticate: Basic` header. If a protected API returns
+   `200`, the gate is inert — stop and fix the variables before sharing the URL.
 
 ## Fail-closed
 

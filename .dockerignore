@@ -34,6 +34,7 @@ tests
 # layer is world-readable to anyone who can pull it. Same rule as `data/` above -- customer
 # data never gets baked in. `tmp/` is screenshots and scratch PDFs.
 output
+outputs
 tmp
 .backups
 

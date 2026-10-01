@@ -94,11 +94,32 @@ CHANGE_LOG_TYPE = "change_log"
 MODEL_DATASET_TYPE = "model_dataset"
 LEADLENS_DERIVED_TYPE = "leadlens_derived_variables"
 HOLIDAY_PROXIMITY_TYPE = "holiday_proximity"
+DIAGNOSTIC_DATASET_TYPE = "diagnostic_dataset"
+
+DIAGNOSTIC_DATASET_COLUMNS = [
+    "Campaign name", "Ad set ID", "Lead Amount", "Day", "Reach", "Impressions",
+    "Amount spent (USD)", "Frequency", "Ad Set Budget", "Ad Set Budget Type",
+    "Messaging conversations started", "Cost per messaging conversation started",
+    "CTR (all)", "CPM (cost per 1,000 impressions)", "Link clicks", "Meta Leads",
+    "Cost per lead", "Date", "Day of the week", "days_since_ad_set_started",
+]
+DIAGNOSTIC_DATASET_REQUIRED_VALUES = [
+    "Campaign name", "Ad set ID", "Lead Amount", "Day", "Date", "Day of the week",
+    "Amount spent (USD)",
+]
+DIAGNOSTIC_DATASET_NUMERIC_COLUMNS = [
+    "Lead Amount", "Reach", "Impressions", "Amount spent (USD)", "Frequency",
+    "Ad Set Budget", "Messaging conversations started",
+    "Cost per messaging conversation started", "CTR (all)",
+    "CPM (cost per 1,000 impressions)", "Link clicks", "Meta Leads", "Cost per lead",
+    "days_since_ad_set_started",
+]
 
 AD_PERFORMANCE_COLUMNS = [
     "Campaign name", "Campaign ID", "Ad set ID", "Ad ID", "Day", "Delivery status", "Delivery level",
     "Amount spent (USD)", "Messaging conversations started", "Cost per messaging conversation started",
-    "Reach", "Impressions", "Frequency", "Leads", "Cost per lead", "Link clicks",
+    "Reach", "Impressions", "Frequency", "Leads", "Cost per lead", "Meta leads", "Link clicks",
+    "Clicks (all)", "CTR (all)", "CPM (cost per 1,000 impressions)",
     "CPC (cost per link click)", "Unique link clicks", "Cost per unique link click",
     "Ad Set Budget", "Ad Set Budget Type", "Reporting starts", "Reporting ends",
 ]
@@ -106,26 +127,29 @@ AD_PERFORMANCE_REQUIRED = ["Campaign ID", "Ad set ID", "Day", "Amount spent (USD
 AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS = [
     "days_since_adset_started", "ad_set_change_recency", "ad_change_recency",
 ]
+AD_SEGMENT_COLUMNS = ["Age", "Gender"]
 AD_ID_COLUMNS = ["Campaign ID", "Ad set ID"]
 AD_TEXT_COLUMNS = ["Campaign name", "Delivery status", "Delivery level", "Ad Set Budget Type"]
 AD_DATE_COLUMNS = ["Day", "Reporting starts", "Reporting ends"]
 AD_NUMERIC_COLUMNS = [
     "Amount spent (USD)", "Messaging conversations started", "Cost per messaging conversation started",
-    "Reach", "Impressions", "Frequency", "Leads", "Cost per lead", "Link clicks",
+    "Reach", "Impressions", "Frequency", "Leads", "Cost per lead", "Meta leads", "Link clicks",
     "CPC (cost per link click)", "Unique link clicks", "Cost per unique link click",
-    "Ad Set Budget",
+    "Ad Set Budget", "Clicks (all)", "CTR (all)", "CPM (cost per 1,000 impressions)",
 ]
 # Newer Meta exports break out one row per ad. These roll up to the ad-set grain the rest of
 # the pipeline expects: additive counters sum, deduplicated counters cannot, rates are recomputed.
 AD_ADDITIVE_COLUMNS = [
-    "Amount spent (USD)", "Impressions", "Leads", "Messaging conversations started",
-    "Link clicks", "Unique link clicks",
+    "Amount spent (USD)", "Impressions", "Leads", "Meta leads", "Messaging conversations started",
+    "Link clicks", "Unique link clicks", "Clicks (all)",
 ]
 # Reach counts distinct people, so summing it across ads double-counts anyone the ads shared.
 # Frequency is impressions/reach and is meaningless once reach is unknown.
 AD_NON_ADDITIVE_COLUMNS = ["Reach", "Frequency"]
 # Derived rates, recomputed from the summed totals as (numerator column, denominator column).
 AD_DERIVED_RATE_COLUMNS = {
+    "CTR (all)": ("Clicks (all)", "Impressions"),
+    "CPM (cost per 1,000 impressions)": ("Amount spent (USD)", "Impressions"),
     "Cost per lead": ("Amount spent (USD)", "Leads"),
     "CPC (cost per link click)": ("Amount spent (USD)", "Link clicks"),
     "Cost per unique link click": ("Amount spent (USD)", "Unique link clicks"),
@@ -148,7 +172,11 @@ AD_INTERNAL_COLUMNS = {
     "Frequency": "frequency",
     "Leads": "leads",
     "Cost per lead": "cost_per_lead",
+    "Meta leads": "meta_leads",
     "Link clicks": "link_clicks",
+    "Clicks (all)": "clicks_all",
+    "CTR (all)": "ctr_all",
+    "CPM (cost per 1,000 impressions)": "cpm",
     "CPC (cost per link click)": "cpc",
     "Unique link clicks": "unique_link_clicks",
     "Cost per unique link click": "cost_per_unique_link_click",
@@ -258,7 +286,7 @@ for _alias, _canonical in {
     KNOWN_HEADERS[_header_key(_alias)] = _canonical
 AD_KNOWN_HEADERS = {
     _header_key(column): column
-    for column in AD_PERFORMANCE_COLUMNS
+    for column in [*AD_PERFORMANCE_COLUMNS, *AD_SEGMENT_COLUMNS]
 }
 # "Combined-Ad-Set-Dataset" exports (Sakda's per-ad-per-day workbook) use shorter header
 # names for the same fields as the standard Meta ads-manager export. Map those aliases onto
@@ -273,6 +301,16 @@ for _alias, _canonical in {
     "Budget": "Ad Set Budget",
 }.items():
     AD_KNOWN_HEADERS[_header_key(_alias)] = _canonical
+
+DIAGNOSTIC_DATASET_HEADERS = {
+    _header_key(column): column for column in DIAGNOSTIC_DATASET_COLUMNS
+}
+
+
+def is_diagnostic_dataset_columns(columns: Iterable[object]) -> bool:
+    """Identify the self-contained Dataset diagnostics snapshot before ad-performance."""
+    keys = {_header_key(column) for column in columns}
+    return all(key in keys for key in DIAGNOSTIC_DATASET_HEADERS)
 
 
 def utc_now() -> str:
@@ -308,6 +346,7 @@ def connect():
 def init_db() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    (UPLOAD_DIR / "diagnostic-datasets").mkdir(parents=True, exist_ok=True)
     # Clear out anything abandoned by a previous run before doing anything else.
     purge_stale_previews()
     # Pointing at a different database invalidates every cached read of the old one.
@@ -351,6 +390,7 @@ def init_db() -> None:
         );
         CREATE TABLE IF NOT EXISTS lead_followups (
           lead_id INTEGER PRIMARY KEY REFERENCES lead_events(id) ON DELETE CASCADE,
+          enrolled_at TEXT,
           next_follow_up_at TEXT,
           last_contacted_at TEXT,
           contact_method TEXT,
@@ -405,6 +445,7 @@ def init_db() -> None:
           frequency REAL,
           leads REAL,
           cost_per_lead REAL,
+          meta_leads REAL,
           link_clicks REAL,
           cpc REAL,
           unique_link_clicks REAL,
@@ -423,6 +464,62 @@ def init_db() -> None:
           ON daily_ad_performance(ad_set_id, day);
         CREATE INDEX IF NOT EXISTS ix_daily_ad_performance_campaign_day
           ON daily_ad_performance(campaign_id, day);
+        CREATE TABLE IF NOT EXISTS diagnostic_dataset_imports (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          file_name TEXT NOT NULL,
+          stored_path TEXT NOT NULL,
+          file_sha256 TEXT NOT NULL UNIQUE,
+          uploaded_at TEXT NOT NULL,
+          schema_version INTEGER NOT NULL DEFAULT 1,
+          source_row_count INTEGER NOT NULL,
+          clean_row_count INTEGER NOT NULL,
+          rejected_row_count INTEGER NOT NULL DEFAULT 0,
+          duplicate_group_count INTEGER NOT NULL DEFAULT 0,
+          date_min TEXT,
+          date_max TEXT,
+          campaign_count INTEGER NOT NULL DEFAULT 0,
+          ad_set_count INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'ready',
+          validation_json TEXT NOT NULL DEFAULT '{}',
+          activated_at TEXT,
+          is_active INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_diagnostic_dataset_one_active
+          ON diagnostic_dataset_imports(is_active) WHERE is_active=1;
+        CREATE TABLE IF NOT EXISTS diagnostic_dataset_rows (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          import_id INTEGER NOT NULL REFERENCES diagnostic_dataset_imports(id) ON DELETE CASCADE,
+          source_row INTEGER NOT NULL,
+          day TEXT NOT NULL,
+          campaign_name TEXT NOT NULL,
+          ad_set_id TEXT NOT NULL,
+          lead_amount REAL NOT NULL,
+          reach REAL,
+          impressions REAL,
+          amount_spent_usd REAL NOT NULL,
+          frequency REAL,
+          ad_set_budget REAL,
+          ad_set_budget_type TEXT,
+          messaging_conversations_started REAL,
+          cost_per_messaging_conversation_started REAL,
+          ctr_all REAL,
+          cpm REAL,
+          link_clicks REAL,
+          meta_leads REAL,
+          cost_per_lead REAL,
+          days_since_ad_set_started REAL,
+          weekday INTEGER NOT NULL,
+          raw_json TEXT NOT NULL,
+          UNIQUE(import_id, day, campaign_name, ad_set_id)
+        );
+        CREATE INDEX IF NOT EXISTS ix_diagnostic_rows_import
+          ON diagnostic_dataset_rows(import_id);
+        CREATE INDEX IF NOT EXISTS ix_diagnostic_rows_day
+          ON diagnostic_dataset_rows(day);
+        CREATE INDEX IF NOT EXISTS ix_diagnostic_rows_campaign
+          ON diagnostic_dataset_rows(campaign_name);
+        CREATE INDEX IF NOT EXISTS ix_diagnostic_rows_adset
+          ON diagnostic_dataset_rows(ad_set_id);
         -- Per-ad rows kept alongside the ad-set rollup. The rollup is still what the rest of
         -- the pipeline reads; this table exists solely so ad_added / ad_paused / ad_swapped
         -- can be derived, which is impossible once rows are collapsed onto the ad-set grain.
@@ -610,6 +707,7 @@ def init_db() -> None:
                 db.execute(f"ALTER TABLE raw_uploads ADD COLUMN {name} {definition}")
         existing_followup_columns = {row[1] for row in db.execute("PRAGMA table_info(lead_followups)")}
         for name, definition in (
+            ("enrolled_at", "TEXT"),
             ("messenger_psid", "TEXT"),
             ("telegram_id", "TEXT"),
         ):
@@ -626,6 +724,10 @@ def init_db() -> None:
         existing_ad_columns = {row[1] for row in db.execute("PRAGMA table_info(daily_ad_performance)")}
         for name, definition in (
             ("ad_set_budget", "REAL"),
+            ("clicks_all", "REAL"),
+            ("ctr_all", "REAL"),
+            ("cpm", "REAL"),
+            ("meta_leads", "REAL"),
             ("ad_set_budget_type", "TEXT"),
             ("days_since_adset_started_imported", "REAL"),
             ("ad_set_change_recency_imported", "TEXT"),
@@ -681,6 +783,20 @@ def init_db() -> None:
         ):
             if name not in existing_lead_columns:
                 db.execute(f"ALTER TABLE lead_events ADD COLUMN {name} {definition}")
+        # Older builds exposed every terminal lead in Follow-up. Preserve only terminal rows
+        # whose activity proves they previously came through an eligible Follow-up stage.
+        # Directly rated Not Qualified/Converted leads intentionally remain unenrolled.
+        db.execute(
+            """UPDATE lead_followups
+               SET enrolled_at=COALESCE(enrolled_at, updated_at)
+               WHERE enrolled_at IS NULL
+                 AND lead_id IN (
+                   SELECT DISTINCT lead_id
+                   FROM lead_followup_activity
+                   WHERE from_status IN ('Intake', 'Qualified', 'Awaiting Document and Payment')
+                     AND to_status IN ('Not Qualified', 'Converted')
+                 )"""
+        )
 
 
 def _safe_id(value: object, column: str, row_number: int) -> str:
@@ -868,7 +984,7 @@ def _historical_campaign_ad_set_options() -> dict[str, list[dict[str, object]]]:
 
 def _read_raw_frame(path_or_buffer, extension: str) -> tuple[pd.DataFrame, list[str]]:
     extension = extension.lower()
-    if extension == ".xlsx":
+    if extension in (".xlsx", ".xlsm"):
         try:
             frame = pd.read_excel(path_or_buffer, sheet_name="Corrected Traffic", dtype=str, keep_default_na=False)
         except ValueError:
@@ -879,14 +995,14 @@ def _read_raw_frame(path_or_buffer, extension: str) -> tuple[pd.DataFrame, list[
         except UnicodeDecodeError:
             frame = pd.read_csv(path_or_buffer, dtype=str, keep_default_na=False, encoding="cp1252")
     else:
-        raise ValueError("Only .xlsx and .csv files are supported.")
+        raise ValueError("Only .xlsx, .xlsm and .csv files are supported.")
 
     source_columns = [str(column).strip() for column in frame.columns]
     return frame, source_columns
 
 
 def _workbook_sheet_names(path_or_buffer, extension: str) -> list[str]:
-    if extension.lower() != ".xlsx":
+    if extension.lower() not in (".xlsx", ".xlsm"):
         return []
     try:
         # context-managed: an unclosed handle keeps the file locked on Windows, which
@@ -1587,6 +1703,8 @@ def detect_upload_type_from_columns(columns: Iterable[object]) -> str:
     # Canonicalize through KNOWN_HEADERS first so aliased headers (e.g. "Created" for
     # "Created At") count toward detection the same way they do once read_tabular renames them --
     # otherwise a file the importer can actually handle gets rejected before it gets that far.
+    if is_diagnostic_dataset_columns(columns):
+        return DIAGNOSTIC_DATASET_TYPE
     keys = {_header_key(KNOWN_HEADERS.get(_header_key(column), column)) for column in columns}
     ad_keys = {_header_key(AD_KNOWN_HEADERS.get(_header_key(column), column)) for column in columns}
     customer_score = sum(1 for column in SOURCE_REQUIRED_COLUMNS if _header_key(column) in keys)
@@ -2139,11 +2257,14 @@ def _rollup_ad_rows_to_ad_sets(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]
     report = {
         "ad_grain_input": False,
         "ad_rows_collapsed": 0,
+        "demographic_rows_collapsed": 0,
         "ad_set_day_rows": int(len(frame)),
         "negative_source_rows": 0,
         "budget_conflict_groups": 0,
     }
-    if not _is_ad_grain(frame):
+    ad_grain = _is_ad_grain(frame)
+    demographic_grain = any(column in frame.columns for column in AD_SEGMENT_COLUMNS)
+    if not ad_grain and not demographic_grain:
         return frame, report
 
     negative = pd.Series(False, index=frame.index)
@@ -2152,11 +2273,20 @@ def _rollup_ad_rows_to_ad_sets(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]
     report["negative_source_rows"] = int(negative.sum())
     working = frame.loc[~negative].copy()
 
-    grouped = working.groupby(AD_ROLLUP_KEY, dropna=False, sort=False)
+    group_keys = [*AD_ROLLUP_KEY]
+    if "_source_ad_set_key" in working.columns:
+        group_keys.append("_source_ad_set_key")
+    grouped = working.groupby(group_keys, dropna=False, sort=False)
     report["budget_conflict_groups"] = int((grouped["Ad Set Budget"].nunique(dropna=True) > 1).sum())
 
     def _sum(series: pd.Series) -> float:
-        return series.sum(min_count=1)
+        # A missing ad counter makes the rollup incomplete, not a known lower total.
+        return series.sum(min_count=len(series))
+
+    def _sum_segments(series: pd.Series) -> float:
+        # Meta's demographic breakdown renders a zero segment as blank. These rows partition
+        # the same ad-set day, so summing the observed segments reconstructs the daily total.
+        return series.fillna(0).sum()
 
     def _first_text(series: pd.Series) -> str:
         return next((str(value).strip() for value in series if str(value).strip()), "")
@@ -2165,7 +2295,8 @@ def _rollup_ad_rows_to_ad_sets(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]
         values = [str(value).strip() for value in series if str(value).strip()]
         return min(values, key=_delivery_status_rank) if values else ""
 
-    specification: dict[str, object] = {column: _sum for column in AD_ADDITIVE_COLUMNS}
+    additive_rollup = _sum_segments if demographic_grain and not ad_grain else _sum
+    specification: dict[str, object] = {column: additive_rollup for column in AD_ADDITIVE_COLUMNS}
     specification["Ad Set Budget"] = "max"
     specification["Ad Set Budget Type"] = _first_text
     specification["days_since_adset_started"] = "max"
@@ -2182,17 +2313,31 @@ def _rollup_ad_rows_to_ad_sets(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]
     # have exactly one ad per ad-set per day, in which case the "rollup" is really just a
     # pass-through and the real per-day value should survive, not get nulled needlessly.
     group_sizes = grouped.size()
-    single_ad_values = working.groupby(AD_ROLLUP_KEY, dropna=False, sort=False)[AD_NON_ADDITIVE_COLUMNS].first()
-    single_ad_values = single_ad_values.where(group_sizes.eq(1), axis=0).reset_index()
-    aggregated = aggregated.merge(single_ad_values, on=AD_ROLLUP_KEY, how="left")
+    if demographic_grain and not ad_grain:
+        # Age/gender segments partition an ad-set day's audience, so Reach is additive across
+        # those rows and Frequency must be recomputed from the rolled-up totals.
+        reach = grouped["Reach"].agg(_sum_segments).reset_index()
+        aggregated = aggregated.merge(reach, on=group_keys, how="left")
+        aggregated["Frequency"] = (
+            aggregated["Impressions"] / aggregated["Reach"].where(aggregated["Reach"].fillna(0) > 0)
+        )
+    else:
+        single_ad_values = working.groupby(group_keys, dropna=False, sort=False)[AD_NON_ADDITIVE_COLUMNS].first()
+        single_ad_values = single_ad_values.where(group_sizes.eq(1), axis=0).reset_index()
+        aggregated = aggregated.merge(single_ad_values, on=group_keys, how="left")
     for column, (numerator, denominator) in AD_DERIVED_RATE_COLUMNS.items():
         denominators = aggregated[denominator]
         aggregated[column] = (aggregated[numerator] / denominators.where(denominators.fillna(0) > 0)).astype(float)
+        if column == "CTR (all)":
+            aggregated[column] *= 100.0
+        elif column == "CPM (cost per 1,000 impressions)":
+            aggregated[column] *= 1000.0
     aggregated["Delivery level"] = "adset"
     aggregated["Ad ID"] = ""
 
-    report["ad_grain_input"] = True
-    report["ad_rows_collapsed"] = int(len(working) - len(aggregated))
+    report["ad_grain_input"] = ad_grain
+    report["ad_rows_collapsed"] = int(len(working) - len(aggregated)) if ad_grain else 0
+    report["demographic_rows_collapsed"] = int(len(working) - len(aggregated)) if demographic_grain else 0
     report["ad_set_day_rows"] = int(len(aggregated))
     return aggregated.loc[:, [
         *AD_PERFORMANCE_COLUMNS, "_source_row", *AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS,
@@ -2226,6 +2371,7 @@ def read_ad_performance_tabular(path_or_buffer, extension: str) -> pd.DataFrame:
     source_rows = len(frame)
     frame["_source_row"] = range(2, source_rows + 2)
     frame = frame.dropna(how="all").copy()
+    frame["_source_ad_set_key"] = frame.get("Ad set ID", pd.Series("", index=frame.index)).fillna("").astype(str).str.strip()
     for column in AD_PERFORMANCE_COLUMNS:
         if column not in frame.columns:
             frame[column] = np.nan if column in [*AD_NUMERIC_COLUMNS, *AD_DATE_COLUMNS] else ""
@@ -2371,6 +2517,280 @@ def _backfill_imported_ad_performance_derived_values(db: sqlite3.Connection) -> 
     return updated
 
 
+def read_diagnostic_dataset(path_or_buffer, extension: str) -> pd.DataFrame:
+    """Read one self-contained Dataset diagnostics snapshot without consulting storage."""
+    extension = extension.lower()
+    if extension in (".xlsx", ".xlsm"):
+        frame = pd.read_excel(path_or_buffer, sheet_name=0, dtype=str, keep_default_na=False)
+    elif extension == ".csv":
+        try:
+            frame = pd.read_csv(path_or_buffer, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            frame = pd.read_csv(path_or_buffer, dtype=str, keep_default_na=False, encoding="cp1252")
+    else:
+        raise ValueError("Diagnostic datasets must be .xlsx, .xlsm or .csv files.")
+
+    source_columns = [str(column).strip() for column in frame.columns]
+    renamed = {
+        column: DIAGNOSTIC_DATASET_HEADERS[_header_key(column)]
+        for column in frame.columns
+        if _header_key(column) in DIAGNOSTIC_DATASET_HEADERS
+    }
+    frame = frame.rename(columns=renamed)
+    frame.columns = [str(column).strip() for column in frame.columns]
+    missing_columns = [column for column in DIAGNOSTIC_DATASET_COLUMNS if column not in frame.columns]
+    if missing_columns:
+        raise ValueError("Missing required diagnostic dataset columns: " + ", ".join(missing_columns))
+    if len(set(frame.columns)) != len(frame.columns):
+        raise ValueError("The diagnostic dataset contains duplicate columns after header normalization.")
+
+    source_rows = len(frame)
+    frame = frame.loc[:, DIAGNOSTIC_DATASET_COLUMNS].copy()
+    frame["_source_row"] = range(2, source_rows + 2)
+    frame = frame.dropna(how="all", subset=DIAGNOSTIC_DATASET_COLUMNS).copy()
+    for column in ("Campaign name", "Ad Set Budget Type", "Day of the week"):
+        frame[column] = frame[column].fillna("").astype(str).map(
+            lambda value: re.sub(r"\s+", " ", value.strip())
+        )
+    frame["Ad set ID"] = [
+        _safe_id(value, "Ad set ID", int(row_number))
+        for value, row_number in zip(frame["Ad set ID"], frame["_source_row"])
+    ]
+    for column in DIAGNOSTIC_DATASET_NUMERIC_COLUMNS:
+        frame[column] = frame[column].map(_safe_number).astype(float)
+    frame["Day"] = pd.to_datetime(frame["Day"], format="mixed", errors="coerce").dt.normalize()
+    frame["Date"] = pd.to_datetime(frame["Date"], format="mixed", errors="coerce").dt.normalize()
+
+    missing_required = (
+        frame["Campaign name"].eq("")
+        | frame["Ad set ID"].eq("")
+        | frame["Day"].isna()
+        | frame["Date"].isna()
+        | frame["Day of the week"].eq("")
+        | frame["Lead Amount"].isna()
+        | frame["Amount spent (USD)"].isna()
+    )
+    date_mismatch = frame["Day"].notna() & frame["Date"].notna() & frame["Day"].ne(frame["Date"])
+    expected_weekday = frame["Day"].dt.day_name().fillna("")
+    weekday_mismatch = (
+        frame["Day"].notna()
+        & frame["Day of the week"].ne("")
+        & frame["Day of the week"].str.casefold().ne(expected_weekday.str.casefold())
+    )
+    negative_metric = pd.Series(False, index=frame.index)
+    for column in DIAGNOSTIC_DATASET_NUMERIC_COLUMNS:
+        negative_metric |= frame[column].lt(0).fillna(False)
+    invalid = missing_required | date_mismatch | weekday_mismatch | negative_metric
+    cleaned = frame.loc[~invalid].copy().reset_index(drop=True)
+    cleaned["_weekday"] = cleaned["Day"].dt.weekday.astype(int)
+
+    grain = ["Day", "Campaign name", "Ad set ID"]
+    duplicate_sizes = cleaned.groupby(grain, dropna=False).size()
+    duplicate_sizes = duplicate_sizes[duplicate_sizes > 1]
+    duplicate_keys = [
+        {
+            "day": pd.Timestamp(key[0]).date().isoformat(),
+            "campaign_name": str(key[1]),
+            "ad_set_id": str(key[2]),
+            "rows": int(count),
+        }
+        for key, count in duplicate_sizes.head(100).items()
+    ]
+    missing_values = {
+        column: int(cleaned[column].isna().sum())
+        for column in DIAGNOSTIC_DATASET_NUMERIC_COLUMNS
+        if int(cleaned[column].isna().sum())
+    }
+    blocking_errors: list[str] = []
+    if int(missing_required.sum()):
+        blocking_errors.append(f"{int(missing_required.sum())} rows are missing a required identity, date, outcome, or spend value.")
+    if int(date_mismatch.sum()):
+        blocking_errors.append(f"{int(date_mismatch.sum())} rows have Date values that do not match Day.")
+    if int(weekday_mismatch.sum()):
+        blocking_errors.append(f"{int(weekday_mismatch.sum())} rows have weekday labels that do not match Day.")
+    if int(negative_metric.sum()):
+        blocking_errors.append(f"{int(negative_metric.sum())} rows contain a negative metric.")
+    if len(duplicate_sizes):
+        blocking_errors.append(
+            f"{len(duplicate_sizes)} duplicate day, campaign, and ad-set groups must be resolved in the source. "
+            "Provide one row per grain or include the missing partition field; Reach and Frequency cannot be combined safely."
+        )
+
+    dates = cleaned["Day"].dropna()
+    report = {
+        "source_rows": int(source_rows),
+        "clean_rows": int(len(cleaned)),
+        "rejected_rows": int(invalid.sum()),
+        "duplicate_group_count": int(len(duplicate_sizes)),
+        "duplicate_keys": duplicate_keys,
+        "date_min": dates.min().date().isoformat() if len(dates) else None,
+        "date_max": dates.max().date().isoformat() if len(dates) else None,
+        "campaign_count": int(cleaned["Campaign name"].nunique()),
+        "ad_set_count": int(cleaned["Ad set ID"].nunique()),
+        "missing_values": missing_values,
+        "blocking_errors": blocking_errors,
+        "warnings": [],
+        "source_columns": source_columns,
+        "recognized_columns": DIAGNOSTIC_DATASET_COLUMNS,
+    }
+    cleaned.attrs["cleaning_report"] = report
+    return cleaned
+
+
+def _diagnostic_preview_payload(frame: pd.DataFrame, token: str, filename: str) -> dict:
+    report = frame.attrs["cleaning_report"]
+    preview_columns = [
+        "Campaign name", "Ad set ID", "Lead Amount", "Day", "Amount spent (USD)",
+        "Reach", "Impressions", "Frequency", "Meta Leads",
+    ]
+    rows = frame.loc[:, preview_columns].head(8).copy()
+    rows["Day"] = rows["Day"].map(lambda value: value.date().isoformat() if pd.notna(value) else None)
+    rows = rows.astype(object).where(pd.notna(rows), None)
+    return {
+        "token": token,
+        "file_name": filename,
+        "file_type": DIAGNOSTIC_DATASET_TYPE,
+        "file_type_label": "Dataset diagnostics",
+        "schema_version": 1,
+        "source_rows": report["source_rows"],
+        "clean_rows": report["clean_rows"],
+        "rejected_rows": report["rejected_rows"],
+        "duplicate_group_count": report["duplicate_group_count"],
+        "duplicate_keys": report["duplicate_keys"],
+        "date_min": report["date_min"],
+        "date_max": report["date_max"],
+        "campaign_count": report["campaign_count"],
+        "ad_set_count": report["ad_set_count"],
+        "missing_values": report["missing_values"],
+        "blocking_errors": report["blocking_errors"],
+        "warnings": report["warnings"],
+        "can_activate": not report["blocking_errors"],
+        "columns": preview_columns,
+        "rows": rows.to_dict(orient="records"),
+    }
+
+
+def preview_diagnostic_dataset_file(content: bytes, filename: str) -> dict:
+    extension = Path(filename).suffix.lower()
+    if extension not in (".xlsx", ".xlsm", ".csv"):
+        raise ValueError("Upload an XLSX, XLSM or CSV diagnostic dataset.")
+    token = uuid.uuid4().hex
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    purge_stale_previews()
+    target = PREVIEW_DIR / f"{token}{extension}"
+    target.write_bytes(content)
+    try:
+        frame = read_diagnostic_dataset(target, extension)
+        return _diagnostic_preview_payload(frame, token, filename)
+    except Exception:
+        _discard_preview(target)
+        raise
+
+
+def _activate_diagnostic_import(db: sqlite3.Connection, import_id: int, now: str) -> None:
+    row = db.execute(
+        "SELECT id, status FROM diagnostic_dataset_imports WHERE id=?", (int(import_id),)
+    ).fetchone()
+    if not row:
+        raise ValueError("Diagnostic dataset import not found.")
+    if row["status"] not in ("ready", "active", "superseded"):
+        raise ValueError("Only a valid diagnostic dataset import can be activated.")
+    db.execute(
+        "UPDATE diagnostic_dataset_imports SET is_active=0, status='superseded' WHERE is_active=1 AND id<>?",
+        (int(import_id),),
+    )
+    db.execute(
+        "UPDATE diagnostic_dataset_imports SET is_active=1, status='active', activated_at=? WHERE id=?",
+        (now, int(import_id)),
+    )
+
+
+def _diagnostic_row_values(import_id: int, row: pd.Series) -> tuple:
+    raw = {
+        column: _json_ready(row.get(column)) for column in DIAGNOSTIC_DATASET_COLUMNS
+    }
+    return (
+        import_id, int(row["_source_row"]), row["Day"].date().isoformat(),
+        str(row["Campaign name"]), str(row["Ad set ID"]), _float_ready(row["Lead Amount"]),
+        _float_ready(row["Reach"]), _float_ready(row["Impressions"]),
+        _float_ready(row["Amount spent (USD)"]), _float_ready(row["Frequency"]),
+        _float_ready(row["Ad Set Budget"]), str(row["Ad Set Budget Type"] or "").strip() or None,
+        _float_ready(row["Messaging conversations started"]),
+        _float_ready(row["Cost per messaging conversation started"]),
+        _float_ready(row["CTR (all)"]), _float_ready(row["CPM (cost per 1,000 impressions)"]),
+        _float_ready(row["Link clicks"]), _float_ready(row["Meta Leads"]),
+        _float_ready(row["Cost per lead"]), _float_ready(row["days_since_ad_set_started"]),
+        int(row["_weekday"]), json.dumps(raw, ensure_ascii=False),
+    )
+
+
+def confirm_diagnostic_dataset_preview(token: str, filename: str | None = None) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{32}", token or ""):
+        raise ValueError("Preview token is invalid or has expired.")
+    matches = list(PREVIEW_DIR.glob(f"{token}.*"))
+    if not matches:
+        raise ValueError("Preview token is invalid or has expired.")
+    preview_path = matches[0]
+    moved_path: Path | None = None
+    try:
+        frame = read_diagnostic_dataset(preview_path, preview_path.suffix)
+        report = frame.attrs["cleaning_report"]
+        if report["blocking_errors"]:
+            raise ValueError("Activation blocked: " + " ".join(report["blocking_errors"]))
+        file_hash = hashlib.sha256(preview_path.read_bytes()).hexdigest()
+        now = utc_now()
+        with connect() as db:
+            existing = db.execute(
+                "SELECT id FROM diagnostic_dataset_imports WHERE file_sha256=?", (file_hash,)
+            ).fetchone()
+            if existing:
+                _activate_diagnostic_import(db, int(existing["id"]), now)
+                return {"import_id": int(existing["id"]), "status": "active", "duplicate_file": True}
+
+            diagnostic_upload_dir = UPLOAD_DIR / "diagnostic-datasets"
+            diagnostic_upload_dir.mkdir(parents=True, exist_ok=True)
+            stored_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}{preview_path.suffix}"
+            moved_path = diagnostic_upload_dir / stored_name
+            shutil.move(str(preview_path), moved_path)
+            db.execute(
+                "UPDATE diagnostic_dataset_imports SET is_active=0, status='superseded' WHERE is_active=1"
+            )
+            cursor = db.execute(
+                """INSERT INTO diagnostic_dataset_imports(
+                   file_name, stored_path, file_sha256, uploaded_at, schema_version,
+                   source_row_count, clean_row_count, rejected_row_count, duplicate_group_count,
+                   date_min, date_max, campaign_count, ad_set_count, status, validation_json,
+                   activated_at, is_active)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,1)""",
+                (
+                    filename or moved_path.name, str(moved_path), file_hash, now, 1,
+                    report["source_rows"], report["clean_rows"], report["rejected_rows"],
+                    report["duplicate_group_count"], report["date_min"], report["date_max"],
+                    report["campaign_count"], report["ad_set_count"],
+                    json.dumps(report, ensure_ascii=False), now,
+                ),
+            )
+            import_id = int(cursor.lastrowid)
+            db.executemany(
+                """INSERT INTO diagnostic_dataset_rows(
+                   import_id, source_row, day, campaign_name, ad_set_id, lead_amount,
+                   reach, impressions, amount_spent_usd, frequency, ad_set_budget,
+                   ad_set_budget_type, messaging_conversations_started,
+                   cost_per_messaging_conversation_started, ctr_all, cpm, link_clicks,
+                   meta_leads, cost_per_lead, days_since_ad_set_started, weekday, raw_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [_diagnostic_row_values(import_id, row) for _, row in frame.iterrows()],
+            )
+        return {"import_id": import_id, "status": "active", "duplicate_file": False,
+                "rows": int(len(frame)), "date_min": report["date_min"], "date_max": report["date_max"]}
+    except Exception:
+        if moved_path is not None and moved_path.exists():
+            moved_path.unlink(missing_ok=True)
+        raise
+    finally:
+        _discard_preview(preview_path)
+
+
 def preview_file(content: bytes, filename: str) -> dict:
     extension = Path(filename).suffix.lower()
     if extension not in ALLOWED_UPLOAD_SUFFIXES:
@@ -2394,6 +2814,9 @@ def preview_file(content: bytes, filename: str) -> dict:
             return _preview_change_log(target, token, filename)
         _, source_columns = _read_raw_frame(target, extension)
         file_type = detect_upload_type_from_columns(source_columns)
+        if file_type == DIAGNOSTIC_DATASET_TYPE:
+            frame = read_diagnostic_dataset(target, extension)
+            return _diagnostic_preview_payload(frame, token, filename)
         if file_type == HOLIDAY_PROXIMITY_TYPE:
             return _preview_holiday_proximity(target, token, filename)
         if file_type == AD_PERFORMANCE_TYPE:
@@ -3272,7 +3695,7 @@ def _write_ad_performance(
     inserted = 0
     updated = 0
     for _, row in frame.iterrows():
-        values = {target: row[source] for source, target in AD_INTERNAL_COLUMNS.items()}
+        values = {target: row.get(source, np.nan) for source, target in AD_INTERNAL_COLUMNS.items()}
         day = _date_ready(values["day"])
         campaign_id = str(values["campaign_id"]).strip()
         ad_set_id = str(values["ad_set_id"]).strip()
@@ -3280,7 +3703,7 @@ def _write_ad_performance(
             "SELECT 1 FROM daily_ad_performance WHERE day=? AND campaign_id=? AND ad_set_id=?",
             (day, campaign_id, ad_set_id),
         ).fetchone()
-        raw = {column: _json_ready(row[column]) for column in [
+        raw = {column: _json_ready(row.get(column, np.nan)) for column in [
             *AD_PERFORMANCE_COLUMNS, *AD_PERFORMANCE_IMPORTED_DERIVED_COLUMNS,
         ]}
         imported_days = _float_ready(row.get("days_since_adset_started"))
@@ -3302,6 +3725,7 @@ def _write_ad_performance(
             _float_ready(values["frequency"]),
             _float_ready(values["leads"]),
             _float_ready(values["cost_per_lead"]),
+            _float_ready(values["meta_leads"]),
             _float_ready(values["link_clicks"]),
             _float_ready(values["cpc"]),
             _float_ready(values["unique_link_clicks"]),
@@ -3321,13 +3745,13 @@ def _write_ad_performance(
             """INSERT INTO daily_ad_performance(
                upload_id, day, campaign_id, campaign_name, ad_set_id, delivery_status, delivery_level,
                amount_spent_usd, messaging_conversations_started, cost_per_messaging_conversation_started,
-               reach, impressions, frequency, leads, cost_per_lead, link_clicks, cpc,
+               reach, impressions, frequency, leads, cost_per_lead, meta_leads, link_clicks, cpc,
                unique_link_clicks, cost_per_unique_link_click,
                days_since_adset_started_imported, ad_set_change_recency_imported, ad_change_recency_imported,
                ad_set_budget, ad_set_budget_type,
                reporting_starts, reporting_ends,
                raw_json, created_at, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(day, campaign_id, ad_set_id) DO UPDATE SET
                upload_id=excluded.upload_id,
                campaign_name=excluded.campaign_name,
@@ -3341,6 +3765,7 @@ def _write_ad_performance(
                frequency=excluded.frequency,
                leads=excluded.leads,
                cost_per_lead=excluded.cost_per_lead,
+               meta_leads=excluded.meta_leads,
                link_clicks=excluded.link_clicks,
                cpc=excluded.cpc,
                unique_link_clicks=excluded.unique_link_clicks,
@@ -3355,6 +3780,12 @@ def _write_ad_performance(
                raw_json=excluded.raw_json,
                updated_at=excluded.updated_at""",
             params,
+        )
+        db.execute(
+            """UPDATE daily_ad_performance SET clicks_all=?, ctr_all=?, cpm=?
+               WHERE day=? AND campaign_id=? AND ad_set_id=?""",
+            (_float_ready(values["clicks_all"]), _float_ready(values["ctr_all"]),
+             _float_ready(values["cpm"]), day, campaign_id, ad_set_id),
         )
         inserted += int(existed is None)
         updated += int(existed is not None)
@@ -3382,6 +3813,8 @@ def import_preview(token: str, filename: str | None = None) -> dict:
             return _import_change_log_preview(preview_path, filename)
         _, source_columns = _read_raw_frame(preview_path, preview_path.suffix)
         file_type = detect_upload_type_from_columns(source_columns)
+        if file_type == DIAGNOSTIC_DATASET_TYPE:
+            return confirm_diagnostic_dataset_preview(token, filename)
         if file_type == HOLIDAY_PROXIMITY_TYPE:
             return _import_holiday_proximity_preview(preview_path, filename)
         if file_type == AD_PERFORMANCE_TYPE:
@@ -5323,10 +5756,17 @@ def _f_survival_p_value(f_value: float, df_model: int, df_resid: int) -> float |
 def _feature_label(feature: str) -> str:
     labels = {
         "spend": "spent",
-        "conversations": "conversations",
-        "platform_leads": "platform leads",
-        "link_clicks": "link clicks",
-        "impressions": "impressions",
+        "conversations": "Messaging Conversation Started",
+        "cost_per_messaging_conversation": "Cost Per Messaging Conversation started",
+        "reach": "Reach",
+        "platform_leads": "Leads (Meta export)",
+        "cost_per_lead": "Cost Per Lead",
+        "meta_leads": "Meta Leads",
+        "link_clicks": "Link Clicks",
+        "clicks_all": "Clicks (all)",
+        "ctr_all": "CTR (all)",
+        "cpm": "CPM (Cost per 1,000 impressions)",
+        "impressions": "Impressions",
         "campaign_leads": "campaign leads",
         "portfolio_leads": "portfolio leads",
         "last3_leads": "last 3 avg",
@@ -5379,8 +5819,15 @@ def _ols_feature_frame(
 
     spend = _lagged_signal(context_array("spend_values"), _spend_lag_for_model(context.get("model_used"), context))
     conversations = _lagged_signal(context_array("conversation_values"), _spend_lag_for_model(context.get("model_used"), context))
+    cost_per_conversation = context_array("cost_per_conversation_values")
+    reach = context_array("reach_values")
     platform_leads = context_array("platform_leads_values")
+    cost_per_lead = context_array("cost_per_lead_values")
+    meta_leads = context_array("meta_leads_values")
     link_clicks = context_array("link_click_values")
+    clicks_all = context_array("clicks_all_values")
+    ctr_all = context_array("ctr_all_values")
+    cpm = context_array("cpm_values")
     impressions = context_array("impression_values")
     campaign_values = context_array("campaign_values")
     portfolio_values = context_array("overall_values")
@@ -5409,8 +5856,15 @@ def _ols_feature_frame(
         row = {
             "spend": float(spend[index]) if index < len(spend) else 0.0,
             "conversations": float(conversations[index]) if index < len(conversations) else 0.0,
+            "cost_per_messaging_conversation": float(cost_per_conversation[index]) if index < len(cost_per_conversation) else 0.0,
+            "reach": float(reach[index]) if index < len(reach) else 0.0,
             "platform_leads": float(platform_leads[index]) if index < len(platform_leads) else 0.0,
+            "cost_per_lead": float(cost_per_lead[index]) if index < len(cost_per_lead) else 0.0,
+            "meta_leads": float(meta_leads[index]) if index < len(meta_leads) else 0.0,
             "link_clicks": float(link_clicks[index]) if index < len(link_clicks) else 0.0,
+            "clicks_all": float(clicks_all[index]) if index < len(clicks_all) else 0.0,
+            "ctr_all": float(ctr_all[index]) if index < len(ctr_all) else 0.0,
+            "cpm": float(cpm[index]) if index < len(cpm) else 0.0,
             "impressions": float(impressions[index]) if index < len(impressions) else 0.0,
             "campaign_leads": float(campaign_values[index]) if index < len(campaign_values) else 0.0,
             "portfolio_leads": float(portfolio_values[index]) if index < len(portfolio_values) else 0.0,
@@ -5440,8 +5894,15 @@ def _ols_feature_frame(
         row = {
             "spend": max(0.0, future_spend_value),
             "conversations": recent_average(conversations),
+            "cost_per_messaging_conversation": recent_average(cost_per_conversation),
+            "reach": recent_average(reach),
             "platform_leads": recent_average(platform_leads),
+            "cost_per_lead": recent_average(cost_per_lead),
+            "meta_leads": recent_average(meta_leads),
             "link_clicks": recent_average(link_clicks),
+            "clicks_all": recent_average(clicks_all),
+            "ctr_all": recent_average(ctr_all),
+            "cpm": recent_average(cpm),
             "impressions": recent_average(impressions),
             "campaign_leads": recent_average(campaign_values),
             "portfolio_leads": recent_average(portfolio_values),
@@ -5638,14 +6099,79 @@ DECLARED_OLS_GROUPS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
                              "weekday_4", "weekday_5", "weekday_6")),
 )
 
+# Extra same-day Meta measurements requested for the diagnostic multivariate regression.
+# They extend the all-available accounting model shown on Dataset and Forecast; the production
+# forecast continues to use DECLARED_OLS_GROUPS above, so importing these observations does
+# not turn unknown future advertising outcomes into forecast inputs.
+DIAGNOSTIC_OLS_GROUPS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
+    *DECLARED_OLS_GROUPS,
+    (9, "Messaging Conversation Started", ("conversations",)),
+    (10, "Cost Per Messaging Conversation started", ("cost_per_messaging_conversation",)),
+    (11, "Reach", ("reach",)),
+    (12, "Impressions", ("impressions",)),
+    (13, "CTR (all)", ("ctr_all",)),
+    (14, "CPM (Cost per 1,000 impressions)", ("cpm",)),
+    (15, "Link Clicks", ("link_clicks",)),
+    (16, "Clicks (all)", ("clicks_all",)),
+    (17, "Leads (Meta export)", ("platform_leads",)),
+    (18, "Cost Per Lead", ("cost_per_lead",)),
+    (19, "Meta Leads", ("meta_leads",)),
+)
+
+
+def _select_all_diagnostic_ols_features(
+    feature_rows: list[dict[str, float]],
+) -> tuple[list[str], list[dict[str, object]]]:
+    """Select every estimable requested diagnostic variable.
+
+    This is intentionally different from ``_forward_select_declared_features``. The shared
+    Dataset/Forecast OLS table is an accounting model: every requested variable with variation
+    belongs in the design. We remove only columns that are constant or that add no matrix rank
+    after the intercept and earlier requested variables (for example the seventh weekday
+    indicator). Those removals are surfaced in ``variable_status`` instead of silently being
+    mistaken for feature selection.
+
+    The production forecast continues to call ``_select_multivariate_ols_features`` and is not
+    changed by this diagnostic selector; same-day Meta outcomes are not future-known inputs.
+    """
+    varying_by_group: list[tuple[int, str, list[str], list[str]]] = []
+    candidates: list[str] = []
+    for number, label, features in DIAGNOSTIC_OLS_GROUPS:
+        varying = [
+            feature for feature in features
+            if np.std([row.get(feature, 0.0) for row in feature_rows]) > 1e-9
+        ]
+        varying_by_group.append((number, label, list(features), varying))
+        candidates.extend(varying)
+
+    selected = _prune_rank_dependent_features(feature_rows, candidates) if candidates else []
+    selected_set = set(selected)
+    status: list[dict[str, object]] = []
+    for number, label, features, varying in varying_by_group:
+        kept = [feature for feature in varying if feature in selected_set]
+        if kept:
+            state = "included"
+            reason = "All varying, independently estimable terms are included."
+        elif not varying:
+            state = "unavailable"
+            reason = "No variation in this scope, or no recorded values."
+        else:
+            state = "redundant"
+            reason = "Varies, but is mathematically redundant with earlier terms and the intercept."
+        status.append({
+            "number": number, "name": label, "status": state, "reason": reason,
+            "features": kept,
+        })
+    return selected, status
+
 
 def _select_multivariate_ols_features(values: np.ndarray, feature_rows: list[dict[str, float]]) -> list[str]:
     """Exactly the declared drivers (variables 2-8), with leads as the modelled outcome.
 
-    Still what the forecast fits (`OLS_FORECAST_USES_FORWARD_SELECTION` is False): the
-    forward-selected subset the OLS card shows was backtested against this in 2026-08-16 and
-    forecast 7pp worse. The card and the forecast therefore describe different models on
-    purpose, and that constant's comment is where the reason lives.
+    Still what the production forecast fits (`OLS_FORECAST_USES_FORWARD_SELECTION` is False).
+    The shared OLS card now uses the separate all-variable diagnostic selector above, so the
+    card and production forecast describe different models on purpose: same-day Meta outcomes
+    can explain historical Leads but are not known inputs for a future-day forecast.
 
     Nothing else is admitted. Meta's other funnel metrics (conversations, impressions,
     link clicks, platform leads) and every autoregressive term are excluded even though
@@ -5802,7 +6328,7 @@ def _forward_select_declared_features(
         return result
 
     groups: list[tuple[int, str, list[str]]] = []
-    for number, label, features in DECLARED_OLS_GROUPS:
+    for number, label, features in DIAGNOSTIC_OLS_GROUPS:
         varying = [
             feature for feature in features
             if np.std([row.get(feature, 0.0) for row in feature_rows]) > 1e-9
@@ -6081,13 +6607,28 @@ def _load_scope_feature_rows(
         if ad_set_id:
             spend_frame = spend_frame[spend_frame["ad_set_id"].astype(str) == ad_set_id]
         elif campaign_id:
-            spend_frame = spend_frame[spend_frame["campaign_id"].astype(str) == campaign_id]
+            spend_frame = spend_frame[spend_frame["campaign_id"].astype(str).isin(campaign_ids or [campaign_id])]
 
     context = {
         "spend_values": _aligned_portfolio_spend_values(spend_frame, dates),
         "conversation_values": _aligned_performance_values(spend_frame, dates, "messaging_conversations_started"),
+        "cost_per_conversation_values": _aligned_performance_ratio(
+            spend_frame, dates, "amount_spent_usd", "messaging_conversations_started",
+        ),
+        "reach_values": _aligned_performance_values(spend_frame, dates, "reach"),
         "platform_leads_values": _aligned_performance_values(spend_frame, dates, "platform_leads"),
+        "cost_per_lead_values": _aligned_performance_ratio(
+            spend_frame, dates, "amount_spent_usd", "platform_leads",
+        ),
+        "meta_leads_values": _aligned_performance_values(spend_frame, dates, "meta_leads"),
         "link_click_values": _aligned_performance_values(spend_frame, dates, "link_clicks"),
+        "clicks_all_values": _aligned_performance_values(spend_frame, dates, "clicks_all"),
+        "ctr_all_values": _aligned_performance_ratio(
+            spend_frame, dates, "clicks_all", "impressions", 100.0,
+        ),
+        "cpm_values": _aligned_performance_ratio(
+            spend_frame, dates, "amount_spent_usd", "impressions", 1000.0,
+        ),
         "impression_values": _aligned_performance_values(spend_frame, dates, "impressions"),
         "campaign_values": np.zeros(len(values), dtype=float),
         "overall_values": np.zeros(len(values), dtype=float),
@@ -6223,12 +6764,20 @@ def get_ols_model_summaries(
     # every day in the scope, which is what makes the comparison beside it valid.
     spend_forms = _fit_univariate_spend_forms(values, feature_rows)
     univariate = spend_forms["forms"].get("linear")
-    # Forward selection, not every declared variable that happens to vary -- see
-    # _forward_select_declared_features. The forecast path deliberately does not (it fits all
-    # of them under ridge, which backtests better -- OLS_FORECAST_USES_FORWARD_SELECTION).
-    selection = _forward_select_declared_features(values, feature_rows)
-    selected = selection["features"]
+    # This table is shared by Dataset and Forecast and is deliberately an all-variable
+    # accounting regression. Include every requested predictor that varies and adds independent
+    # information to the design. This does not change the production forecast model; its inputs
+    # are selected separately in _ols_forecast because same-day Meta outcomes are not known in
+    # advance.
+    selected, variable_status = _select_all_diagnostic_ols_features(feature_rows)
     multivariate = _fit_ols_summary(values, feature_rows, selected, "Multivariate OLS") if selected else None
+    if multivariate:
+        included = [item for item in variable_status if item["status"] == "included"]
+        multivariate["variable_count"] = len(included)
+        multivariate["requested_variable_count"] = len(DIAGNOSTIC_OLS_GROUPS)
+        multivariate["variable_status"] = variable_status
+        multivariate["variables"] = [item["name"] for item in included]
+        multivariate["dep_variable"] = "Leads (CRM outcome)"
     # Why a card is missing matters more at narrow scope than at portfolio scope, where it
     # only ever meant "no spend uploaded".
     scope["multivariate_terms_wanted"] = len(selected)
@@ -6238,28 +6787,27 @@ def get_ols_model_summaries(
     # spend at all (twelve of thirty do), in which case no spend model fits and the UI has
     # to say why -- "not enough days" would be the wrong explanation.
     scope["spend_days"] = spend_forms["spend_days"]
-    scope["multivariate_selection"] = "forward"
-    scope["multivariate_selection_order"] = selection["order"]
+    scope["multivariate_selection"] = "all_available"
+    scope["multivariate_selection_order"] = [
+        item["number"] for item in variable_status if item["status"] == "included"
+    ]
     return {
         "univariate": univariate,
         # The form comparison: every fit that succeeded, which one won on AIC, and the
         # significance caveat when the winner's own terms do not support its shape.
         "univariate_forms": spend_forms,
         "multivariate": multivariate,
-        "declared_variables": _declared_variable_coverage(
-            feature_rows, selected, multivariate, selection=selection,
-        ),
-        # The search itself, round by round, for the "Selection path" panel. Everything the
-        # panel shows was computed during selection anyway -- publishing it is what stops the
-        # chosen variable list from reading as an unexplained verdict.
+        "declared_variables": _declared_variable_coverage(feature_rows, selected, multivariate),
+        # Keep the response shape stable for the shared UI, but there is no selection path:
+        # this model includes every available and independently estimable requested variable.
         "selection": {
-            "method": "forward",
-            "alpha": selection["alpha"],
-            "min_gain": FORWARD_SELECTION_MIN_GAIN,
-            "order": selection["order"],
-            "steps": selection["steps"],
-            "r_squared": selection["r_squared"],
-            "adjusted_r_squared": selection["adjusted_r_squared"],
+            "method": "all_available",
+            "alpha": None,
+            "min_gain": None,
+            "order": scope["multivariate_selection_order"],
+            "steps": [],
+            "r_squared": multivariate.get("r_squared") if multivariate else None,
+            "adjusted_r_squared": multivariate.get("adjusted_r_squared") if multivariate else None,
         },
         "scope": scope,
     }
@@ -6498,6 +7046,25 @@ LEAD_QUALITY_OPTIONS = [
     "Converted",
 ]
 DEFAULT_IMPORTED_LEAD_QUALITY = "Pending Review"
+
+# A lead enters Follow-up only from these stages. Once enrolled, the two terminal outcomes
+# remain visible for history; terminal leads rated directly in Lead Management never enter.
+FOLLOWUP_ENTRY_STAGES = (
+    "Intake",
+    "Qualified",
+    "Awaiting Document and Payment",
+)
+FOLLOWUP_RETAINED_STAGES = ("Not Qualified", "Converted")
+FOLLOWUP_VISIBLE_STAGES = (*FOLLOWUP_ENTRY_STAGES, *FOLLOWUP_RETAINED_STAGES)
+
+
+def _enroll_followup_lead(db: sqlite3.Connection, lead_id: int, enrolled_at: str) -> None:
+    db.execute(
+        """INSERT INTO lead_followups(lead_id, enrolled_at, updated_at) VALUES(?,?,?)
+           ON CONFLICT(lead_id) DO UPDATE SET
+             enrolled_at=COALESCE(lead_followups.enrolled_at, excluded.enrolled_at)""",
+        (lead_id, enrolled_at, enrolled_at),
+    )
 
 # Ad-performance's filter fields are shared by "ad_performance" and "ad_performance_export"
 # below -- both read the same `daily_ad_performance p` table under the same `p.` alias, just
@@ -7548,6 +8115,20 @@ def _aligned_performance_values(
         return np.zeros(len(dates), dtype=float)
     daily = frame.groupby("day")[value_column].sum()
     return daily.reindex(dates, fill_value=0).astype(float).to_numpy()
+
+
+def _aligned_performance_ratio(
+    spend_frame: pd.DataFrame | None, dates: pd.DatetimeIndex,
+    numerator: str, denominator: str, scale: float = 1.0,
+) -> np.ndarray:
+    """Daily ratio of totals for diagnostic regressors; never a sum of row-level rates."""
+    if spend_frame is None or spend_frame.empty:
+        return np.zeros(len(dates), dtype=float)
+    if numerator not in spend_frame.columns or denominator not in spend_frame.columns:
+        return np.zeros(len(dates), dtype=float)
+    grouped = spend_frame.groupby("day")[[numerator, denominator]].sum(min_count=1)
+    values = grouped[numerator] / grouped[denominator].where(grouped[denominator] > 0) * scale
+    return values.reindex(dates).replace([np.inf, -np.inf], np.nan).fillna(0.0).astype(float).to_numpy()
 
 
 HOLIDAY_PROXIMITY_BUCKETS = ("during_holiday", "0_14_days", "15_30_days", "31_60_days")
@@ -8745,8 +9326,15 @@ def _load_spend_frame(db: sqlite3.Connection | None = None) -> pd.DataFrame:
             """SELECT day, campaign_id, campaign_name, ad_set_id,
                       COALESCE(amount_spent_usd, 0) amount_spent_usd,
                       COALESCE(messaging_conversations_started, 0) messaging_conversations_started,
+                      COALESCE(cost_per_messaging_conversation_started, 0) cost_per_messaging_conversation_started,
+                      COALESCE(reach, 0) reach,
                       COALESCE(leads, 0) platform_leads,
+                      COALESCE(cost_per_lead, 0) cost_per_lead,
+                      COALESCE(meta_leads, 0) meta_leads,
                       COALESCE(link_clicks, 0) link_clicks,
+                      COALESCE(clicks_all, 0) clicks_all,
+                      COALESCE(ctr_all, 0) ctr_all,
+                      COALESCE(cpm, 0) cpm,
                       COALESCE(impressions, 0) impressions,
                       COALESCE(frequency, 0) frequency,
                       ad_set_budget,
@@ -8762,7 +9350,9 @@ def _load_spend_frame(db: sqlite3.Connection | None = None) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=[
             "day", "campaign_id", "campaign_name", "ad_set_id", "amount_spent_usd",
-            "messaging_conversations_started", "platform_leads", "link_clicks", "impressions",
+            "messaging_conversations_started", "cost_per_messaging_conversation_started",
+            "reach", "platform_leads", "cost_per_lead", "meta_leads", "link_clicks",
+            "clicks_all", "ctr_all", "cpm", "impressions",
             "frequency", "ad_set_budget", "days_since_adset_started_imported",
             "ad_set_change_recency_imported", "ad_change_recency_imported",
         ])
@@ -8772,10 +9362,12 @@ def _load_spend_frame(db: sqlite3.Connection | None = None) -> pd.DataFrame:
     frame["messaging_conversations_started"] = pd.to_numeric(
         frame["messaging_conversations_started"], errors="coerce"
     ).fillna(0.0)
-    frame["platform_leads"] = pd.to_numeric(frame["platform_leads"], errors="coerce").fillna(0.0)
-    frame["link_clicks"] = pd.to_numeric(frame["link_clicks"], errors="coerce").fillna(0.0)
-    frame["impressions"] = pd.to_numeric(frame["impressions"], errors="coerce").fillna(0.0)
-    frame["frequency"] = pd.to_numeric(frame["frequency"], errors="coerce").fillna(0.0)
+    for column in (
+        "cost_per_messaging_conversation_started", "reach", "platform_leads",
+        "cost_per_lead", "meta_leads", "link_clicks", "clicks_all", "ctr_all", "cpm",
+        "impressions", "frequency",
+    ):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
     # left as NaN, not 0: a missing budget is unknown, and coercing it to 0 would fabricate
     # a budget change on either side of the gap
     frame["ad_set_budget"] = pd.to_numeric(frame["ad_set_budget"], errors="coerce")
@@ -10126,6 +10718,8 @@ def create_lead_event(values: dict, retrain: bool = True) -> dict:
         except sqlite3.IntegrityError as exc:
             raise ValueError("This lead already exists.") from exc
         lead_id = int(cur.lastrowid)
+        if lead_quality in FOLLOWUP_ENTRY_STAGES:
+            _enroll_followup_lead(db, lead_id, updated_at)
         created = dict(db.execute(
             """SELECT id, platform, status, lead_quality, created_at, updated_at, customer_name,
                utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
@@ -10179,6 +10773,14 @@ def update_lead_event(lead_id: int, changes: dict, retrain: bool = True) -> dict
             f"UPDATE lead_events SET {assignments} WHERE id=?",
             [*clean_changes.values(), lead_id],
         )
+        if (
+            "lead_quality" in clean_changes
+            and (
+                str(existing["lead_quality"] or "") in FOLLOWUP_ENTRY_STAGES
+                or clean_changes["lead_quality"] in FOLLOWUP_ENTRY_STAGES
+            )
+        ):
+            _enroll_followup_lead(db, lead_id, str(clean_changes["updated_at"]))
         updated = dict(db.execute(
             """SELECT id, platform, status, lead_quality, created_at, updated_at, customer_name,
                utm_campaign, utm_campaign_id, utm_ad_set_id, utm_ad_id,
@@ -10227,7 +10829,7 @@ def bulk_update_lead_quality(lead_ids: Iterable[int], quality: str, retrain: boo
         # a mid-batch failure leaves nothing half-applied.
         placeholders = ", ".join("?" for _ in ids)
         rows = db.execute(
-            f"SELECT id, raw_json FROM lead_events WHERE id IN ({placeholders})", ids
+            f"SELECT id, lead_quality, raw_json FROM lead_events WHERE id IN ({placeholders})", ids
         ).fetchall()
         for row in rows:
             try:
@@ -10239,6 +10841,11 @@ def bulk_update_lead_quality(lead_ids: Iterable[int], quality: str, retrain: boo
                 "UPDATE lead_events SET lead_quality=?, updated_at=?, raw_json=? WHERE id=?",
                 (cleaned_quality, now, json.dumps(raw, ensure_ascii=False), row["id"]),
             )
+            if (
+                str(row["lead_quality"] or "") in FOLLOWUP_ENTRY_STAGES
+                or cleaned_quality in FOLLOWUP_ENTRY_STAGES
+            ):
+                _enroll_followup_lead(db, int(row["id"]), now)
             updated += 1
 
     if retrain:
@@ -10250,15 +10857,10 @@ def bulk_update_lead_quality(lead_ids: Iterable[int], quality: str, retrain: boo
     return {"requested": len(ids), "updated": updated, "lead_quality": cleaned_quality}
 
 
-# Follow-up is a CRM view over the same lead_events rows, not a second lead store.  The
-# active stages mirror the simplified lead-quality workflow exposed in the UI.
-FOLLOWUP_ACTIVE_STAGES = (
-    "Intake",
-    "Qualified",
-    "Awaiting Document and Payment",
-)
+# Follow-up is a CRM view over the same lead_events rows, not a second lead store.
 FOLLOWUP_OUTCOMES = {
     "intake",
+    "not_qualified",
     "qualified",
     "awaiting_document_and_payment",
     "converted",
@@ -10278,10 +10880,17 @@ def get_followup_leads(
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
     requested_stages = [str(value).strip() for value in statuses if str(value).strip()]
-    active_stages = [value for value in requested_stages if value in FOLLOWUP_ACTIVE_STAGES] or list(FOLLOWUP_ACTIVE_STAGES)
-    placeholders = ",".join("?" for _ in active_stages)
-    where = [f"l.lead_quality IN ({placeholders})"]
-    params: list[object] = list(active_stages)
+    visible_stages = [value for value in requested_stages if value in FOLLOWUP_VISIBLE_STAGES] or list(FOLLOWUP_VISIBLE_STAGES)
+    entry_placeholders = ",".join("?" for _ in FOLLOWUP_ENTRY_STAGES)
+    retained_placeholders = ",".join("?" for _ in FOLLOWUP_RETAINED_STAGES)
+    visible_placeholders = ",".join("?" for _ in visible_stages)
+    membership_sql = (
+        f"(l.lead_quality IN ({entry_placeholders}) OR "
+        f"(f.enrolled_at IS NOT NULL AND l.lead_quality IN ({retained_placeholders})))"
+    )
+    membership_params: list[object] = [*FOLLOWUP_ENTRY_STAGES, *FOLLOWUP_RETAINED_STAGES]
+    where = [membership_sql, f"l.lead_quality IN ({visible_placeholders})"]
+    params: list[object] = [*membership_params, *visible_stages]
 
     if search.strip():
         needle = f"%{search.strip()}%"
@@ -10328,8 +10937,8 @@ def get_followup_leads(
                       l.fb_ad_title, f.next_follow_up_at, f.last_contacted_at,
                       f.contact_method, f.assigned_to, f.follow_up_result, f.latest_note,
                       f.messenger_psid, f.telegram_id,
-                      f.required_documents, f.expected_payment_date,
-                      COALESCE(f.selected_service, l.fb_ad_title) AS service_requested,
+                       f.required_documents, f.expected_payment_date, f.selected_service,
+                       COALESCE(f.selected_service, l.fb_ad_title) AS service_requested,
                       COALESCE(f.updated_at, l.updated_at, l.created_at) AS updated_at
                    FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id"""
     with connect() as db:
@@ -10342,20 +10951,31 @@ def get_followup_leads(
             [*params, limit, offset],
         ).fetchall()]
         facets = {
-            "assigned_people": [row[0] for row in db.execute("SELECT DISTINCT assigned_to FROM lead_followups WHERE TRIM(COALESCE(assigned_to,'')) <> '' ORDER BY assigned_to")],
+            "assigned_people": [row[0] for row in db.execute(
+                f"""SELECT DISTINCT f.assigned_to
+                    FROM lead_events l JOIN lead_followups f ON f.lead_id=l.id
+                    WHERE {membership_sql}
+                      AND TRIM(COALESCE(f.assigned_to,'')) <> ''
+                    ORDER BY f.assigned_to""",
+                membership_params,
+            )],
             "platforms": [row[0] for row in db.execute(
-                f"SELECT DISTINCT COALESCE(platform,'') FROM lead_events WHERE lead_quality IN ({','.join('?' for _ in FOLLOWUP_ACTIVE_STAGES)}) AND TRIM(COALESCE(platform,'')) <> '' ORDER BY platform",
-                FOLLOWUP_ACTIVE_STAGES,
+                f"""SELECT DISTINCT COALESCE(l.platform,'')
+                    FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id
+                    WHERE {membership_sql}
+                      AND TRIM(COALESCE(l.platform,'')) <> ''
+                    ORDER BY l.platform""",
+                membership_params,
             )],
             "campaigns": [
                 {"value": row["value"], "label": display_campaign_name(row["value"])}
                 for row in db.execute(
-                    f"""SELECT DISTINCT COALESCE(utm_campaign,'') AS value
-                        FROM lead_events
-                        WHERE lead_quality IN ({','.join('?' for _ in FOLLOWUP_ACTIVE_STAGES)})
-                          AND TRIM(COALESCE(utm_campaign,'')) <> ''
+                    f"""SELECT DISTINCT COALESCE(l.utm_campaign,'') AS value
+                        FROM lead_events l LEFT JOIN lead_followups f ON f.lead_id=l.id
+                        WHERE {membership_sql}
+                          AND TRIM(COALESCE(l.utm_campaign,'')) <> ''
                         ORDER BY value""",
-                    FOLLOWUP_ACTIVE_STAGES,
+                    membership_params,
                 )
             ],
         }
@@ -10400,7 +11020,7 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
         raise ValueError("A lost reason is required.")
 
     target_status = {
-        "intake": "Intake", "qualified": "Qualified",
+        "intake": "Intake", "not_qualified": "Not Qualified", "qualified": "Qualified",
         "awaiting_document_and_payment": "Awaiting Document and Payment",
         "converted": "Converted", "lost": "Lost",
     }.get(outcome)
@@ -10429,6 +11049,8 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
         if not lead:
             raise ValueError("Lead not found.")
         previous_status = str(lead["lead_quality"] or "")
+        if previous_status in FOLLOWUP_ENTRY_STAGES:
+            _enroll_followup_lead(db, lead_id, now)
         if target_status:
             raw = {}
             try:
@@ -10459,7 +11081,7 @@ def save_followup(lead_id: int, values: dict, actor: str) -> dict:
 FOLLOWUP_INLINE_LEAD_FIELDS = {"customer_name", "lead_quality", "platform", "utm_campaign"}
 FOLLOWUP_INLINE_META_FIELDS = {
     "last_contacted_at", "next_follow_up_at", "assigned_to", "follow_up_result", "latest_note",
-    "messenger_psid", "telegram_id",
+    "messenger_psid", "telegram_id", "selected_service",
 }
 
 
@@ -10483,6 +11105,8 @@ def update_followup_inline(lead_id: int, changes: dict, actor: str) -> dict:
             meta_changes[field] = _followup_text(value, 40) or None
         elif field in {"assigned_to", "messenger_psid", "telegram_id"}:
             meta_changes[field] = _followup_text(value, 200)
+        elif field == "selected_service":
+            meta_changes[field] = _followup_text(value, 4000) or None
         else:
             meta_changes[field] = _followup_text(value)
 
@@ -10500,6 +11124,8 @@ def update_followup_inline(lead_id: int, changes: dict, actor: str) -> dict:
             raise ValueError("Lead not found.")
         previous_status = str(existing["lead_quality"] or "")
         target_status = str(lead_changes.get("lead_quality", previous_status) or previous_status)
+        if previous_status in FOLLOWUP_ENTRY_STAGES:
+            _enroll_followup_lead(db, lead_id, now)
         if lead_changes:
             try:
                 raw = json.loads(existing["raw_json"] or "{}")
@@ -10642,6 +11268,321 @@ def delete_lead_event(lead_id: int, retrain: bool = True) -> dict:
     rebuild_aggregates()
     run = train_models()
     return {"deleted": lead_id, "training_run": run}
+
+
+DIAGNOSTIC_ANALYSIS_GROUPS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
+    (2, "Spent", ("spend",)),
+    (3, "days_since_ad_set_started", ("days_since_adset_started",)),
+    (4, "Frequency", ("frequency",)),
+    (5, "Days of the week", tuple(f"weekday_{index}" for index in range(7))),
+    (6, "Messaging conversations started", ("conversations",)),
+    (7, "Cost per messaging conversation started", ("cost_per_messaging_conversation",)),
+    (8, "Reach", ("reach",)),
+    (9, "Impressions", ("impressions",)),
+    (10, "CTR (all)", ("ctr_all",)),
+    (11, "CPM", ("cpm",)),
+    (12, "Link clicks", ("link_clicks",)),
+    (13, "Meta Leads", ("meta_leads",)),
+    (14, "Cost per lead", ("cost_per_lead",)),
+)
+
+
+def _diagnostic_import_dict(row: sqlite3.Row | None) -> dict | None:
+    if row is None:
+        return None
+    result = dict(row)
+    result["is_active"] = bool(result.get("is_active"))
+    try:
+        result["validation"] = json.loads(result.pop("validation_json", "{}") or "{}")
+    except json.JSONDecodeError:
+        result["validation"] = {}
+    return result
+
+
+def list_diagnostic_dataset_imports() -> list[dict]:
+    with connect() as db:
+        rows = db.execute("SELECT * FROM diagnostic_dataset_imports ORDER BY id DESC").fetchall()
+    return [_diagnostic_import_dict(row) for row in rows]
+
+
+def get_diagnostic_dataset_status() -> dict:
+    with connect() as db:
+        row = db.execute(
+            "SELECT * FROM diagnostic_dataset_imports WHERE is_active=1 ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    active = _diagnostic_import_dict(row)
+    age_days = None
+    # Freshness describes when the snapshot was imported, not when somebody last
+    # switched back to it. Reactivating an older version must not make stale data
+    # appear newly refreshed.
+    if active and active.get("uploaded_at"):
+        uploaded = pd.to_datetime(active["uploaded_at"], errors="coerce", utc=True)
+        if pd.notna(uploaded):
+            age_days = max(0, int((pd.Timestamp.now(tz="UTC") - uploaded).total_seconds() // 86400))
+    freshness = "missing"
+    if active:
+        freshness = "stale" if age_days is not None and age_days > 7 else (
+            "warning" if age_days is not None and age_days > 3 else "fresh"
+        )
+    return {"active": active, "age_days": age_days, "freshness": freshness}
+
+
+def activate_diagnostic_dataset_import(import_id: int) -> dict:
+    now = utc_now()
+    with connect() as db:
+        _activate_diagnostic_import(db, import_id, now)
+        row = db.execute(
+            "SELECT * FROM diagnostic_dataset_imports WHERE id=?", (int(import_id),)
+        ).fetchone()
+    return {"active": _diagnostic_import_dict(row)}
+
+
+def get_diagnostic_dataset_scopes() -> dict:
+    with connect() as db:
+        active = db.execute(
+            "SELECT * FROM diagnostic_dataset_imports WHERE is_active=1 LIMIT 1"
+        ).fetchone()
+        if not active:
+            return {"import_id": None, "campaigns": [], "ad_sets": []}
+        rows = db.execute(
+            """SELECT campaign_name, ad_set_id, COUNT(*) observations,
+                      MIN(day) date_start, MAX(day) date_end
+               FROM diagnostic_dataset_rows WHERE import_id=?
+               GROUP BY campaign_name, ad_set_id
+               ORDER BY campaign_name, ad_set_id""",
+            (int(active["id"]),),
+        ).fetchall()
+    ad_sets = [dict(row) for row in rows]
+    campaigns = []
+    for name in sorted({str(row["campaign_name"]) for row in rows}):
+        matching = [row for row in ad_sets if row["campaign_name"] == name]
+        campaigns.append({
+            "campaign_name": name,
+            "ad_set_count": len(matching),
+            "observations": sum(int(row["observations"]) for row in matching),
+        })
+    return {"import_id": int(active["id"]), "campaigns": campaigns, "ad_sets": ad_sets}
+
+
+def _load_diagnostic_analysis_frame(
+    ad_set_id: str | None = None, campaign_name: str | None = None,
+) -> tuple[pd.DataFrame | None, dict | None, dict]:
+    ad_set_id = str(ad_set_id).strip() if ad_set_id not in (None, "") else None
+    campaign_name = str(campaign_name).strip() if campaign_name not in (None, "") else None
+    with connect() as db:
+        active = db.execute(
+            "SELECT * FROM diagnostic_dataset_imports WHERE is_active=1 LIMIT 1"
+        ).fetchone()
+        if not active:
+            return None, None, {"level": "none", "observations": 0}
+        sql = "SELECT * FROM diagnostic_dataset_rows WHERE import_id=?"
+        params: list[object] = [int(active["id"])]
+        if ad_set_id:
+            sql += " AND ad_set_id=?"
+            params.append(ad_set_id)
+        elif campaign_name:
+            sql += " AND campaign_name=?"
+            params.append(campaign_name)
+        sql += " ORDER BY day, campaign_name, ad_set_id"
+        rows = db.execute(sql, params).fetchall()
+    provenance = _diagnostic_import_dict(active)
+    level = "ad_set" if ad_set_id else ("campaign" if campaign_name else "portfolio")
+    scope = {
+        "level": level, "ad_set_id": ad_set_id, "campaign_name": campaign_name,
+        "observations": len(rows), "date_start": None, "date_end": None,
+    }
+    if not rows:
+        return pd.DataFrame(), provenance, scope
+    frame = pd.DataFrame([dict(row) for row in rows])
+    frame["day"] = pd.to_datetime(frame["day"], errors="coerce")
+    scope["date_start"] = frame["day"].min().date().isoformat()
+    scope["date_end"] = frame["day"].max().date().isoformat()
+    return frame, provenance, scope
+
+
+def _diagnostic_feature_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    features = pd.DataFrame(index=frame.index)
+    features["lead_amount"] = pd.to_numeric(frame["lead_amount"], errors="coerce")
+    source_map = {
+        "spend": "amount_spent_usd",
+        "days_since_adset_started": "days_since_ad_set_started",
+        "frequency": "frequency", "conversations": "messaging_conversations_started",
+        "cost_per_messaging_conversation": "cost_per_messaging_conversation_started",
+        "reach": "reach", "impressions": "impressions", "ctr_all": "ctr_all",
+        "cpm": "cpm", "link_clicks": "link_clicks", "meta_leads": "meta_leads",
+        "cost_per_lead": "cost_per_lead",
+    }
+    for target, source in source_map.items():
+        features[target] = pd.to_numeric(frame[source], errors="coerce")
+    weekdays = pd.to_numeric(frame["weekday"], errors="coerce")
+    for index in range(7):
+        features[f"weekday_{index}"] = weekdays.map(
+            lambda value, expected=index: np.nan if pd.isna(value) else float(int(value) == expected)
+        )
+    return features
+
+
+def _diagnostic_response_metadata(provenance: dict | None, scope: dict, analysis_rows: int) -> dict:
+    if not provenance:
+        return {"import_id": None, "file_name": None, "file_sha256": None,
+                "uploaded_at": None, "date_start": None, "date_end": None,
+                "source_row_count": 0, "analysis_row_count": analysis_rows,
+                "analysis_observations": analysis_rows, "scope": scope}
+    return {
+        "import_id": provenance["id"], "file_name": provenance["file_name"],
+        "file_sha256": provenance["file_sha256"], "uploaded_at": provenance["uploaded_at"],
+        "date_start": provenance["date_min"], "date_end": provenance["date_max"],
+        "source_row_count": provenance["source_row_count"],
+        "analysis_row_count": analysis_rows, "analysis_observations": analysis_rows,
+        "scope": scope,
+    }
+
+
+def _diagnostic_variable_status(
+    features: pd.DataFrame, available: list[str], selected: list[str], analysis_rows: int,
+) -> list[dict]:
+    selected_set = set(selected)
+    available_set = set(available)
+    status = [{"number": 1, "name": "Lead Amount", "status": "target",
+               "reason": "Dependent variable from the imported diagnostic dataset."}]
+    for number, name, group_features in DIAGNOSTIC_ANALYSIS_GROUPS:
+        available_group = [feature for feature in group_features if feature in available_set]
+        kept = [feature for feature in group_features if feature in selected_set]
+        if kept:
+            state = "included"
+            reason = f"Included from {analysis_rows} complete observations."
+        elif not available_group:
+            state = "unavailable"
+            reason = "No recorded variation in this scope, or too few non-missing values."
+        else:
+            state = "redundant"
+            reason = "Varies, but is mathematically redundant with earlier terms and the intercept."
+        status.append({"number": number, "name": name, "status": state,
+                       "reason": reason, "features": kept})
+    return status
+
+
+def get_diagnostic_dataset_correlation(
+    ad_set_id: str | None = None, campaign_name: str | None = None,
+) -> dict:
+    frame, provenance, scope = _load_diagnostic_analysis_frame(ad_set_id, campaign_name)
+    if frame is None or frame.empty:
+        return {"variables": [], "matrix": [], "sample_sizes": [], "excluded_variables": [],
+                **_diagnostic_response_metadata(provenance, scope, 0)}
+    features = _diagnostic_feature_frame(frame)
+    specs = [(1, "Lead Amount", "lead_amount")]
+    for number, name, names in DIAGNOSTIC_ANALYSIS_GROUPS:
+        specs.extend((number, name, feature) for feature in names)
+    kept: list[tuple[int, str, str]] = []
+    excluded: list[dict] = []
+    for number, group_name, feature in specs:
+        observed = features[feature].dropna()
+        if len(observed) < 2 or float(observed.std()) <= 1e-9:
+            excluded.append({"key": feature, "variable_number": number,
+                             "variable_name": group_name,
+                             "reason": "No recorded variation or fewer than two observations."})
+        else:
+            kept.append((number, group_name, feature))
+    if not kept:
+        return {"variables": [], "matrix": [], "sample_sizes": [], "excluded_variables": excluded,
+                **_diagnostic_response_metadata(provenance, scope, len(frame))}
+    names = [item[2] for item in kept]
+    numeric = features[names]
+    correlation = numeric.corr(min_periods=2)
+    sample_sizes = [
+        [int(numeric[[row_name, col_name]].dropna().shape[0]) for col_name in names]
+        for row_name in names
+    ]
+    matrix = [
+        [None if pd.isna(value) else round(float(value), 4) for value in row]
+        for row in correlation.to_numpy()
+    ]
+    variables = [
+        {"key": feature, "label": "Lead Amount" if feature == "lead_amount" else _feature_label(feature),
+         "variable_number": number, "variable_name": group_name}
+        for number, group_name, feature in kept
+    ]
+    return {"variables": variables, "matrix": matrix, "sample_sizes": sample_sizes,
+            "excluded_variables": excluded, "sample_size": int(len(frame)),
+            **_diagnostic_response_metadata(provenance, scope, len(frame))}
+
+
+def get_diagnostic_dataset_ols(
+    ad_set_id: str | None = None, campaign_name: str | None = None,
+) -> dict:
+    frame, provenance, scope = _load_diagnostic_analysis_frame(ad_set_id, campaign_name)
+    if frame is None or frame.empty:
+        metadata = _diagnostic_response_metadata(provenance, scope, 0)
+        return {"univariate": None, "multivariate": None, "declared_variables": [],
+                "excluded_variables": [],
+                "unavailable_reason": "No active diagnostic rows exist for this scope.",
+                "selection": {"method": "all_available", "order": [], "steps": []}, **metadata}
+    features = _diagnostic_feature_frame(frame)
+    ordered = [feature for _, _, group in DIAGNOSTIC_ANALYSIS_GROUPS for feature in group]
+    available = [
+        feature for feature in ordered
+        if features[feature].notna().sum() >= 2
+        and float(features[feature].dropna().std()) > 1e-9
+    ]
+    complete = features.dropna(subset=["lead_amount", *available]).copy() if available else features.iloc[0:0]
+    varying = [
+        feature for feature in available
+        if len(complete) and float(complete[feature].std()) > 1e-9
+    ]
+    feature_rows = complete[varying].to_dict(orient="records") if varying else []
+    selected = _prune_rank_dependent_features(feature_rows, varying) if feature_rows else []
+    excluded_variables: list[dict] = []
+    available_set, varying_set, selected_set = set(available), set(varying), set(selected)
+    for feature in ordered:
+        if feature not in available_set:
+            reason = "No recorded variation or fewer than two observations in this scope."
+        elif feature not in varying_set:
+            reason = "No variation remains after complete-case filtering."
+        elif feature not in selected_set:
+            reason = "Rank-dependent with earlier terms and the intercept; removed in stable predictor order."
+        else:
+            continue
+        excluded_variables.append({"key": feature, "label": _feature_label(feature), "reason": reason})
+    values = complete["lead_amount"].to_numpy(dtype=float) if len(complete) else np.asarray([], dtype=float)
+    summary = _fit_ols_summary(values, feature_rows, selected, "Multivariate OLS") if selected else None
+    variable_status = _diagnostic_variable_status(features, available, selected, len(complete))
+    if summary:
+        summary["dep_variable"] = "Lead Amount"
+        summary["variable_status"] = variable_status[1:]
+        summary["variable_count"] = sum(
+            item["status"] == "included" for item in variable_status[1:]
+        )
+        summary["requested_variable_count"] = len(DIAGNOSTIC_ANALYSIS_GROUPS)
+        summary["variables"] = [
+            item["name"] for item in variable_status[1:] if item["status"] == "included"
+        ]
+    scope = dict(scope)
+    scope["analysis_observations"] = int(len(complete))
+    scope["multivariate_terms_wanted"] = len(selected)
+    scope["multivariate_days_needed"] = max(12, len(selected) + 6) if selected else 12
+    metadata = _diagnostic_response_metadata(provenance, scope, len(complete))
+    unavailable_reason = None
+    if summary is None:
+        needed = max(12, len(selected) + 6) if selected else 12
+        unavailable_reason = (
+            f"At least {needed} complete observations are required for the estimable predictor set; "
+            f"this scope has {len(complete)}."
+        )
+    return {
+        "univariate": None,
+        "multivariate": summary,
+        "declared_variables": variable_status,
+        "excluded_variables": excluded_variables,
+        "unavailable_reason": unavailable_reason,
+        "selection": {
+            "method": "all_available", "alpha": None, "min_gain": None,
+            "order": [item["number"] for item in variable_status if item["status"] == "included"],
+            "steps": [],
+            "r_squared": summary.get("r_squared") if summary else None,
+            "adjusted_r_squared": summary.get("adjusted_r_squared") if summary else None,
+        },
+        **metadata,
+    }
 
 
 def delete_upload(upload_id: int) -> dict:

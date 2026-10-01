@@ -1,5 +1,13 @@
 # OLS Panel on the Forecast Page
 
+## 2026-09-18 update
+
+The controlled regression table described in [[Forecast-Variable-Controls]] has
+moved from Forecast to Dataset. Forecast no longer renders the variable toggles,
+correlation matrix, or multivariate regression table. The spend-only card and
+production forecast path are unchanged. The historical implementation notes below
+still describe the legacy `/ols-summary` diagnostics used elsewhere.
+
 Built 2026-08-05. The Spend-only + Multivariate OLS cards render on the Forecast page,
 attached to the Actual-vs-Forecast chart. Dataset is the separate portfolio-wide diagnostic
 surface after the Model Performance page was removed on 2026-08-12.
@@ -151,3 +159,10 @@ this regression could use" are now different numbers. The empty-state copy branc
 ad set with 48 days of leads and no spend at all now reads "No spend recorded against this
 selection, so there is nothing for a spend regression to fit" instead of the old, misleading
 "Upload ad performance data". Twelve of thirty ad sets are in exactly that position.
+
+## Forecast chart two-card layout restored (2026-09-19)
+
+The Forecast page's chart header renders both OLS cards again: Spend-only OLS on the left and
+Multivariate OLS on the right. The shared `OlsResultCards` component was still capable of the
+two-column compact layout; the Forecast call site had been filtering it down to `view="univariate"`,
+leaving the right side empty above the Actual-vs-Forecast chart.

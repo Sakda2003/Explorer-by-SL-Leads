@@ -6,7 +6,7 @@ import json
 import math
 import os
 import threading
-from datetime import datetime
+from datetime import date, datetime
 from statistics import median
 from pathlib import Path
 
@@ -18,14 +18,15 @@ from pydantic import BaseModel
 
 from . import auth
 from . import security
+from .forecast_diagnostics import get_forecast_diagnostics
 
 from .core import (
-                   ROOT, bulk_delete_lead_events, change_event_coverage, connect, create_lead_event, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_newer_duplicate_leads, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_duplicate_leads, get_forecast_realizations,
+                   ROOT, activate_diagnostic_dataset_import, bulk_delete_lead_events, change_event_coverage, confirm_diagnostic_dataset_preview, connect, create_lead_event, delete_ad_performance_row, delete_ad_set_start_date, delete_budget_period, delete_change_event, delete_lead_event, delete_newer_duplicate_leads, delete_upload, get_ad_decisions, get_ad_spend_analytics, get_budget_optimization, get_dashboard_insights, get_dataset_correlation, get_dataset_overview, get_dataset_row_ids, get_dataset_rows, get_diagnostic_dataset_correlation, get_diagnostic_dataset_ols, get_diagnostic_dataset_scopes, get_diagnostic_dataset_status, get_duplicate_leads, get_forecast_realizations,
                    get_forecast_scenario,
                    get_model_diagnostics, get_ols_model_summaries, get_portfolio_forecast_tracking, get_weekday_profile, import_preview, init_db,
                    bulk_update_lead_quality, get_lead_filter_options, get_lead_pipeline_summary,
                    get_followup_lead, get_followup_leads, save_followup, update_followup_inline,
-                   list_ad_set_start_dates, list_budget_periods, list_change_events, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
+                   list_ad_set_start_dates, list_budget_periods, list_change_events, list_diagnostic_dataset_imports, preview_diagnostic_dataset_file, preview_file, rebuild_aggregates, save_ad_set_start_date, save_budget_period, save_change_event, train_models, update_ad_performance_row, update_lead_event)
 
 # Refuse to boot open on a deployment that declares itself public (Render, or an explicit
 # LEADLENS_REQUIRE_AUTH). This runs before anything else so a misconfigured public deploy fails
@@ -208,6 +209,7 @@ class FollowupInlineUpdate(BaseModel):
     latest_note: str | None = None
     messenger_psid: str | None = None
     telegram_id: str | None = None
+    selected_service: str | None = None
 
 
 # Mirrors AD_PERFORMANCE_UPDATE_FIELDS in core.py. `leads` and
@@ -490,6 +492,11 @@ _retrain_timer: threading.Timer | None = None
 _retrain_pending = False
 
 
+def _auto_retrain_enabled() -> bool:
+    value = os.getenv("LEADLENS_AUTO_RETRAIN", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def _run_retrain() -> None:
     global _retrain_running, _retrain_queued, _retrain_error, _retrain_needs_aggregates
     while True:
@@ -541,6 +548,9 @@ def _request_retrain(rebuild_aggregates_first: bool = False) -> None:
     `rebuild_aggregates_first` is sticky: it stays set until a run actually consumes it, so an
     edit landing mid-retrain still gets its aggregates rebuilt by the queued follow-up pass.
     """
+    if not _auto_retrain_enabled():
+        return
+
     global _retrain_timer, _retrain_pending, _retrain_needs_aggregates, _retrain_error
     with _retrain_lock:
         if rebuild_aggregates_first:
@@ -658,6 +668,24 @@ def model_diagnostics(limit: int = Query(10, ge=3, le=25)):
     return get_model_diagnostics(limit)
 
 
+@app.get("/api/forecast/diagnostics")
+def forecast_diagnostics(
+    ad_set_id: str | None = None, campaign_id: str | None = None,
+    start_date: date | None = None, end_date: date | None = None,
+    enabled: str | None = Query(None, max_length=2048),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(400, "Start date must be on or before end date.")
+    try:
+        return get_forecast_diagnostics(
+            ad_set_id=ad_set_id, campaign_id=campaign_id,
+            start_date=start_date, end_date=end_date,
+            enabled=None if enabled is None else [key for key in enabled.split(",") if key],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.get("/api/dataset/overview")
 def dataset_overview():
     return get_dataset_overview()
@@ -666,6 +694,65 @@ def dataset_overview():
 @app.get("/api/dataset/correlation")
 def dataset_correlation(ad_set_id: str | None = None, campaign_id: str | None = None):
     return get_dataset_correlation(ad_set_id=ad_set_id, campaign_id=campaign_id)
+
+
+@app.post("/api/dataset-analysis/preview")
+async def diagnostic_dataset_preview(file: UploadFile = File(...)):
+    _reject_in_demo()
+    content = await file.read(security.MAX_UPLOAD_BYTES + 1)
+    if len(content) > security.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File exceeds the {security.MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit.")
+    try:
+        return preview_diagnostic_dataset_file(content, file.filename or "diagnostic-dataset.xlsx")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/dataset-analysis/confirm")
+def diagnostic_dataset_confirm(payload: ConfirmUpload):
+    _reject_in_demo()
+    try:
+        return confirm_diagnostic_dataset_preview(payload.token, payload.file_name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/dataset-analysis/status")
+def diagnostic_dataset_status():
+    return get_diagnostic_dataset_status()
+
+
+@app.get("/api/dataset-analysis/imports")
+def diagnostic_dataset_imports():
+    return {"imports": list_diagnostic_dataset_imports()}
+
+
+@app.post("/api/dataset-analysis/imports/{import_id}/activate")
+def diagnostic_dataset_activate(import_id: int):
+    _reject_in_demo()
+    try:
+        return activate_diagnostic_dataset_import(import_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/dataset-analysis/scopes")
+def diagnostic_dataset_scopes():
+    return get_diagnostic_dataset_scopes()
+
+
+@app.get("/api/dataset-analysis/correlation")
+def diagnostic_dataset_correlation(
+    ad_set_id: str | None = None, campaign_name: str | None = None,
+):
+    return get_diagnostic_dataset_correlation(ad_set_id=ad_set_id, campaign_name=campaign_name)
+
+
+@app.get("/api/dataset-analysis/ols")
+def diagnostic_dataset_ols(
+    ad_set_id: str | None = None, campaign_name: str | None = None,
+):
+    return get_diagnostic_dataset_ols(ad_set_id=ad_set_id, campaign_name=campaign_name)
 
 
 def _parse_filters_param(filters: str | None) -> list | None:

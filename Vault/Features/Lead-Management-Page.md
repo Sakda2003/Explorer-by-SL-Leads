@@ -302,3 +302,10 @@ count baseline and one bar baseline. All 104 leads touched during testing were r
 Intake afterwards — the table is back to 3,801 Intake, 0 rated.
 
 Linked from [[Home]].
+
+## 2026-09-19 — Intake added to Spend and outcomes
+
+The Lead Management "Spend and outcomes" performance insight now includes Intake in the
+legend and stage bars. The backend summary already returned `summary.intake`; the frontend
+was skipping that stage when building the outcome chart, so Intake leads were absent from
+that section even though they were available elsewhere on the page.
