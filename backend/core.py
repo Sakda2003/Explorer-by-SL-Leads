@@ -95,6 +95,7 @@ MODEL_DATASET_TYPE = "model_dataset"
 LEADLENS_DERIVED_TYPE = "leadlens_derived_variables"
 HOLIDAY_PROXIMITY_TYPE = "holiday_proximity"
 DIAGNOSTIC_DATASET_TYPE = "diagnostic_dataset"
+DIAGNOSTIC_SPEND_SYNC_TYPE = "diagnostic_dataset_spend"
 
 DIAGNOSTIC_DATASET_COLUMNS = [
     "Campaign name", "Ad set ID", "Lead Amount", "Day", "Reach", "Impressions",
@@ -2797,6 +2798,7 @@ def _activate_diagnostic_import(db: sqlite3.Connection, import_id: int, now: str
         "UPDATE diagnostic_dataset_imports SET is_active=1, status='active', activated_at=? WHERE id=?",
         (now, int(import_id)),
     )
+    _sync_diagnostic_dataset_to_operational(db, int(import_id), now)
 
 
 def _diagnostic_row_values(import_id: int, row: pd.Series) -> tuple:
@@ -2816,6 +2818,196 @@ def _diagnostic_row_values(import_id: int, row: pd.Series) -> tuple:
         _float_ready(row["Cost per lead"]), _float_ready(row["days_since_ad_set_started"]),
         int(row["_weekday"]), json.dumps(raw, ensure_ascii=False),
     )
+
+
+def _diagnostic_campaign_lookup(db: sqlite3.Connection) -> tuple[dict[str, str], dict[str, str]]:
+    campaign_by_name: dict[str, str] = {}
+    campaign_by_ad_set: dict[str, str] = {}
+    for row in db.execute(
+        """SELECT ad_set_id, campaign_id, campaign_name
+           FROM daily_ad_performance
+           WHERE TRIM(COALESCE(campaign_id, '')) <> ''
+           ORDER BY id DESC"""
+    ).fetchall():
+        campaign_id = str(row["campaign_id"] or "").strip()
+        campaign_name = str(row["campaign_name"] or "").strip()
+        ad_set_id = str(row["ad_set_id"] or "").strip()
+        if campaign_name:
+            campaign_by_name.setdefault(campaign_name.casefold(), campaign_id)
+            campaign_by_name.setdefault(display_campaign_name(campaign_name).casefold(), campaign_id)
+        if ad_set_id:
+            campaign_by_ad_set.setdefault(ad_set_id, campaign_id)
+    for row in db.execute(
+        """SELECT utm_ad_set_id, utm_campaign_id, utm_campaign
+           FROM lead_events
+           WHERE TRIM(COALESCE(utm_campaign_id, '')) <> ''
+           ORDER BY id DESC"""
+    ).fetchall():
+        campaign_id = str(row["utm_campaign_id"] or "").strip()
+        campaign_name = str(row["utm_campaign"] or "").strip()
+        ad_set_id = str(row["utm_ad_set_id"] or "").strip()
+        if campaign_name:
+            campaign_by_name.setdefault(campaign_name.casefold(), campaign_id)
+            campaign_by_name.setdefault(display_campaign_name(campaign_name).casefold(), campaign_id)
+        if ad_set_id:
+            campaign_by_ad_set.setdefault(ad_set_id, campaign_id)
+    return campaign_by_name, campaign_by_ad_set
+
+
+def _sync_diagnostic_dataset_to_operational(
+    db: sqlite3.Connection, import_id: int, now: str,
+) -> dict:
+    """Mirror the active diagnostic snapshot into operational spend/budget tables."""
+    source = db.execute(
+        "SELECT * FROM diagnostic_dataset_imports WHERE id=?", (int(import_id),)
+    ).fetchone()
+    if not source:
+        raise ValueError("Diagnostic dataset import not found.")
+    rows = db.execute(
+        """SELECT * FROM diagnostic_dataset_rows
+           WHERE import_id=?
+           ORDER BY day, campaign_name, ad_set_id""",
+        (int(import_id),),
+    ).fetchall()
+    previous_sync_uploads = db.execute(
+        "SELECT id FROM raw_uploads WHERE file_type=?", (DIAGNOSTIC_SPEND_SYNC_TYPE,)
+    ).fetchall()
+    for upload in previous_sync_uploads:
+        db.execute("DELETE FROM raw_uploads WHERE id=?", (int(upload["id"]),))
+
+    campaign_by_name, campaign_by_ad_set = _diagnostic_campaign_lookup(db)
+    upload = db.execute(
+        """INSERT INTO raw_uploads(file_name, stored_path, file_sha256, file_type, uploaded_at,
+           row_count, cleaned_count, total_spend_usd, date_min, date_max)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (
+            f"Diagnostic spend sync: {source['file_name']}",
+            source["stored_path"],
+            f"{source['file_sha256']}:operational-spend",
+            DIAGNOSTIC_SPEND_SYNC_TYPE,
+            now,
+            int(source["source_row_count"]),
+            len(rows),
+            sum(float(row["amount_spent_usd"] or 0.0) for row in rows),
+            source["date_min"],
+            source["date_max"],
+        ),
+    )
+    upload_id = int(upload.lastrowid)
+    inserted = 0
+    updated = 0
+    for row in rows:
+        day = str(row["day"])
+        ad_set_id = str(row["ad_set_id"])
+        campaign_name = str(row["campaign_name"] or "").strip()
+        campaign_id = (
+            campaign_by_ad_set.get(ad_set_id)
+            or campaign_by_name.get(campaign_name.casefold())
+            or campaign_by_name.get(display_campaign_name(campaign_name).casefold())
+            or campaign_name
+        )
+        existed = db.execute(
+            "SELECT 1 FROM daily_ad_performance WHERE day=? AND campaign_id=? AND ad_set_id=?",
+            (day, campaign_id, ad_set_id),
+        ).fetchone()
+        raw = json.loads(row["raw_json"]) if row["raw_json"] else {}
+        raw["_source"] = DIAGNOSTIC_DATASET_TYPE
+        raw["_diagnostic_import_id"] = int(import_id)
+        db.execute(
+            """INSERT INTO daily_ad_performance(
+               upload_id, day, campaign_id, campaign_name, ad_set_id, delivery_level,
+               amount_spent_usd, messaging_conversations_started,
+               cost_per_messaging_conversation_started, reach, impressions, frequency,
+               leads, cost_per_lead, meta_leads, link_clicks, unique_link_clicks,
+               days_since_adset_started_imported, ad_set_budget, ad_set_budget_type,
+               raw_json, created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(day, campaign_id, ad_set_id) DO UPDATE SET
+               upload_id=excluded.upload_id,
+               campaign_name=excluded.campaign_name,
+               delivery_level=excluded.delivery_level,
+               amount_spent_usd=excluded.amount_spent_usd,
+               messaging_conversations_started=excluded.messaging_conversations_started,
+               cost_per_messaging_conversation_started=excluded.cost_per_messaging_conversation_started,
+               reach=excluded.reach,
+               impressions=excluded.impressions,
+               frequency=excluded.frequency,
+               leads=excluded.leads,
+               cost_per_lead=excluded.cost_per_lead,
+               meta_leads=excluded.meta_leads,
+               link_clicks=excluded.link_clicks,
+               unique_link_clicks=excluded.unique_link_clicks,
+               days_since_adset_started_imported=excluded.days_since_adset_started_imported,
+               ad_set_budget=excluded.ad_set_budget,
+               ad_set_budget_type=excluded.ad_set_budget_type,
+               raw_json=excluded.raw_json,
+               updated_at=excluded.updated_at""",
+            (
+                upload_id,
+                day,
+                campaign_id,
+                campaign_name,
+                ad_set_id,
+                "adset",
+                _float_ready(row["amount_spent_usd"]),
+                _float_ready(row["messaging_conversations_started"]),
+                _float_ready(row["cost_per_messaging_conversation_started"]),
+                _float_ready(row["reach"]),
+                _float_ready(row["impressions"]),
+                _float_ready(row["frequency"]),
+                _float_ready(row["meta_leads"]),
+                _float_ready(row["cost_per_lead"]),
+                _float_ready(row["meta_leads"]),
+                _float_ready(row["link_clicks"]),
+                None,
+                _float_ready(row["days_since_ad_set_started"]),
+                _float_ready(row["ad_set_budget"]),
+                str(row["ad_set_budget_type"] or "").strip() or None,
+                json.dumps(raw, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            """UPDATE daily_ad_performance SET clicks_all=?, ctr_all=?, cpm=?
+               WHERE day=? AND campaign_id=? AND ad_set_id=?""",
+            (None, _float_ready(row["ctr_all"]), _float_ready(row["cpm"]), day, campaign_id, ad_set_id),
+        )
+        inserted += int(existed is None)
+        updated += int(existed is not None)
+    db.execute(
+        "UPDATE raw_uploads SET imported_count=?, updated_count=? WHERE id=?",
+        (inserted, updated, upload_id),
+    )
+    return {"upload_id": upload_id, "inserted": inserted, "updated": updated, "rows": len(rows)}
+
+
+def _diagnostic_budget_frame(import_id: int) -> pd.DataFrame:
+    with connect() as db:
+        rows = db.execute(
+            """SELECT day AS "Day", ad_set_id AS "Ad set ID", ad_set_budget AS "Ad Set Budget",
+                      ad_set_budget_type AS "Ad Set Budget Type",
+                      amount_spent_usd AS "Amount spent (USD)"
+               FROM diagnostic_dataset_rows
+               WHERE import_id=?
+               ORDER BY ad_set_id, day""",
+            (int(import_id),),
+        ).fetchall()
+    if not rows:
+        return pd.DataFrame(columns=[
+            "Day", "Ad set ID", "Ad Set Budget", "Ad Set Budget Type", "Amount spent (USD)",
+        ])
+    frame = pd.DataFrame([dict(row) for row in rows])
+    frame["Day"] = pd.to_datetime(frame["Day"], errors="coerce")
+    for column in ("Ad Set Budget", "Amount spent (USD)"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+def _refresh_operational_state_from_diagnostic(import_id: int) -> dict:
+    budget_summary = store_derived_budget_periods(derive_budget_periods(_diagnostic_budget_frame(import_id)))
+    run = train_models()
+    return {"budget_summary": budget_summary, "training_run": run}
 
 
 def confirm_diagnostic_dataset_preview(token: str, filename: str | None = None) -> dict:
@@ -2838,45 +3030,58 @@ def confirm_diagnostic_dataset_preview(token: str, filename: str | None = None) 
                 "SELECT id FROM diagnostic_dataset_imports WHERE file_sha256=?", (file_hash,)
             ).fetchone()
             if existing:
-                _activate_diagnostic_import(db, int(existing["id"]), now)
-                return {"import_id": int(existing["id"]), "status": "active", "duplicate_file": True}
+                existing_id = int(existing["id"])
+                _activate_diagnostic_import(db, existing_id, now)
+                refresh_after_commit = existing_id
+                result = {"import_id": existing_id, "status": "active", "duplicate_file": True}
+            else:
+                refresh_after_commit = None
+                result = None
 
-            diagnostic_upload_dir = UPLOAD_DIR / "diagnostic-datasets"
-            diagnostic_upload_dir.mkdir(parents=True, exist_ok=True)
-            stored_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}{preview_path.suffix}"
-            moved_path = diagnostic_upload_dir / stored_name
-            shutil.move(str(preview_path), moved_path)
-            db.execute(
-                "UPDATE diagnostic_dataset_imports SET is_active=0, status='superseded' WHERE is_active=1"
-            )
-            cursor = db.execute(
-                """INSERT INTO diagnostic_dataset_imports(
-                   file_name, stored_path, file_sha256, uploaded_at, schema_version,
-                   source_row_count, clean_row_count, rejected_row_count, duplicate_group_count,
-                   date_min, date_max, campaign_count, ad_set_count, status, validation_json,
-                   activated_at, is_active)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,1)""",
-                (
-                    filename or moved_path.name, str(moved_path), file_hash, now, 1,
-                    report["source_rows"], report["clean_rows"], report["rejected_rows"],
-                    report["duplicate_group_count"], report["date_min"], report["date_max"],
-                    report["campaign_count"], report["ad_set_count"],
-                    json.dumps(report, ensure_ascii=False), now,
-                ),
-            )
-            import_id = int(cursor.lastrowid)
-            db.executemany(
-                """INSERT INTO diagnostic_dataset_rows(
-                   import_id, source_row, day, campaign_name, ad_set_id, lead_amount,
-                   reach, impressions, amount_spent_usd, frequency, ad_set_budget,
-                   ad_set_budget_type, messaging_conversations_started,
-                   cost_per_messaging_conversation_started, ctr_all, cpm, link_clicks,
-                   meta_leads, cost_per_lead, days_since_ad_set_started, weekday, raw_json)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                [_diagnostic_row_values(import_id, row) for _, row in frame.iterrows()],
-            )
-        return {"import_id": import_id, "status": "active", "duplicate_file": False,
-                "rows": int(len(frame)), "date_min": report["date_min"], "date_max": report["date_max"]}
+            if result is None:
+                diagnostic_upload_dir = UPLOAD_DIR / "diagnostic-datasets"
+                diagnostic_upload_dir.mkdir(parents=True, exist_ok=True)
+                stored_name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}{preview_path.suffix}"
+                moved_path = diagnostic_upload_dir / stored_name
+                shutil.move(str(preview_path), moved_path)
+                db.execute(
+                    "UPDATE diagnostic_dataset_imports SET is_active=0, status='superseded' WHERE is_active=1"
+                )
+                cursor = db.execute(
+                    """INSERT INTO diagnostic_dataset_imports(
+                       file_name, stored_path, file_sha256, uploaded_at, schema_version,
+                       source_row_count, clean_row_count, rejected_row_count, duplicate_group_count,
+                       date_min, date_max, campaign_count, ad_set_count, status, validation_json,
+                       activated_at, is_active)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,1)""",
+                    (
+                        filename or moved_path.name, str(moved_path), file_hash, now, 1,
+                        report["source_rows"], report["clean_rows"], report["rejected_rows"],
+                        report["duplicate_group_count"], report["date_min"], report["date_max"],
+                        report["campaign_count"], report["ad_set_count"],
+                        json.dumps(report, ensure_ascii=False), now,
+                    ),
+                )
+                import_id = int(cursor.lastrowid)
+                db.executemany(
+                    """INSERT INTO diagnostic_dataset_rows(
+                       import_id, source_row, day, campaign_name, ad_set_id, lead_amount,
+                       reach, impressions, amount_spent_usd, frequency, ad_set_budget,
+                       ad_set_budget_type, messaging_conversations_started,
+                       cost_per_messaging_conversation_started, ctr_all, cpm, link_clicks,
+                       meta_leads, cost_per_lead, days_since_ad_set_started, weekday, raw_json)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    [_diagnostic_row_values(import_id, row) for _, row in frame.iterrows()],
+                )
+                sync_summary = _sync_diagnostic_dataset_to_operational(db, import_id, now)
+                refresh_after_commit = import_id
+                result = {"import_id": import_id, "status": "active", "duplicate_file": False,
+                          "rows": int(len(frame)), "date_min": report["date_min"],
+                          "date_max": report["date_max"], "operational_sync": sync_summary}
+        refresh = _refresh_operational_state_from_diagnostic(refresh_after_commit)
+        return {**result, "budget_periods_written": refresh["budget_summary"]["written"],
+                "budget_periods_kept_manual": refresh["budget_summary"]["skipped_manual"],
+                "training_run": refresh["training_run"]}
     except Exception:
         if moved_path is not None and moved_path.exists():
             moved_path.unlink(missing_ok=True)
@@ -11469,7 +11674,11 @@ def activate_diagnostic_dataset_import(import_id: int) -> dict:
         row = db.execute(
             "SELECT * FROM diagnostic_dataset_imports WHERE id=?", (int(import_id),)
         ).fetchone()
-    return {"active": _diagnostic_import_dict(row)}
+    refresh = _refresh_operational_state_from_diagnostic(int(import_id))
+    return {"active": _diagnostic_import_dict(row),
+            "budget_periods_written": refresh["budget_summary"]["written"],
+            "budget_periods_kept_manual": refresh["budget_summary"]["skipped_manual"],
+            "training_run": refresh["training_run"]}
 
 
 def get_diagnostic_dataset_scopes() -> dict:

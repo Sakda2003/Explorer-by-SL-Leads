@@ -3,7 +3,8 @@
 The Dataset page's correlation matrix and multivariate OLS use a dedicated,
 versioned snapshot store. They do not read from `lead_events`, `daily_ad_performance`,
 `model_dataset`, or another operational table, and there is no fallback to those sources.
-The Forecast page remains on its existing `/api/ols-summary` path.
+The Forecast page remains on its existing `/api/ols-summary` path, but activating a
+diagnostic snapshot also refreshes the operational spend and budget inputs used by Forecast.
 
 ## Import contract
 
@@ -17,6 +18,13 @@ Each successful import is stored as a complete, immutable version in
 row counts, date range, validation summary, upload time, and activation time are retained.
 Only one version is active. Activation is transactional, older versions remain available
 for rollback, and importing the same file hash reuses its existing version.
+Activation mirrors the active snapshot into `daily_ad_performance` using an internal
+`diagnostic_dataset_spend` upload row, then rebuilds derived budget periods from `Ad Set
+Budget` and retrains models. Existing campaign IDs are resolved from prior ad-performance
+or lead rows by ad set/campaign name when possible; otherwise campaign name is used as the
+scope key. Reactivating an older diagnostics version repeats the same sync so Forecast,
+budget scenario, spend charts, and Dataset ad-performance boards move with the active
+snapshot.
 
 The UI previews a snapshot before activation and shows its validation blockers, warnings,
 active version, source hash, import date/time, coverage, freshness, combined or duplicate

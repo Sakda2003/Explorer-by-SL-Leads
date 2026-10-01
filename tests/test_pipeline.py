@@ -3314,32 +3314,49 @@ class DiagnosticDatasetTests(unittest.TestCase):
         self.import_snapshot(self.workbook_bytes(), "isolated.xlsx")
         self.assertEqual(before, core.get_ols_model_summaries())
 
-    def test_ad_spend_analytics_can_display_active_diagnostic_snapshot(self):
+    def test_diagnostic_import_updates_operational_spend_and_budget(self):
         frame = pd.read_excel(io.BytesIO(self.workbook_bytes(days=3)), dtype={"Ad set ID": str})
+        now = core.utc_now()
+        with core.connect() as db:
+            db.execute(
+                """INSERT INTO raw_uploads(id,file_name,stored_path,file_sha256,file_type,uploaded_at,row_count)
+                   VALUES(900,'old.xlsx','old.xlsx','old','ad_performance',?,1)""", (now,)
+            )
+            db.execute(
+                """INSERT INTO daily_ad_performance(
+                   upload_id,day,campaign_id,campaign_name,ad_set_id,amount_spent_usd,ad_set_budget,
+                   raw_json,created_at,updated_at)
+                   VALUES(900,'2026-01-01','campaign-1','Leads | VISA | TEST',?,1,1,'{}',?,?)""",
+                (str(frame.loc[0, "Ad set ID"]), now, now),
+            )
         self.import_snapshot(self.frame_bytes(frame), "display-spend.xlsx")
+        with core.connect() as db:
+            rows = db.execute(
+                """SELECT day, campaign_id, campaign_name, ad_set_id, amount_spent_usd,
+                          ad_set_budget, ad_set_budget_type, upload_id
+                   FROM daily_ad_performance ORDER BY day"""
+            ).fetchall()
+            sync_uploads = db.execute(
+                "SELECT COUNT(*) FROM raw_uploads WHERE file_type=?", (core.DIAGNOSTIC_SPEND_SYNC_TYPE,)
+            ).fetchone()[0]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(sync_uploads, 1)
+        self.assertEqual(rows[0]["campaign_id"], "campaign-1")
+        self.assertEqual(rows[0]["amount_spent_usd"], float(frame.loc[0, "Amount spent (USD)"]))
+        self.assertEqual(rows[0]["ad_set_budget"], float(frame.loc[0, "Ad Set Budget"]))
+        self.assertEqual(rows[0]["ad_set_budget_type"], "Daily")
+        self.assertEqual(sum(float(row["amount_spent_usd"]) for row in rows),
+                         float(frame["Amount spent (USD)"].sum()))
+        periods = core.list_budget_periods(str(frame.loc[0, "Ad set ID"]))
+        self.assertTrue(periods)
+        self.assertEqual(periods[0]["daily_budget"], float(frame.loc[0, "Ad Set Budget"]))
+
         analytics = core.get_ad_spend_analytics()
         self.assertTrue(analytics["available"])
         self.assertEqual(analytics["summary"]["spend"], float(frame["Amount spent (USD)"].sum()))
         self.assertEqual(analytics["summary"]["spend_date_start"], "2026-01-01")
         self.assertEqual(analytics["summary"]["spend_date_end"], "2026-01-03")
         self.assertEqual(len(analytics["daily_ad_sets"]), 3)
-
-        now = core.utc_now()
-        with core.connect() as db:
-            db.execute(
-                """INSERT INTO raw_uploads(id,file_name,stored_path,file_sha256,file_type,uploaded_at,row_count)
-                   VALUES(900,'other.xlsx','other.xlsx','other','ad_performance',?,1)""", (now,)
-            )
-            db.execute(
-                """INSERT INTO daily_ad_performance(
-                   upload_id,day,campaign_id,campaign_name,ad_set_id,amount_spent_usd,raw_json,created_at,updated_at)
-                   VALUES(900,'2026-01-01','operational','Operational campaign',?,1,'{}',?,?)""",
-                (str(frame.loc[0, "Ad set ID"]), now, now),
-            )
-        overlay = core.get_ad_spend_analytics()
-        expected = float(frame.loc[1:, "Amount spent (USD)"].sum()) + 1.0
-        self.assertEqual(overlay["summary"]["spend"], expected)
-        self.assertEqual(len(overlay["daily_ad_sets"]), 3)
 
     def test_operational_tables_do_not_change_diagnostic_results(self):
         self.import_snapshot(self.workbook_bytes())
