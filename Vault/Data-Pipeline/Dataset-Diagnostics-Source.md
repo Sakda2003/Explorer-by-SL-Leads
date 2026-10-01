@@ -18,24 +18,29 @@ row counts, date range, validation summary, upload time, and activation time are
 Only one version is active. Activation is transactional, older versions remain available
 for rollback, and importing the same file hash reuses its existing version.
 
-The UI previews a snapshot before activation and shows its validation blockers, active
-version, source hash, import date/time, coverage, freshness, duplicate grain keys, and
-history. Freshness is based on the original upload time, so reactivating an old version
-does not make it appear newly refreshed.
+The UI previews a snapshot before activation and shows its validation blockers, warnings,
+active version, source hash, import date/time, coverage, freshness, combined or duplicate
+grain keys, and history. Freshness is based on the original upload time, so reactivating
+an old version does not make it appear newly refreshed.
 
 ## Validation and grain
 
 The canonical row grain is `Day + Campaign name + Ad set ID`. Missing required headers,
 invalid required values, Day/Date mismatches, weekday mismatches, negative metrics, and
-duplicate grain keys block activation. Optional numeric blanks stay `NULL`; they are not
-silently changed to zero. Correlations use pairwise-complete observations and report their
-sample sizes. OLS uses complete cases and reports its actual observation count.
+duplicate groups with conflicting `Lead Amount` values block activation. Duplicate export
+fragments with the same `Lead Amount` are combined into one row per grain: spend and
+additive counters are summed, rates are recomputed where their components are available,
+and `Reach`/`Frequency` are left `NULL` for combined rows because audience reach is a
+unique-person metric. Optional numeric blanks stay `NULL`; they are not silently changed
+to zero. Correlations use pairwise-complete observations and report their sample sizes.
+OLS uses complete cases and reports its actual observation count.
 OLS also returns each excluded term with a specific constant, complete-case, or stable
 rank-dependence reason, and explains when a scope has too few observations to fit safely.
 
 The supplied `Ad-Performance-06-06--28-09.xlsm` previews as 1,158 rows from 2026-06-06
 through 2026-09-28, covering 11 campaigns and 11 ad sets. It contains 39 duplicate grain
-groups, so it is intentionally blocked from activation until those duplicates are resolved.
+groups, which roll up to 1,119 diagnostic rows and can be activated with an aggregation
+warning.
 
 ## API surface
 

@@ -1144,4 +1144,4 @@ The correlation matrix and multivariate OLS are now isolated from the operationa
 tables and read only from the active, versioned diagnostics snapshot. The Dataset page can
 preview, validate, activate, inspect, and roll back these imports while showing file/version
 provenance and freshness. See [[Dataset-Diagnostics-Source]] for the storage contract,
-validation grain, endpoints, and the supplied workbook's duplicate-key blocker.
+validation grain, duplicate-fragment rollup, endpoints, and supplied workbook behavior.

@@ -3169,20 +3169,44 @@ class DiagnosticDatasetTests(unittest.TestCase):
         self.assertEqual(result["import_id"], imported["import_id"])
         self.assertEqual(result["multivariate"]["dep_variable"], "Lead Amount")
 
-    def test_duplicate_grain_and_weekday_mismatch_block_activation(self):
+    def test_duplicate_grain_rolls_up_and_weekday_mismatch_blocks_activation(self):
         duplicate = core.preview_diagnostic_dataset_file(
             self.workbook_bytes(duplicate=True), "duplicate.xlsx"
         )
         self.assertEqual(duplicate["duplicate_group_count"], 1)
-        self.assertFalse(duplicate["can_activate"])
-        with self.assertRaisesRegex(ValueError, "Activation blocked"):
-            core.confirm_diagnostic_dataset_preview(duplicate["token"], "duplicate.xlsx")
+        self.assertTrue(duplicate["can_activate"])
+        self.assertTrue(any("were combined" in message for message in duplicate["warnings"]))
+        imported = core.confirm_diagnostic_dataset_preview(duplicate["token"], "duplicate.xlsx")
+        self.assertEqual(imported["rows"], 42)
+        with core.connect() as db:
+            stored = db.execute(
+                """SELECT amount_spent_usd, reach, frequency
+                   FROM diagnostic_dataset_rows
+                   WHERE import_id=? AND day='2026-01-01'""",
+                (imported["import_id"],),
+            ).fetchone()
+        self.assertEqual(stored["amount_spent_usd"], 107.0)
+        self.assertIsNone(stored["reach"])
+        self.assertIsNone(stored["frequency"])
+
         weekday = core.preview_diagnostic_dataset_file(
             self.workbook_bytes(weekday_error=True), "weekday.xlsx"
         )
         self.assertFalse(weekday["can_activate"])
         self.assertTrue(any("weekday" in message for message in weekday["blocking_errors"]))
-        self.assertIsNone(core.get_diagnostic_dataset_status()["active"])
+
+    def test_conflicting_duplicate_lead_amount_blocks_activation(self):
+        frame = pd.read_excel(io.BytesIO(self.workbook_bytes()), dtype={"Ad set ID": str})
+        duplicate = dict(frame.iloc[0])
+        duplicate["Lead Amount"] = float(duplicate["Lead Amount"]) + 5
+        duplicate["Amount spent (USD)"] = 99
+        frame = pd.concat([frame, pd.DataFrame([duplicate])], ignore_index=True)
+        preview = core.preview_diagnostic_dataset_file(self.frame_bytes(frame), "conflict.xlsx")
+        self.assertEqual(preview["duplicate_group_count"], 1)
+        self.assertFalse(preview["can_activate"])
+        self.assertTrue(any("conflicting Lead Amount" in message for message in preview["blocking_errors"]))
+        with self.assertRaisesRegex(ValueError, "conflicting Lead Amount"):
+            core.confirm_diagnostic_dataset_preview(preview["token"], "conflict.xlsx")
 
     def test_date_mismatch_and_negative_metrics_block_activation(self):
         date_mismatch = core.preview_diagnostic_dataset_file(
@@ -3200,9 +3224,11 @@ class DiagnosticDatasetTests(unittest.TestCase):
 
     def test_failed_import_keeps_the_previous_active_version(self):
         active = self.import_snapshot(self.workbook_bytes(), "active.xlsx")
-        invalid = core.preview_diagnostic_dataset_file(
-            self.workbook_bytes(duplicate=True), "invalid.xlsx"
-        )
+        frame = pd.read_excel(io.BytesIO(self.workbook_bytes()), dtype={"Ad set ID": str})
+        duplicate = dict(frame.iloc[0])
+        duplicate["Lead Amount"] = float(duplicate["Lead Amount"]) + 5
+        frame = pd.concat([frame, pd.DataFrame([duplicate])], ignore_index=True)
+        invalid = core.preview_diagnostic_dataset_file(self.frame_bytes(frame), "invalid.xlsx")
         with self.assertRaisesRegex(ValueError, "Activation blocked"):
             core.confirm_diagnostic_dataset_preview(invalid["token"], "invalid.xlsx")
         self.assertEqual(core.get_diagnostic_dataset_status()["active"]["id"], active["import_id"])
@@ -3310,20 +3336,22 @@ class DiagnosticDatasetTests(unittest.TestCase):
         self.assertEqual(before_correlation, core.get_diagnostic_dataset_correlation())
         self.assertEqual(before_ols, core.get_diagnostic_dataset_ols())
 
-    def test_supplied_workbook_preview_reports_duplicate_blockers(self):
+    def test_supplied_workbook_preview_rolls_up_duplicate_groups(self):
         sample = Path(__file__).resolve().parents[1] / "Dataset" / "Datsaa" / "Dataset Template" / "Full Information Dataset" / "Meta Ads Spending" / "Ad-Performance-06-06--28-09.xlsm"
         if not sample.exists():
             self.skipTest("The supplied diagnostic workbook is not available in this checkout.")
         preview = core.preview_diagnostic_dataset_file(sample.read_bytes(), sample.name)
         self.assertEqual(preview["source_rows"], 1158)
+        self.assertEqual(preview["clean_rows"], 1119)
         self.assertEqual((preview["date_min"], preview["date_max"]),
                          ("2026-06-06", "2026-09-28"))
         self.assertEqual(preview["campaign_count"], 11)
         self.assertEqual(preview["ad_set_count"], 11)
         self.assertEqual(preview["duplicate_group_count"], 39)
-        self.assertFalse(preview["can_activate"])
-        with self.assertRaisesRegex(ValueError, "39 duplicate"):
-            core.confirm_diagnostic_dataset_preview(preview["token"], sample.name)
+        self.assertTrue(preview["can_activate"])
+        self.assertTrue(any("were combined" in message for message in preview["warnings"]))
+        imported = core.confirm_diagnostic_dataset_preview(preview["token"], sample.name)
+        self.assertEqual(imported["rows"], 1119)
 
 
 if __name__ == "__main__":

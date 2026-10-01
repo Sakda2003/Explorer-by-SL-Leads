@@ -6949,9 +6949,14 @@ function DatasetPage({ role }: { role: UserRole }) {
         {diagnosticPreview.blocking_errors.map((message: string) => <p key={message}><AlertTriangle size={14} />{message}</p>)}
        </div>
       )}
+      {!!diagnosticPreview.warnings?.length && (
+       <div className="diagnostic-preview-warnings">
+        {diagnosticPreview.warnings.map((message: string) => <p key={message}><Info size={14} />{message}</p>)}
+       </div>
+      )}
       {!!diagnosticPreview.duplicate_keys?.length && (
        <div className="diagnostic-preview-duplicates">
-        <strong>Duplicated grain keys</strong>
+        <strong>{diagnosticPreview.can_activate ? 'Combined grain keys' : 'Duplicated grain keys'}</strong>
         {diagnosticPreview.duplicate_keys.slice(0, 5).map((item: any) => (
          <p key={`${item.day}-${item.campaign_name}-${item.ad_set_id}`}>
           {item.day} · {item.campaign_name} · {item.ad_set_id} ({item.rows} rows)

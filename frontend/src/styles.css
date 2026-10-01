@@ -5421,6 +5421,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .diagnostic-preview-errors { display: grid; gap: 6px; }
 .diagnostic-preview-errors p { display: flex; align-items: flex-start; gap: 7px; color: var(--danger); }
 .diagnostic-preview-errors svg { flex: none; margin-top: 1px; }
+.diagnostic-preview-warnings { display: grid; gap: 6px; }
+.diagnostic-preview-warnings p { display: flex; align-items: flex-start; gap: 7px; color: var(--yellow-strong); }
+.diagnostic-preview-warnings svg { flex: none; margin-top: 1px; }
 .diagnostic-preview-duplicates { display: grid; gap: 4px; padding-top: 9px; border-top: 1px solid var(--line); }
 .diagnostic-preview-duplicates strong { color: var(--muted); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
 .diagnostic-preview-duplicates p { overflow: hidden; color: var(--text); font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }

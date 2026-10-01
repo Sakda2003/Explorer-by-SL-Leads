@@ -114,6 +114,10 @@ DIAGNOSTIC_DATASET_NUMERIC_COLUMNS = [
     "CPM (cost per 1,000 impressions)", "Link clicks", "Meta Leads", "Cost per lead",
     "days_since_ad_set_started",
 ]
+DIAGNOSTIC_DATASET_ADDITIVE_COLUMNS = [
+    "Amount spent (USD)", "Impressions", "Messaging conversations started",
+    "Link clicks", "Meta Leads",
+]
 
 AD_PERFORMANCE_COLUMNS = [
     "Campaign name", "Campaign ID", "Ad set ID", "Ad ID", "Day", "Delivery status", "Delivery level",
@@ -2517,6 +2521,72 @@ def _backfill_imported_ad_performance_derived_values(db: sqlite3.Connection) -> 
     return updated
 
 
+def _rollup_diagnostic_dataset_rows(frame: pd.DataFrame, grain: list[str]) -> pd.DataFrame:
+    """Collapse repeated diagnostic export fragments to the analytical ad-set-day grain."""
+    if frame.empty:
+        return frame.copy()
+
+    grouped = frame.groupby(grain, dropna=False, sort=False)
+
+    def _sum(series: pd.Series) -> float:
+        return series.sum(min_count=len(series))
+
+    def _first_text(series: pd.Series) -> str:
+        return next((str(value).strip() for value in series if str(value).strip()), "")
+
+    specification: dict[str, object] = {column: _sum for column in DIAGNOSTIC_DATASET_ADDITIVE_COLUMNS}
+    specification.update({
+        "Lead Amount": "first",
+        "Ad Set Budget": "max",
+        "Ad Set Budget Type": _first_text,
+        "Date": "first",
+        "Day of the week": "first",
+        "days_since_ad_set_started": "max",
+        "_weekday": "first",
+        "_source_row": "min",
+    })
+    aggregated = grouped.agg(specification).reset_index()
+    group_sizes = grouped.size()
+    single_values = grouped[[
+        "Reach", "Frequency", "CTR (all)", "CPM (cost per 1,000 impressions)",
+        "Cost per messaging conversation started", "Cost per lead",
+    ]].first()
+    single_values = single_values.where(group_sizes.eq(1), axis=0).reset_index()
+    aggregated = aggregated.merge(single_values, on=grain, how="left")
+
+    duplicate_mask = aggregated.set_index(grain).index.map(group_sizes).to_numpy() > 1
+
+    def _safe_rate(numerator: pd.Series, denominator: pd.Series, scale: float = 1.0) -> pd.Series:
+        return numerator / denominator.where(denominator.fillna(0) > 0) * scale
+
+    aggregated.loc[duplicate_mask, "Frequency"] = np.nan
+    aggregated.loc[duplicate_mask, "CPM (cost per 1,000 impressions)"] = _safe_rate(
+        aggregated.loc[duplicate_mask, "Amount spent (USD)"],
+        aggregated.loc[duplicate_mask, "Impressions"],
+        1000.0,
+    )
+    aggregated.loc[duplicate_mask, "Cost per messaging conversation started"] = _safe_rate(
+        aggregated.loc[duplicate_mask, "Amount spent (USD)"],
+        aggregated.loc[duplicate_mask, "Messaging conversations started"],
+    )
+    aggregated.loc[duplicate_mask, "Cost per lead"] = _safe_rate(
+        aggregated.loc[duplicate_mask, "Amount spent (USD)"],
+        aggregated.loc[duplicate_mask, "Meta Leads"],
+    )
+
+    ctr_parts = frame.copy()
+    ctr_parts["_ctr_clicks_all"] = ctr_parts["CTR (all)"] / 100.0 * ctr_parts["Impressions"]
+    ctr_grouped = ctr_parts.groupby(grain, dropna=False, sort=False)
+    ctr_totals = ctr_grouped["_ctr_clicks_all"].agg(_sum)
+    impressions = ctr_grouped["Impressions"].agg(_sum)
+    ctr = (ctr_totals / impressions.where(impressions.fillna(0) > 0) * 100.0).reset_index(name="_rolled_ctr_all")
+    aggregated = aggregated.merge(ctr, on=grain, how="left")
+    aggregated.loc[duplicate_mask, "CTR (all)"] = aggregated.loc[duplicate_mask, "_rolled_ctr_all"]
+    aggregated = aggregated.drop(columns=["_rolled_ctr_all"])
+
+    return aggregated.loc[:, [*DIAGNOSTIC_DATASET_COLUMNS, "_source_row", "_weekday"]].copy()
+
+
 def read_diagnostic_dataset(path_or_buffer, extension: str) -> pd.DataFrame:
     """Read one self-contained Dataset diagnostics snapshot without consulting storage."""
     extension = extension.lower()
@@ -2596,6 +2666,22 @@ def read_diagnostic_dataset(path_or_buffer, extension: str) -> pd.DataFrame:
         }
         for key, count in duplicate_sizes.head(100).items()
     ]
+    lead_conflicts = []
+    if len(duplicate_sizes):
+        duplicate_groups = cleaned.groupby(grain, dropna=False, sort=False)
+        for key, group in duplicate_groups:
+            if len(group) <= 1:
+                continue
+            lead_values = group["Lead Amount"].dropna().unique()
+            if len(lead_values) > 1:
+                lead_conflicts.append({
+                    "day": pd.Timestamp(key[0]).date().isoformat(),
+                    "campaign_name": str(key[1]),
+                    "ad_set_id": str(key[2]),
+                    "values": [float(value) for value in lead_values[:5]],
+                })
+        if not lead_conflicts:
+            cleaned = _rollup_diagnostic_dataset_rows(cleaned, grain)
     missing_values = {
         column: int(cleaned[column].isna().sum())
         for column in DIAGNOSTIC_DATASET_NUMERIC_COLUMNS
@@ -2610,10 +2696,16 @@ def read_diagnostic_dataset(path_or_buffer, extension: str) -> pd.DataFrame:
         blocking_errors.append(f"{int(weekday_mismatch.sum())} rows have weekday labels that do not match Day.")
     if int(negative_metric.sum()):
         blocking_errors.append(f"{int(negative_metric.sum())} rows contain a negative metric.")
-    if len(duplicate_sizes):
+    if lead_conflicts:
         blocking_errors.append(
-            f"{len(duplicate_sizes)} duplicate day, campaign, and ad-set groups must be resolved in the source. "
-            "Provide one row per grain or include the missing partition field; Reach and Frequency cannot be combined safely."
+            f"{len(lead_conflicts)} duplicate day, campaign, and ad-set groups have conflicting Lead Amount values. "
+            "Resolve those target values in the source before activation."
+        )
+    warnings: list[str] = []
+    if len(duplicate_sizes) and not lead_conflicts:
+        warnings.append(
+            f"{len(duplicate_sizes)} duplicate day, campaign, and ad-set groups were combined into one row each. "
+            "Spend and counters were summed, rates were recomputed where possible, and Reach/Frequency were left blank for combined rows."
         )
 
     dates = cleaned["Day"].dropna()
@@ -2629,7 +2721,7 @@ def read_diagnostic_dataset(path_or_buffer, extension: str) -> pd.DataFrame:
         "ad_set_count": int(cleaned["Ad set ID"].nunique()),
         "missing_values": missing_values,
         "blocking_errors": blocking_errors,
-        "warnings": [],
+        "warnings": warnings,
         "source_columns": source_columns,
         "recognized_columns": DIAGNOSTIC_DATASET_COLUMNS,
     }
@@ -2664,6 +2756,8 @@ def _diagnostic_preview_payload(frame: pd.DataFrame, token: str, filename: str) 
         "missing_values": report["missing_values"],
         "blocking_errors": report["blocking_errors"],
         "warnings": report["warnings"],
+        "recognized_columns": report["recognized_columns"],
+        "source_columns": report["source_columns"],
         "can_activate": not report["blocking_errors"],
         "columns": preview_columns,
         "rows": rows.to_dict(orient="records"),
