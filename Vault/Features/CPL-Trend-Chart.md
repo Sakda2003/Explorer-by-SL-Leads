@@ -20,5 +20,12 @@ horizon, breaking alignment with the other two charts. A `showForecast` toggle
 (default off) now clips the default view to the last actual date and hides the
 forecast render blocks until switched on.
 
-No backend change — see [[Ad-Decision-Engine]] and [[Leadlens-Ad-Export-Grain-And-Budget]]
-for the underlying spend/leads data model.
+**Diagnostic snapshot fallback, 2026-10-01:** `GET /api/dashboard/ad-spend` still
+prefers `daily_ad_performance`, but now fills missing `day + ad_set_id` spend display
+rows from the active dedicated diagnostics snapshot. This is read-only display recovery:
+it does not mutate operational tables, does not double-count operational rows that already
+exist, and does not change the Forecast OLS path. See [[Dataset-Diagnostics-Source]] for
+the snapshot import contract.
+
+See [[Ad-Decision-Engine]] and [[Leadlens-Ad-Export-Grain-And-Budget]] for the underlying
+spend/leads data model.

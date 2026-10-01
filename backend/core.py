@@ -4158,10 +4158,49 @@ def _finite_or_none(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _diagnostic_spend_fallback_rows(db: sqlite3.Connection, existing_keys: set[tuple[str, str]]) -> list[dict]:
+    """Active diagnostic snapshot rows shaped like daily_ad_performance for spend displays."""
+    active = db.execute(
+        "SELECT id FROM diagnostic_dataset_imports WHERE is_active=1 ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not active:
+        return []
+    rows = db.execute(
+        """SELECT day, campaign_name, ad_set_id, lead_amount, reach, impressions,
+                  amount_spent_usd, messaging_conversations_started, link_clicks,
+                  meta_leads, cost_per_lead
+           FROM diagnostic_dataset_rows
+           WHERE import_id=?
+           ORDER BY day, campaign_name, ad_set_id""",
+        (int(active["id"]),),
+    ).fetchall()
+    fallback = []
+    for row in rows:
+        key = (str(row["day"]), str(row["ad_set_id"]))
+        if key in existing_keys:
+            continue
+        fallback.append({
+            "day": row["day"],
+            "campaign_id": str(row["campaign_name"] or ""),
+            "campaign_name": row["campaign_name"],
+            "ad_set_id": row["ad_set_id"],
+            "amount_spent_usd": row["amount_spent_usd"],
+            "leads": row["meta_leads"],
+            "reach": row["reach"],
+            "impressions": row["impressions"],
+            "link_clicks": row["link_clicks"],
+            "unique_link_clicks": 0,
+            "messaging_conversations_started": row["messaging_conversations_started"],
+        })
+    return fallback
+
+
 def get_ad_spend_analytics() -> dict:
     """Return dashboard-ready Meta ad spend analytics without changing lead forecasts."""
     with connect() as db:
         ad_rows = db.execute("SELECT * FROM daily_ad_performance ORDER BY day, campaign_name, ad_set_id").fetchall()
+        existing_spend_keys = {(str(row["day"]), str(row["ad_set_id"])) for row in ad_rows}
+        diagnostic_fallback_rows = _diagnostic_spend_fallback_rows(db, existing_spend_keys)
         actual_rows = db.execute(
             """SELECT date(created_at) day,
                       COALESCE(utm_campaign_id, '') campaign_id,
@@ -4173,6 +4212,8 @@ def get_ad_spend_analytics() -> dict:
                GROUP BY date(created_at), COALESCE(utm_campaign_id, ''), COALESCE(utm_campaign, ''), utm_ad_set_id
                ORDER BY day, campaign_name, ad_set_id"""
         ).fetchall()
+    if diagnostic_fallback_rows:
+        ad_rows = [*ad_rows, *diagnostic_fallback_rows]
     if not ad_rows:
         return {
             "available": False,
