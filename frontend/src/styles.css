@@ -5604,8 +5604,9 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .dataset-ols .model-gov-ols-card { padding: 0; border: 0; border-radius: 0; background: none; }
 .dataset-ols .model-gov-ols-card + .model-gov-ols-card { padding-left: 20px; border-left: 1px solid var(--line); }
 .dataset-ols.model-gov-ols.is-notebook {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 26px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: start;
 }
 .dataset-ols .model-gov-ols-card.is-notebook + .model-gov-ols-card.is-notebook {
   padding-left: 0;
@@ -5636,7 +5637,7 @@ tr:hover .benchmark-bar span { opacity: 1; }
 .model-gov-ols-notebook-printout .model-gov-ols-ascii-rule,
 .model-gov-ols-notebook-printout .model-gov-ols-print-summary,
 .model-gov-ols-notebook-printout .model-gov-ols-detail-table {
-  min-width: 790px;
+  min-width: 880px;
 }
 .model-gov-ols-notebook-printout .model-gov-ols-print-title {
   color: var(--ols-muted);
@@ -5647,19 +5648,24 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-size: 14px;
 }
 .model-gov-ols-notebook-printout .model-gov-ols-print-summary-row {
-  grid-template-columns: 150px 240px 190px 190px;
+  grid-template-columns: 140px 285px 185px 145px;
   min-height: 23px;
-  gap: 0;
+  gap: 0 12px;
 }
 .model-gov-ols-notebook-printout .model-gov-ols-print-label,
 .model-gov-ols-notebook-printout .model-gov-ols-print-summary-row b {
   font-size: 14px;
 }
+.model-gov-ols-notebook-printout .model-gov-ols-print-summary-row b {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
 .model-gov-ols-notebook-printout .model-gov-ols-detail-table-head,
 .model-gov-ols-notebook-printout .model-gov-ols-detail-table-row {
-  grid-template-columns: 210px repeat(6, 96px);
-  gap: 0;
-  min-width: 790px;
+  grid-template-columns: 300px repeat(6, 86px);
+  gap: 0 8px;
+  min-width: 880px;
 }
 .model-gov-ols-notebook-printout .model-gov-ols-detail-table-head,
 .model-gov-ols-notebook-printout .model-gov-ols-detail-table-row,
@@ -5667,13 +5673,14 @@ tr:hover .benchmark-bar span { opacity: 1; }
   font-size: 14px;
 }
 .model-gov-ols-notebook-printout .model-gov-ols-detail-table-row span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 .model-gov-ols-notebook-printout .model-gov-ols-term b {
   color: var(--ols-ink);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dataset-rows-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
