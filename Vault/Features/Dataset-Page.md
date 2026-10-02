@@ -1145,3 +1145,12 @@ tables and read only from the active, versioned diagnostics snapshot. The Datase
 preview, validate, activate, inspect, and roll back these imports while showing file/version
 provenance and freshness. See [[Dataset-Diagnostics-Source]] for the storage contract,
 validation grain, duplicate-fragment rollup, endpoints, and supplied workbook behavior.
+
+## OLS summaries fit without horizontal scrolling — 2026-10-02
+
+The side-by-side Spend-only and Multivariate notebook-style OLS summaries now scale to each
+card instead of retaining the notebook layout's former 880px minimum width. Their summary and
+coefficient columns use proportional tracks, monospace type scales with the card width, and
+long labels or values wrap when necessary. The cards remain side by side when each can keep a
+readable 640px width and automatically stack below that threshold. This is presentation-only;
+the regression results and Dataset diagnostic requests are unchanged.
