@@ -16,7 +16,7 @@ test('Dataset diagnostics call only the versioned dataset-analysis endpoints', (
   assert.equal(datasetPage.includes("api('/dashboard/insights')"), false);
 });
 
-test('Dataset source UI exposes upload, provenance, freshness and reactivation', () => {
+test('Dataset source UI exposes upload, freshness and validation facts without history chrome', () => {
   assert.ok(datasetPage.includes('/dataset-analysis/preview'));
   assert.ok(datasetPage.includes('/dataset-analysis/confirm'));
   assert.ok(datasetPage.includes('Dataset diagnostics source'));
@@ -27,7 +27,10 @@ test('Dataset source UI exposes upload, provenance, freshness and reactivation',
   assert.ok(datasetPage.includes('diagnosticPreview.blocking_errors'));
   assert.ok(datasetPage.includes('diagnosticPreview.duplicate_keys'));
   assert.ok(datasetPage.includes('No active diagnostic dataset'));
-  assert.ok(datasetPage.includes('Reactivate'));
+  assert.equal(datasetPage.includes('/dataset-analysis/imports'), false);
+  assert.equal(datasetPage.includes('Import history'), false);
+  assert.equal(datasetPage.includes('Reactivate'), false);
+  assert.equal(datasetPage.includes('Version ${diagnosticStatus.active.id}'), false);
 });
 
 test('Dataset diagnostic selectors and requests use diagnostic campaign and ad-set scope', () => {
@@ -40,8 +43,8 @@ test('Dataset diagnostic selectors and requests use diagnostic campaign and ad-s
 
 test('Dataset displays OLS and correlation from the same import version', () => {
   assert.ok(datasetPage.includes('olsData.import_id !== correlationData.import_id'));
-  assert.ok(datasetPage.includes('Version {correlation.import_id}'));
-  assert.ok(datasetPage.includes('Version {ols.import_id}'));
+  assert.equal(datasetPage.includes('Version {correlation.import_id}'), false);
+  assert.equal(datasetPage.includes('Version {ols.import_id}'), false);
 });
 
 test('Dataset displays both univariate and multivariate diagnostic OLS cards', () => {

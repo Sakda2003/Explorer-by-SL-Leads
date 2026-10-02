@@ -1154,3 +1154,10 @@ coefficient columns use proportional tracks, monospace type scales with the card
 long labels or values wrap when necessary. The cards remain side by side when each can keep a
 readable 640px width and automatically stack below that threshold. This is presentation-only;
 the regression results and Dataset diagnostic requests are unchanged.
+
+## Dataset diagnostic chrome simplified — 2026-10-02
+
+Removed the visible import-history disclosure, the active snapshot version/date/row sentence,
+and the small version/observation stamps beside the correlation and OLS headings. The Dataset
+page still reads the active diagnostic snapshot, freshness facts, scope options, correlation
+matrix, and OLS results exactly as before; this is a presentation cleanup only.

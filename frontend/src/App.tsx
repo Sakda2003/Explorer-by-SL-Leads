@@ -6420,7 +6420,6 @@ function DatasetPage({ role }: { role: UserRole }) {
  const [correlation, setCorrelation] = useState<any>(null);
  const [ols, setOls] = useState<any>(null);
  const [diagnosticStatus, setDiagnosticStatus] = useState<any>({ active: null, freshness: 'missing', age_days: null });
- const [diagnosticImports, setDiagnosticImports] = useState<any[]>([]);
  const [diagnosticScopes, setDiagnosticScopes] = useState<any>({ import_id: null, campaigns: [], ad_sets: [] });
  const [diagnosticPreview, setDiagnosticPreview] = useState<any>(null);
  const [diagnosticBusy, setDiagnosticBusy] = useState(false);
@@ -6511,13 +6510,11 @@ function DatasetPage({ role }: { role: UserRole }) {
  const campaignPickerRef = useRef<HTMLDivElement>(null);
 
  const loadDiagnosticSource = async () => {
-  const [status, imports, scopes] = await Promise.all([
+  const [status, scopes] = await Promise.all([
    api('/dataset-analysis/status'),
-   api('/dataset-analysis/imports'),
    api('/dataset-analysis/scopes'),
   ]);
   setDiagnosticStatus(status);
-  setDiagnosticImports(imports.imports || []);
   setDiagnosticScopes(scopes);
   setCampaignsReady(true);
  };
@@ -6958,21 +6955,6 @@ function DatasetPage({ role }: { role: UserRole }) {
   }
  };
 
- const reactivateDiagnosticImport = async (importId: number) => {
-  setDiagnosticBusy(true);
-  setDiagnosticError('');
-  try {
-   await api(`/dataset-analysis/imports/${importId}/activate`, { method: 'POST' });
-   setSelectedCampaignId(''); setSelectedAdSetId(''); setAdSetQuery('');
-   await loadDiagnosticSource();
-   setDataRefreshKey((key) => key + 1);
-  } catch (err: any) {
-   setDiagnosticError(err.message || 'The previous dataset version could not be activated.');
-  } finally {
-   setDiagnosticBusy(false);
-  }
- };
-
  return (
   <div className="page-content dataset-page">
    <section className="dataset-heading">
@@ -6990,9 +6972,7 @@ function DatasetPage({ role }: { role: UserRole }) {
      <div>
       <span>Dataset diagnostics source</span>
       <h3>{diagnosticStatus.active?.file_name || 'No active diagnostic dataset'}</h3>
-      <p>{diagnosticStatus.active
-       ? `Version ${diagnosticStatus.active.id} · ${fmt(diagnosticStatus.active.clean_row_count)} rows · ${diagnosticStatus.active.date_min} to ${diagnosticStatus.active.date_max}`
-       : 'Import a valid full-snapshot workbook before correlation and OLS can run.'}</p>
+      {!diagnosticStatus.active && <p>Import a valid full-snapshot workbook before correlation and OLS can run.</p>}
      </div>
      <div className="diagnostic-source-actions">
       {diagnosticStatus.active && (
@@ -7065,21 +7045,6 @@ function DatasetPage({ role }: { role: UserRole }) {
        </button>
       </div>
      </div>
-    )}
-    {!!diagnosticImports.length && (
-     <details className="diagnostic-history">
-      <summary><History size={14} />Import history ({diagnosticImports.length})</summary>
-      <div className="diagnostic-history-list">
-       {diagnosticImports.map((item: any) => (
-        <div key={item.id}>
-         <span><b>Version {item.id}</b>{item.file_name}<small>{item.date_min} to {item.date_max} · {fmt(item.clean_row_count)} rows</small></span>
-         {item.is_active
-          ? <em>Active</em>
-          : canWrite && <button className="dataset-link-btn" disabled={diagnosticBusy} onClick={() => void reactivateDiagnosticImport(item.id)}>Reactivate</button>}
-        </div>
-       ))}
-      </div>
-     </details>
     )}
    </section>
 
@@ -7156,7 +7121,6 @@ function DatasetPage({ role }: { role: UserRole }) {
     <div className="dataset-section-head">
      <div><span>Correlation</span><h3>Imported diagnostic dataset</h3></div>
      <div className="dataset-correlation-head-controls">
-      {correlation?.import_id && <small>Version {correlation.import_id} · {fmt(correlation.analysis_observations)} observations</small>}
       <div className="dataset-tabs">
        <button className={correlationView === 'declared' ? 'is-active' : ''} onClick={() => setCorrelationView('declared')}>Variables</button>
        <button className={correlationView === 'expanded' ? 'is-active' : ''} onClick={() => setCorrelationView('expanded')}>Terms</button>
@@ -7211,7 +7175,6 @@ function DatasetPage({ role }: { role: UserRole }) {
    <section className="dataset-section">
     <div className="dataset-section-head">
      <div><span>Regression</span><h3>Univariate and multivariate OLS</h3></div>
-     {ols?.import_id && <small>Version {ols.import_id} · {fmt(ols.analysis_observations)} complete observations</small>}
     </div>
     {!diagnosticsReady
      ? <SectionSkeleton variant="metrics" label="Loading regression diagnostics" />
