@@ -43,3 +43,9 @@ test('Dataset displays OLS and correlation from the same import version', () => 
   assert.ok(datasetPage.includes('Version {correlation.import_id}'));
   assert.ok(datasetPage.includes('Version {ols.import_id}'));
 });
+
+test('Dataset displays both univariate and multivariate diagnostic OLS cards', () => {
+  assert.ok(datasetPage.includes('Univariate and multivariate OLS'));
+  assert.ok(datasetPage.includes('<OlsResultCards ols={ols} className="dataset-ols"'));
+  assert.equal(datasetPage.includes('view="multivariate"'), false);
+});

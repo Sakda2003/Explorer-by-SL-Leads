@@ -6299,9 +6299,12 @@ def _fit_ols_predictions(
     return predictions.tolist(), adjusted_r2
 
 
-def _fit_ols_summary(values: np.ndarray, feature_rows: list[dict[str, float]], features: list[str], model_name: str) -> dict | None:
+def _fit_ols_summary(
+    values: np.ndarray, feature_rows: list[dict[str, float]], features: list[str], model_name: str,
+    *, min_observations: int = 12, residual_buffer: int = 6,
+) -> dict | None:
     y = np.clip(np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=0.0, neginf=0.0), 0.0, None)
-    if len(y) < max(12, len(features) + 6):
+    if len(y) < max(min_observations, len(features) + residual_buffer):
         return None
     design = np.asarray([[row.get(feature, 0.0) for feature in features] for row in feature_rows], dtype=float)
     if design.shape[0] != len(y) or design.shape[1] != len(features):
@@ -11784,9 +11787,11 @@ def _diagnostic_response_metadata(provenance: dict | None, scope: dict, analysis
 
 def _diagnostic_variable_status(
     features: pd.DataFrame, available: list[str], selected: list[str], analysis_rows: int,
+    sample_limited: set[str] | None = None,
 ) -> list[dict]:
     selected_set = set(selected)
     available_set = set(available)
+    sample_limited = sample_limited or set()
     status = [{"number": 1, "name": "Lead Amount", "status": "target",
                "reason": "Dependent variable from the imported diagnostic dataset."}]
     for number, name, group_features in DIAGNOSTIC_ANALYSIS_GROUPS:
@@ -11798,12 +11803,41 @@ def _diagnostic_variable_status(
         elif not available_group:
             state = "unavailable"
             reason = "No recorded variation in this scope, or too few non-missing values."
+        elif any(feature in sample_limited for feature in group_features):
+            state = "redundant"
+            reason = (
+                f"Omitted so the model remains estimable with {analysis_rows} complete "
+                "observations in this scope."
+            )
         else:
             state = "redundant"
             reason = "Varies, but is mathematically redundant with earlier terms and the intercept."
         status.append({"number": number, "name": name, "status": state,
                        "reason": reason, "features": kept})
     return status
+
+
+def _fit_diagnostic_ols_with_scope(
+    values: np.ndarray, feature_rows: list[dict[str, float]], selected: list[str], model_name: str,
+) -> tuple[dict | None, list[str]]:
+    """Fit Dataset-page OLS with the smallest statistically possible row gate.
+
+    The Dataset page is an inspection tool for a versioned upload, so campaign/ad-set scopes
+    with fewer than the production governance card's comfort threshold should still show a
+    model when the design matrix has enough degrees of freedom. If the full requested predictor
+    set is too wide for a narrow scope, drop later terms in the stable declared order until the
+    fit is estimable.
+    """
+    candidate = list(selected)
+    while candidate:
+        summary = _fit_ols_summary(
+            values, feature_rows, candidate, model_name,
+            min_observations=3, residual_buffer=2,
+        )
+        if summary:
+            return summary, candidate
+        candidate = candidate[:-1]
+    return None, []
 
 
 def get_diagnostic_dataset_correlation(
@@ -11874,7 +11908,13 @@ def get_diagnostic_dataset_ols(
         if len(complete) and float(complete[feature].std()) > 1e-9
     ]
     feature_rows = complete[varying].to_dict(orient="records") if varying else []
-    selected = _prune_rank_dependent_features(feature_rows, varying) if feature_rows else []
+    rank_selected = _prune_rank_dependent_features(feature_rows, varying) if feature_rows else []
+    values = complete["lead_amount"].to_numpy(dtype=float) if len(complete) else np.asarray([], dtype=float)
+    summary, selected = (
+        _fit_diagnostic_ols_with_scope(values, feature_rows, rank_selected, "Multivariate OLS")
+        if rank_selected else (None, [])
+    )
+    sample_limited = set(rank_selected) - set(selected)
     excluded_variables: list[dict] = []
     available_set, varying_set, selected_set = set(available), set(varying), set(selected)
     for feature in ordered:
@@ -11882,14 +11922,39 @@ def get_diagnostic_dataset_ols(
             reason = "No recorded variation or fewer than two observations in this scope."
         elif feature not in varying_set:
             reason = "No variation remains after complete-case filtering."
+        elif feature in sample_limited:
+            reason = (
+                f"Omitted so the model remains estimable with {len(complete)} complete "
+                "observations in this scope."
+            )
         elif feature not in selected_set:
             reason = "Rank-dependent with earlier terms and the intercept; removed in stable predictor order."
         else:
             continue
         excluded_variables.append({"key": feature, "label": _feature_label(feature), "reason": reason})
-    values = complete["lead_amount"].to_numpy(dtype=float) if len(complete) else np.asarray([], dtype=float)
-    summary = _fit_ols_summary(values, feature_rows, selected, "Multivariate OLS") if selected else None
-    variable_status = _diagnostic_variable_status(features, available, selected, len(complete))
+    spend_complete = features.dropna(subset=["lead_amount", "spend"]).copy()
+    spend_rows = spend_complete[["spend"]].to_dict(orient="records") if len(spend_complete) else []
+    spend_values = spend_complete["lead_amount"].to_numpy(dtype=float) if len(spend_complete) else np.asarray([], dtype=float)
+    univariate = (
+        _fit_ols_summary(
+            spend_values, spend_rows, ["spend"], "Spend-only OLS",
+            min_observations=3, residual_buffer=2,
+        )
+        if len(spend_rows) and float(spend_complete["spend"].std()) > 1e-9
+        else None
+    )
+    univariate_forms = {
+        "forms": {"linear": univariate, "quadratic": None, "log": None, "sqrt": None},
+        "best": "linear" if univariate else None,
+        "best_caveat": None,
+        "spend_days": int(len(spend_complete)),
+        "spend_values": [round(float(row["spend"]), 4) for row in spend_rows],
+        "spend_min": float(spend_complete["spend"].min()) if len(spend_complete) else None,
+        "spend_max": float(spend_complete["spend"].max()) if len(spend_complete) else None,
+    }
+    variable_status = _diagnostic_variable_status(
+        features, available, selected, len(complete), sample_limited=sample_limited,
+    )
     if summary:
         summary["dep_variable"] = "Lead Amount"
         summary["variable_status"] = variable_status[1:]
@@ -11903,17 +11968,24 @@ def get_diagnostic_dataset_ols(
     scope = dict(scope)
     scope["analysis_observations"] = int(len(complete))
     scope["multivariate_terms_wanted"] = len(selected)
-    scope["multivariate_days_needed"] = max(12, len(selected) + 6) if selected else 12
+    scope["multivariate_days_needed"] = max(3, len(selected) + 2) if selected else 3
+    scope["univariate_days_needed"] = 3
+    scope["spend_days"] = int(len(spend_complete))
     metadata = _diagnostic_response_metadata(provenance, scope, len(complete))
     unavailable_reason = None
-    if summary is None:
-        needed = max(12, len(selected) + 6) if selected else 12
+    if summary is None and univariate is None:
         unavailable_reason = (
-            f"At least {needed} complete observations are required for the estimable predictor set; "
-            f"this scope has {len(complete)}."
+            "No regression could be fitted for this scope because there are too few rows with "
+            "usable variation in spend or the imported predictor columns."
+        )
+    elif summary is None:
+        unavailable_reason = (
+            "Spend-only OLS is available, but the multivariate predictor set has no estimable "
+            "independent variation in this scope."
         )
     return {
-        "univariate": None,
+        "univariate": univariate,
+        "univariate_forms": univariate_forms,
         "multivariate": summary,
         "declared_variables": variable_status,
         "excluded_variables": excluded_variables,

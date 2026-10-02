@@ -7117,12 +7117,12 @@ function DatasetPage({ role }: { role: UserRole }) {
 
    <section className="dataset-section">
     <div className="dataset-section-head">
-     <div><span>Regression</span><h3>Multivariate OLS</h3></div>
+     <div><span>Regression</span><h3>Univariate and multivariate OLS</h3></div>
      {ols?.import_id && <small>Version {ols.import_id} · {fmt(ols.analysis_observations)} complete observations</small>}
     </div>
     {!diagnosticsReady
      ? <SectionSkeleton variant="metrics" label="Loading regression diagnostics" />
-     : <OlsResultCards ols={ols} view="multivariate" className="dataset-ols" selectionPathTitle={selectionPathTitle} showFeatureSummary={false} showModelSummary emptyCopy={ols?.unavailable_reason || 'Import and activate a valid diagnostic dataset before OLS results are available.'} />}
+     : <OlsResultCards ols={ols} className="dataset-ols" selectionPathTitle={selectionPathTitle} showFeatureSummary={false} showModelSummary emptyCopy={ols?.unavailable_reason || 'Import and activate a valid diagnostic dataset before OLS results are available.'} />}
    </section>
 
    <ForecastDiagnostics

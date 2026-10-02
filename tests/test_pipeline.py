@@ -3304,10 +3304,14 @@ class DiagnosticDatasetTests(unittest.TestCase):
             for key, reason in exclusions.items()
         ))
 
-        self.import_snapshot(self.workbook_bytes(days=10, lead_shift=20), "too-small.xlsx")
-        too_small = core.get_diagnostic_dataset_ols()
-        self.assertIsNone(too_small["multivariate"])
-        self.assertIn("complete observations", too_small["unavailable_reason"])
+        self.import_snapshot(self.workbook_bytes(days=10, lead_shift=20), "small-scope.xlsx")
+        small_scope = core.get_diagnostic_dataset_ols()
+        self.assertIsNotNone(small_scope["univariate"])
+        self.assertIsNotNone(small_scope["multivariate"])
+        self.assertEqual(small_scope["univariate"]["model"], "Spend-only OLS")
+        self.assertEqual(small_scope["multivariate"]["model"], "Multivariate OLS")
+        self.assertEqual(small_scope["multivariate"]["no_observations"], 10)
+        self.assertIsNone(small_scope["unavailable_reason"])
 
     def test_diagnostic_import_does_not_change_forecast_ols(self):
         before = core.get_ols_model_summaries()
