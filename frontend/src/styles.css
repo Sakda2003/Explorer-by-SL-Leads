@@ -5603,6 +5603,78 @@ tr:hover .benchmark-bar span { opacity: 1; }
    Performance -- same shared markup and numbers, just flattened to match this page. */
 .dataset-ols .model-gov-ols-card { padding: 0; border: 0; border-radius: 0; background: none; }
 .dataset-ols .model-gov-ols-card + .model-gov-ols-card { padding-left: 20px; border-left: 1px solid var(--line); }
+.dataset-ols.model-gov-ols.is-notebook {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 26px;
+}
+.dataset-ols .model-gov-ols-card.is-notebook + .model-gov-ols-card.is-notebook {
+  padding-left: 0;
+  border-left: 0;
+}
+.model-gov-ols-card.is-notebook .model-gov-ols-card-head {
+  margin-bottom: 8px;
+}
+.model-gov-ols-card.is-notebook .model-gov-ols-card-head span {
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+.model-gov-ols-card.is-notebook .model-gov-ols-card-head b {
+  color: var(--muted);
+}
+.model-gov-ols-notebook-printout {
+  padding: 6px 0 0;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.42;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-print-title,
+.model-gov-ols-notebook-printout .model-gov-ols-ascii-rule,
+.model-gov-ols-notebook-printout .model-gov-ols-print-summary,
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table {
+  min-width: 790px;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-print-title {
+  color: var(--ols-muted);
+  font-size: 16px;
+  font-weight: 500;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-ascii-rule {
+  font-size: 14px;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-print-summary-row {
+  grid-template-columns: 150px 240px 190px 190px;
+  min-height: 23px;
+  gap: 0;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-print-label,
+.model-gov-ols-notebook-printout .model-gov-ols-print-summary-row b {
+  font-size: 14px;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table-head,
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table-row {
+  grid-template-columns: 210px repeat(6, 96px);
+  gap: 0;
+  min-width: 790px;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table-head,
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table-row,
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table-row span:first-child {
+  font-size: 14px;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-detail-table-row span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-gov-ols-notebook-printout .model-gov-ols-term b {
+  color: var(--ols-ink);
+  white-space: nowrap;
+}
 
 .dataset-rows-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
 .dataset-rows-controls-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

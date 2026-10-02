@@ -1563,6 +1563,85 @@ function OlsSummaryPrintout({ summary }: { summary: any }) {
  );
 }
 
+function OlsNotebookSummary({ summary }: { summary: any }) {
+ const rule = '='.repeat(94);
+ const thinRule = '-'.repeat(94);
+ const summaryRows: [[string, string], [string, string] | null][] = [
+  ...olsSummaryRows(summary),
+  [['RMSE', olsStat(summary.rmse, 2)], null],
+ ];
+ const diagnosticRows: [[string, string], [string, string]][] = [
+  [['Omnibus', '-'], ['Durbin-Watson', olsStat(summary.durbin_watson, 3)]],
+  [['Prob(Omnibus)', '-'], ['Jarque-Bera (JB)', olsStat(summary.jarque_bera, 3)]],
+  [['Skew', olsStat(summary.skew, 3)], ['Prob(JB)', olsPValue(summary.jarque_bera_p_value)]],
+  [['Kurtosis', olsStat(summary.kurtosis, 3)], ['Cond. No.', olsCondNo(summary.cond_no)]],
+ ];
+ return (
+  <div className="model-gov-ols-printout model-gov-ols-notebook-printout" aria-label={`${summary.model || 'OLS'} regression results`}>
+   <div className="model-gov-ols-print-title">OLS Regression Results</div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+   <div className="model-gov-ols-print-summary">
+    {summaryRows.map(([left, right]) => (
+     <div className="model-gov-ols-print-summary-row" key={left[0]}>
+      <span className="model-gov-ols-print-label">{left[0]}:</span>
+      <b>{left[1]}</b>
+      {right ? (
+       <>
+        <span className="model-gov-ols-print-label">{right[0]}:</span>
+        <b>{right[1]}</b>
+       </>
+      ) : (
+       <>
+        <span />
+        <span />
+       </>
+      )}
+     </div>
+    ))}
+   </div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+   <div className="model-gov-ols-detail-table">
+    <div className="model-gov-ols-detail-table-head">
+     <span />
+     <span className="num">coef</span>
+     <span className="num">std err</span>
+     <span className="num">t</span>
+     <span className="num">P&gt;|t|</span>
+     <span className="num">[0.025</span>
+     <span className="num">0.975]</span>
+    </div>
+    <div className="model-gov-ols-ascii-rule thin" aria-hidden="true">{thinRule}</div>
+    {(summary.coefficients || []).map((row: any) => {
+     const kind = olsTermKind(row);
+     return (
+      <div className={`model-gov-ols-detail-table-row term-${kind}`} key={row.feature}>
+       <span className="model-gov-ols-term"><b>{row.term}</b></span>
+       <span className="num">{olsStat(row.coef, 4)}</span>
+       <span className="num">{olsStat(row.std_err, 4)}</span>
+       <span className="num">{olsStat(row.t, 3)}</span>
+       <span className="num">{olsPValue(row.p_value)}</span>
+       <span className="num">{olsStat(row.ci_low, 3)}</span>
+       <span className="num">{olsStat(row.ci_high, 3)}</span>
+      </div>
+     );
+    })}
+   </div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+   <div className="model-gov-ols-print-summary model-gov-ols-diagnostics">
+    {diagnosticRows.map(([left, right]) => (
+     <div className="model-gov-ols-print-summary-row" key={left[0]}>
+      <span className="model-gov-ols-print-label emph">{left[0]}:</span>
+      <b>{left[1]}</b>
+      <span className="model-gov-ols-print-label">{right[0]}:</span>
+      <b>{right[1]}</b>
+     </div>
+    ))}
+   </div>
+   <div className="model-gov-ols-ascii-rule" aria-hidden="true">{rule}</div>
+  </div>
+ );
+}
+
 function OlsCoefficientTable({ rows, tableKey }: { rows: any[]; tableKey: string }) {
  return (
   <div className="model-gov-ols-table">
@@ -2169,8 +2248,8 @@ function OlsFormComparison({ univariateForms }: { univariateForms: any }) {
 }
 
 function OlsResultCards(
- { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle, showFeatureSummary = true, showModelSummary = false, compactMultivariateDetail = 'printout' }:
- { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string; showFeatureSummary?: boolean; showModelSummary?: boolean; compactMultivariateDetail?: 'printout' | 'table' },
+ { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle, showFeatureSummary = true, showModelSummary = false, notebookStyle = false, compactMultivariateDetail = 'printout' }:
+ { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string; showFeatureSummary?: boolean; showModelSummary?: boolean; notebookStyle?: boolean; compactMultivariateDetail?: 'printout' | 'table' },
 ) {
  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
@@ -2188,16 +2267,28 @@ function OlsResultCards(
   { label: 'RMSE', value: olsStat(summary?.rmse, 2), warm: false },
  ];
  return (
-  <section className={`model-gov-ols ${className}`.trim()} aria-label="OLS regression results">
+  <section className={`model-gov-ols${notebookStyle ? ' is-notebook' : ''} ${className}`.trim()} aria-label="OLS regression results">
    {summaries.map(({ key, label, summary }) => {
     const isCollapsed = collapseTerms && !expanded[key] && summary.coefficients.length > 6;
     const visibleTerms = isCollapsed ? summary.coefficients.slice(0, 6) : summary.coefficients;
     return (
-     <article className="model-gov-ols-card" key={key}>
+     <article className={`model-gov-ols-card${notebookStyle ? ' is-notebook' : ''}`} key={key}>
       <div className="model-gov-ols-card-head">
        <span>{label}</span>
        {(coefficients || key === 'multivariate') && <b>{fmt(summary.variable_count || summary.features?.length || summary.df_model)} var{Number(summary.variable_count || summary.features?.length || summary.df_model) === 1 ? '' : 's'}</b>}
       </div>
+      {notebookStyle ? (
+       <>
+        <OlsNotebookSummary summary={summary} />
+        {showFeatureSummary && key === 'multivariate' && summary.variable_status && (() => {
+         const omitted = summary.variable_status.filter((item: any) => item.status !== 'included');
+         return <p className="model-gov-ols-features" title={omitted.map((item: any) => `${item.name}: ${item.reason}`).join('\n')}>
+          Outcome: CRM Leads. Meta Leads remains a separate predictor. All {summary.variable_count} available variables are included{omitted.length ? `; ${omitted.length} unavailable or redundant in this scope` : ''}.
+         </p>;
+        })()}
+       </>
+      ) : (
+       <>
       <div className={`model-gov-ols-fit${coefficients ? '' : ' is-only'}`}>
        {fitRows(summary).map((item) => <div key={`${key}-${item.label}`}><span>{item.label}</span><b className={item.warm ? 'warm' : ''}>{item.value}</b></div>)}
       </div>
@@ -2249,6 +2340,8 @@ function OlsResultCards(
         </button>
         {pathOpen && <OlsSelectionPath selection={ols.selection} title={selectionPathTitle} />}
        </>
+      )}
+      </>
       )}
      </article>
     );
@@ -7122,7 +7215,7 @@ function DatasetPage({ role }: { role: UserRole }) {
     </div>
     {!diagnosticsReady
      ? <SectionSkeleton variant="metrics" label="Loading regression diagnostics" />
-     : <OlsResultCards ols={ols} className="dataset-ols" selectionPathTitle={selectionPathTitle} showFeatureSummary={false} showModelSummary emptyCopy={ols?.unavailable_reason || 'Import and activate a valid diagnostic dataset before OLS results are available.'} />}
+     : <OlsResultCards ols={ols} className="dataset-ols" selectionPathTitle={selectionPathTitle} showFeatureSummary={false} showModelSummary notebookStyle emptyCopy={ols?.unavailable_reason || 'Import and activate a valid diagnostic dataset before OLS results are available.'} />}
    </section>
 
    <ForecastDiagnostics
