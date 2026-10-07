@@ -4530,6 +4530,7 @@ function ForecastPage({ role }: { role: UserRole }) {
   coefficients={false}
   notebookStyle
   notebookCollapsible
+  showFeatureSummary={false}
  />
  </div>
  <div className="tracking-legend" aria-label="Chart legend">
