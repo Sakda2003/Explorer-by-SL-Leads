@@ -2248,8 +2248,8 @@ function OlsFormComparison({ univariateForms }: { univariateForms: any }) {
 }
 
 function OlsResultCards(
- { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle, showFeatureSummary = true, showModelSummary = false, notebookStyle = false, compactMultivariateDetail = 'printout' }:
- { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string; showFeatureSummary?: boolean; showModelSummary?: boolean; notebookStyle?: boolean; compactMultivariateDetail?: 'printout' | 'table' },
+ { ols, emptyCopy, className = '', coefficients = true, view, collapseTerms = false, selectionPathTitle, showFeatureSummary = true, showModelSummary = false, notebookStyle = false, notebookCollapsible = false, compactMultivariateDetail = 'printout' }:
+ { ols: any; emptyCopy: string; className?: string; coefficients?: boolean; view?: 'univariate' | 'multivariate'; collapseTerms?: boolean; selectionPathTitle?: string; showFeatureSummary?: boolean; showModelSummary?: boolean; notebookStyle?: boolean; notebookCollapsible?: boolean; compactMultivariateDetail?: 'printout' | 'table' },
 ) {
  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
  const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
@@ -2279,7 +2279,23 @@ function OlsResultCards(
       </div>
       {notebookStyle ? (
        <>
-        <OlsNotebookSummary summary={summary} />
+        {notebookCollapsible && (
+         <div className="model-gov-ols-fit model-gov-ols-notebook-fit">
+          {fitRows(summary).map((item) => <div key={`${key}-${item.label}`}><span>{item.label}</span><b className={item.warm ? 'warm' : ''}>{item.value}</b></div>)}
+         </div>
+        )}
+        {notebookCollapsible && (
+         <button
+          type="button"
+          className="model-gov-ols-detail-toggle model-gov-ols-notebook-toggle"
+          aria-expanded={!!detailOpen[key]}
+          onClick={() => setDetailOpen((s) => ({ ...s, [key]: !s[key] }))}
+         >
+          {detailOpen[key] ? 'Hide full results' : 'Show full results'}
+          <ChevronDown size={13} className={detailOpen[key] ? 'is-open' : ''} />
+         </button>
+        )}
+        {(!notebookCollapsible || detailOpen[key]) && <OlsNotebookSummary summary={summary} />}
         {showFeatureSummary && key === 'multivariate' && summary.variable_status && (() => {
          const omitted = summary.variable_status.filter((item: any) => item.status !== 'included');
          return <p className="model-gov-ols-features" title={omitted.map((item: any) => `${item.name}: ${item.reason}`).join('\n')}>
@@ -4513,6 +4529,7 @@ function ForecastPage({ role }: { role: UserRole }) {
   emptyCopy={olsEmptyCopy}
   coefficients={false}
   notebookStyle
+  notebookCollapsible
  />
  </div>
  <div className="tracking-legend" aria-label="Chart legend">

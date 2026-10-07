@@ -2184,6 +2184,15 @@ main:has(.upload-v2-page) {
   padding-left: 0;
   border-left: 0;
 }
+.forecast-ols-block .model-gov-ols-notebook-fit {
+  margin-top: 12px;
+  padding-bottom: 16px;
+  overflow: visible;
+  border-bottom: 1px solid var(--line);
+}
+.forecast-ols-block .model-gov-ols-notebook-toggle {
+  margin-top: 10px;
+}
 .forecast-ols-block .table-empty { padding: 18px; }
 .forecast-ols-note { margin: 0; padding: 0 18px 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 @media (max-width: 760px) {
