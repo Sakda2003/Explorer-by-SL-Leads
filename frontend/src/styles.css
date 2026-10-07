@@ -2171,6 +2171,19 @@ main:has(.upload-v2-page) {
 .forecast-ols-block .model-gov-ols { gap: 0; }
 .forecast-ols-block .model-gov-ols-card { padding: 14px 18px 16px; border: 0; border-radius: 0; }
 .forecast-ols-block .model-gov-ols-card + .model-gov-ols-card { border-left: 1px solid var(--line); }
+.forecast-ols-block .model-gov-ols.is-notebook {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr));
+  gap: 24px;
+  align-items: start;
+}
+.forecast-ols-block .model-gov-ols-card.is-notebook {
+  padding: 0;
+  container-type: inline-size;
+}
+.forecast-ols-block .model-gov-ols-card.is-notebook + .model-gov-ols-card.is-notebook {
+  padding-left: 0;
+  border-left: 0;
+}
 .forecast-ols-block .table-empty { padding: 18px; }
 .forecast-ols-note { margin: 0; padding: 0 18px 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 @media (max-width: 760px) {

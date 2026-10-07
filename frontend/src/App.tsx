@@ -4508,7 +4508,12 @@ function ForecastPage({ role }: { role: UserRole }) {
  {/* Inside the chart's own bordered container, so the fit statistics read as part of the
      chart rather than a separate panel that happens to sit near it. */}
  <div className={`forecast-ols-block${olsBusy ? ' is-busy' : ''}`}>
- <OlsResultCards ols={ols} emptyCopy={olsEmptyCopy} coefficients={false} compactMultivariateDetail="table" />
+ <OlsResultCards
+  ols={ols}
+  emptyCopy={olsEmptyCopy}
+  coefficients={false}
+  notebookStyle
+ />
  </div>
  <div className="tracking-legend" aria-label="Chart legend">
  <div className="tracking-legend-keys">
