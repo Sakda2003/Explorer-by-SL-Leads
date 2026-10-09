@@ -2,7 +2,6 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { createPortal } from 'react-dom';
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from 'react';
 import explorerLogo from './assets/explorer-logo.png';
-import { ForecastDiagnostics } from './ForecastDiagnostics';
 import { VISA_SERVICE_CATEGORIES, VISA_SERVICES, type VisaServiceCategory } from './visaServices';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import {
@@ -7203,15 +7202,6 @@ function DatasetPage({ role }: { role: UserRole }) {
      ? <SectionSkeleton variant="metrics" label="Loading regression diagnostics" />
      : <OlsResultCards ols={ols} className="dataset-ols" selectionPathTitle={selectionPathTitle} showFeatureSummary={false} showModelSummary notebookStyle emptyCopy={ols?.unavailable_reason || 'Import and activate a valid diagnostic dataset before OLS results are available.'} />}
    </section>
-
-   <ForecastDiagnostics
-    campaignId=""
-    adSetId={String(selectedAdSetId || '')}
-    startDate={rowDateRange?.from || ''}
-    endDate={rowDateRange?.to || ''}
-    refreshKey={dataRefreshKey}
-    request={api}
-   />
 
    <section className="dataset-section">
     <div className="dataset-section-head">
